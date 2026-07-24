@@ -1,0 +1,36 @@
+{
+  "name": "winagent",
+  "version": "1.0.0",
+  "description": "自主可控的 Windows AI Agent（OpenAI 兼容 + 本地 Ollama，内置完整 Windows 工具集，支持 skills 与 MCP 挂载）",
+  "author": "WinAgent",
+  "license": "MIT",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "pack": "electron-vite build && electron-builder --dir",
+    "dist": "electron-vite build && electron-builder"
+  },
+  "dependencies": {
+    "highlight.js": "^11.9.0",
+    "lucide-react": "^0.400.0",
+    "marked": "^12.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "@types/react": "^18.2.79",
+    "@types/react-dom": "^18.2.25",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.19",
+    "electron": "^30.0.1",
+    "electron-builder": "^24.13.3",
+    "electron-vite": "^2.1.0",
+    "postcss": "^8.4.38",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tailwindcss": "^3.4.3",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.8"
+  }
+}

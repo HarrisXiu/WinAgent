@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "_example_filesystem": {
+      "disabled": true,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:\\Users"]
+    },
+    "_example_http": {
+      "disabled": true,
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+appId: com.winagent.app
+productName: WinAgent
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+extraResources:
+  - from: skills
+    to: skills
+  - from: mcp.json
+    to: mcp.json
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+  artifactName: WinAgent-${version}-portable.exe
+portable:
+  artifactName: WinAgent-${version}-portable.exe
+compression: maximum
+npmRebuild: false
