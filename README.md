@@ -40,6 +40,7 @@ npm run dist
 ```
 
 产物在 `release/WinAgent-<version>-portable.exe`。这是**免安装便携版**：拷到任意 Windows 电脑双击即可运行，`config.json` / `skills/` / `mcp.json` / `Logs/` 会在 exe 同级目录读写。
+## 注意：config.json中包含ApiKey 请注意隐私保护
 
 > 提示：`npm run pack` 生成免打包的解压目录（`release/win-unpacked/`），便于调试。
 
@@ -54,12 +55,12 @@ npm run dist
    > 9b 及以下模型在 40+ 工具场景容易“忘记”或“编造”工具名，建议使用 14b+ 或改用 API。
 3. 在 WinAgent 顶栏选择 `Ollama (本地)` provider，点击刷新按钮拉取模型列表。
 
-## 使用 OpenAI / DeepSeek
+## 使用 OpenAI API
 
 在“设置 → 模型 Providers”中填写 `Base URL`（需含 `/v1`）、`API Key`、`模型`。例如：
 
-- OpenAI：`https://api.openai.com/v1`（模型 `gpt-4o` 支持图片识别）
-- DeepSeek：`https://api.deepseek.com/v1`（模型 `deepseek-chat`，工具调用强且便宜，不支持图片）
+- OpenAI：`https://api.openai.com/v1`
+- DeepSeek：`https://api.deepseek.com/v1`
 
 ## 文件/图片附件
 
