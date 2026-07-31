@@ -10,6 +10,8 @@ export interface ProviderConfig {
   baseUrl: string
   apiKey: string
   model: string
+  /** 是否支持图片识别（vision）：undefined=自动检测，true/false=用户显式指定 */
+  supportsVision?: boolean
 }
 
 export interface AppConfig {

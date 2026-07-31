@@ -43,10 +43,13 @@ export class AgentService {
     // 构建用户消息（含附件）
     let userContent: ChatMessage['content'] = userInput
     if (attachments && attachments.length > 0) {
-      // 检测模型是否可能支持 vision
+      // 检测模型是否支持 vision：用户显式设置优先，否则按模型名关键词自动检测
       const modelLower = provider.model.toLowerCase()
-      const visionKeywords = ['gpt-4o', 'gpt-4-turbo', 'gpt-4-vision', 'vision', 'vl', 'llava', 'vlm', 'gemini', 'claude-3', 'qwen-vl', 'qwen2.5-vl']
-      const supportsVision = visionKeywords.some((k) => modelLower.includes(k))
+      const visionKeywords = ['gpt-4o', 'gpt-4-turbo', 'gpt-4-vision', 'vision', 'vl', 'llava', 'vlm', 'gemini', 'claude-3', 'qwen-vl', 'qwen2.5-vl', 'mimo', 'glm-4v', 'yi-vl', 'internvl']
+      const supportsVision = provider.supportsVision !== undefined
+        ? provider.supportsVision
+        : visionKeywords.some((k) => modelLower.includes(k))
+      Logger.info(`[Vision] model="${provider.model}" supportsVision=${provider.supportsVision} auto=${supportsVision}`)
 
       if (supportsVision) {
         // 支持 vision：发送 multipart 消息

@@ -126,6 +126,21 @@ export default function Settings({ onClose, onSaved }: Props): JSX.Element {
                       onChange={(e) => updateProvider(i, { apiKey: e.target.value })}
                     />
                   )}
+                  <div className="mb-2 flex items-center gap-2 text-xs text-muted">
+                    <span>图片识别:</span>
+                    <select
+                      className="rounded border border-border bg-bg px-1.5 py-0.5"
+                      value={p.supportsVision === undefined ? 'auto' : p.supportsVision ? 'yes' : 'no'}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        updateProvider(i, { supportsVision: v === 'auto' ? undefined : v === 'yes' })
+                      }}
+                    >
+                      <option value="auto">自动检测</option>
+                      <option value="yes">支持</option>
+                      <option value="no">不支持</option>
+                    </select>
+                  </div>
                   <div className="flex gap-2">
                     <input
                       className="flex-1 rounded border border-border bg-bg px-2 py-1 text-sm"
