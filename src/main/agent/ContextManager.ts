@@ -2,7 +2,7 @@ import type { AppConfig, ChatMessage, ProviderConfig } from '../../shared/types'
 import { chatStream } from '../llm/OpenAIClient'
 
 /** 估算每张图片的 token 开销 */
-const IMAGE_TOKEN_COST = 800
+export const IMAGE_TOKEN_COST = 800
 /** 预压缩阶段：旧工具结果保留的最大字符数 */
 const TOOL_RESULT_KEEP_CHARS = 500
 
@@ -113,7 +113,8 @@ export class ContextManager {
           { role: 'system', content: COMPACT_SYSTEM },
           { role: 'user', content: capped }
         ],
-        { temperature: 0.2, maxTokens: 1024 }
+        // 摘要不需要思考过程，固定 auto 交由模型默认行为，避免额外 token 开销
+        { temperature: 0.2, maxTokens: 1024, stream: this.cfg.stream, thinking: 'auto' }
       )
       const summary: ChatMessage = {
         role: 'system',

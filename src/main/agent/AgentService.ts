@@ -1,25 +1,111 @@
-import type { AgentEvent, AppConfig, ChatMessage } from '../../shared/types'
+import type { AgentEvent, AppConfig, ChatMessage, ProviderConfig, TokenUsage } from '../../shared/types'
 import type { ToolRegistry } from '../tools/ToolRegistry'
 import type { ConfigStore } from '../config/ConfigStore'
 import { chatStream } from '../llm/OpenAIClient'
-import { ContextManager, estimateTokens } from './ContextManager'
+import { ContextManager, estimateTokens, IMAGE_TOKEN_COST } from './ContextManager'
 import { Logger } from '../util/Logger'
 
 const MAX_ROUNDS = 25
+
+/** 模型名包含这些关键词时视为支持图片识别 */
+const VISION_KEYWORDS = [
+  'gpt-4o', 'gpt-4-turbo', 'gpt-4-vision', 'vision', 'vl', 'llava', 'vlm',
+  'gemini', 'claude-3', 'qwen-vl', 'qwen2.5-vl', 'glm-4v', 'yi-vl', 'internvl'
+]
+
+/** 视觉辅助默认指令 */
+const DEFAULT_VISION_PROMPT = `请完整、客观地描述图片内容。要求：
+1. 先概括图片类型（截图/照片/图表/文档扫描等）
+2. 逐项描述可见的文字（原文转写，不要意译）、数据、界面元素、图形结构
+3. 数学公式用 LaTeX 语法转写
+4. 表格用 Markdown 表格转写
+5. 不要添加主观推测，只陈述看得到的内容`
+
+/** 检测 provider 的模型是否支持 vision：用户显式设置优先，否则按模型名关键词自动检测 */
+function detectVision(provider: ProviderConfig): boolean {
+  if (provider.supportsVision !== undefined) return provider.supportsVision
+  const modelLower = provider.model.toLowerCase()
+  return VISION_KEYWORDS.some((k) => modelLower.includes(k))
+}
+
+/**
+ * 解析视觉辅助使用的 provider。
+ * - providerId 为空：复用主 provider 的 baseUrl/apiKey，仅换成 visionAssist.model（同一 API 双模型）
+ * - providerId 有值：用该 provider，visionAssist.model 非空时覆盖其模型名
+ * 解析结果与主模型完全相同（同 API 同模型）时返回 undefined，避免自己调自己。
+ */
+function resolveVisionProvider(cfg: AppConfig, main: ProviderConfig): ProviderConfig | undefined {
+  const va = cfg.visionAssist
+  if (!va.enabled) return undefined
+
+  const base = va.providerId ? cfg.providers.find((p) => p.id === va.providerId) : main
+  if (!base) return undefined
+
+  const model = va.model.trim() || (va.providerId ? base.model : '')
+  if (!model) return undefined
+  if (base.id === main.id && model === main.model) return undefined
+
+  // 强制标记为支持 vision，避免被关键词检测误判
+  return { ...base, model, supportsVision: true }
+}
+
+/**
+ * 判断报错是否为“模型不接受图片输入”。
+ * 不同网关文案不一：OpenRouter 返回 "No endpoints found that support image input"，
+ * OpenAI/其他兼容端多为 "does not support image" / "invalid content type image_url" 等。
+ */
+function isImageUnsupportedError(msg: string): boolean {
+  const m = msg.toLowerCase()
+  return (
+    m.includes('support image input') ||
+    m.includes('image input') ||
+    m.includes('does not support image') ||
+    m.includes("doesn't support image") ||
+    m.includes('not support vision') ||
+    m.includes('image_url')
+  )
+}
 
 export interface AgentCallbacks {
   onEvent: (e: AgentEvent) => void
   confirmTool: (name: string, args: string) => Promise<boolean>
 }
 
+/** 估算一段文本的 token 数（中英混合经验值） */
+function estimateText(s: string): number {
+  return Math.ceil(s.length / 3)
+}
+
 export class AgentService {
   private history: ChatMessage[] = []
   private abort: AbortController | null = null
+  /** 本会话累计 token 用量 */
+  private sessionUsage: TokenUsage = { prompt: 0, completion: 0, total: 0, estimated: false }
 
   constructor(private store: ConfigStore, private registry: ToolRegistry) {}
 
   reset(): void {
     this.history = []
+    this.sessionUsage = { prompt: 0, completion: 0, total: 0, estimated: false }
+  }
+
+  getUsage(): TokenUsage {
+    return this.sessionUsage
+  }
+
+  /** 累加单次用量并上报；任一次为估算则会话总量标记为估算 */
+  private reportUsage(last: TokenUsage, cb: AgentCallbacks): void {
+    this.sessionUsage = {
+      prompt: this.sessionUsage.prompt + last.prompt,
+      completion: this.sessionUsage.completion + last.completion,
+      total: this.sessionUsage.total + last.total,
+      estimated: this.sessionUsage.estimated || last.estimated
+    }
+    cb.onEvent({ type: 'usage', last, session: this.sessionUsage })
+    Logger.info(
+      `[Usage] 本次 prompt=${last.prompt} completion=${last.completion} total=${last.total}` +
+        `${last.estimated ? '（估算）' : ''} | 会话累计 ${this.sessionUsage.total}`
+    )
   }
 
   stop(): void {
@@ -34,22 +120,88 @@ export class AgentService {
     return { role: 'system', content: cfg.systemPrompt }
   }
 
-  async process(userInput: string, cb: AgentCallbacks, attachments?: any[]): Promise<void> {
-    const cfg = this.store.get()
-    const provider = this.store.activeProvider()
-    const ctx = new ContextManager(cfg)
-    this.abort = new AbortController()
+  /**
+   * 调用外部视觉模型识别图片，返回描述文本。
+   * 每张图片单独一次请求，避免多图混淆且便于定位失败。
+   */
+  private async describeImages(
+    cfg: AppConfig,
+    visionProvider: ProviderConfig,
+    images: Array<{ name: string; dataUrl: string }>,
+    userInput: string,
+    cb: AgentCallbacks
+  ): Promise<string[]> {
+    const prompt = cfg.visionAssist.prompt.trim() || DEFAULT_VISION_PROMPT
+    const results: string[] = []
 
-    // 构建用户消息（含附件）
+    for (const img of images) {
+      cb.onEvent({ type: 'vision', status: 'start', model: visionProvider.model })
+      Logger.info(`[VisionAssist] 识别 "${img.name}" ← ${visionProvider.model}`)
+      try {
+        const res = await chatStream(
+          visionProvider,
+          [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: `${prompt}\n\n【用户原始需求】${userInput}\n请着重描述与该需求相关的内容。` },
+                { type: 'image_url', image_url: { url: img.dataUrl } }
+              ]
+            }
+          ],
+          {
+            temperature: 0.2,
+            maxTokens: cfg.maxTokens,
+            signal: this.abort?.signal,
+            stream: cfg.stream,
+            thinking: cfg.thinkingMode
+          }
+        )
+        const text = res.content.trim()
+        // 视觉模型的开销也计入会话总量
+        this.reportUsage(
+          res.usage ?? {
+            prompt: estimateText(prompt) + IMAGE_TOKEN_COST,
+            completion: estimateText(text),
+            total: estimateText(prompt) + IMAGE_TOKEN_COST + estimateText(text),
+            estimated: true
+          },
+          cb
+        )
+        results.push(`\n[图片: ${img.name}]（由视觉模型 ${visionProvider.model} 识别）\n${text}`)
+        cb.onEvent({ type: 'vision', status: 'done', model: visionProvider.model, text })
+        Logger.info(`[VisionAssist] "${img.name}" 识别完成，${text.length} 字符`)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        results.push(`\n[图片: ${img.name}] 视觉模型识别失败: ${msg}`)
+        cb.onEvent({ type: 'vision', status: 'error', model: visionProvider.model, text: msg })
+        Logger.error(`[VisionAssist] "${img.name}" 识别失败: ${msg}`)
+      }
+    }
+    return results
+  }
+
+  /**
+   * 构建用户消息内容。
+   * forceNoVision=true 时强制走非 vision 路径（用于主模型实际拒收图片后的降级重试）。
+   * 返回 multipart=true 表示消息里带了图片，失败时可降级。
+   */
+  private async buildUserContent(
+    cfg: AppConfig,
+    provider: ProviderConfig,
+    userInput: string,
+    attachments: any[] | undefined,
+    cb: AgentCallbacks,
+    forceNoVision = false
+  ): Promise<{ content: ChatMessage['content']; multipart: boolean }> {
     let userContent: ChatMessage['content'] = userInput
+    let multipart = false
+
     if (attachments && attachments.length > 0) {
-      // 检测模型是否支持 vision：用户显式设置优先，否则按模型名关键词自动检测
-      const modelLower = provider.model.toLowerCase()
-      const visionKeywords = ['gpt-4o', 'gpt-4-turbo', 'gpt-4-vision', 'vision', 'vl', 'llava', 'vlm', 'gemini', 'claude-3', 'qwen-vl', 'qwen2.5-vl', 'mimo', 'glm-4v', 'yi-vl', 'internvl']
-      const supportsVision = provider.supportsVision !== undefined
-        ? provider.supportsVision
-        : visionKeywords.some((k) => modelLower.includes(k))
-      Logger.info(`[Vision] model="${provider.model}" supportsVision=${provider.supportsVision} auto=${supportsVision}`)
+      const supportsVision = !forceNoVision && detectVision(provider)
+      if (!forceNoVision) {
+        Logger.info(`[Vision] model="${provider.model}" supportsVision=${provider.supportsVision} auto=${supportsVision}`)
+      }
 
       if (supportsVision) {
         // 支持 vision：发送 multipart 消息
@@ -66,13 +218,45 @@ export class AgentService {
         }
         parts.unshift({ type: 'text', text: textParts.join('') })
         userContent = parts
+        multipart = parts.some((p) => p.type === 'image_url')
       } else {
-        // 不支持 vision：图片转为路径描述，文本照常内嵌
+        // 不支持 vision：先看能否用视觉辅助模型代为识别
+        const images = attachments.filter((a) => a.isImage)
+        const sendable = images.filter((a) => a.dataUrl)
+        const va = cfg.visionAssist
+        const visionProvider = resolveVisionProvider(cfg, provider)
+
         const textParts: string[] = [userInput]
+
+        if (visionProvider && sendable.length > 0) {
+          // 视觉辅助：外部模型识别图片 → 描述文本交给主模型
+          const descs = await this.describeImages(
+            cfg,
+            visionProvider,
+            sendable.map((a) => ({ name: a.name, dataUrl: a.dataUrl })),
+            userInput,
+            cb
+          )
+          textParts.push(...descs)
+        }
+        // 未能交给视觉模型的图片（未启用/未配置/缺 dataUrl）退化为路径描述
+        const skipped = visionProvider ? images.filter((a) => !a.dataUrl) : images
+        if (skipped.length > 0) {
+          const hint = !va.enabled
+            ? '当前模型不支持图片识别，可在设置中开启「视觉辅助」或切换到支持 vision 的模型。'
+            : visionProvider
+              ? '当前模型不支持图片识别，且该图片无法交给视觉辅助模型。'
+              : '当前模型不支持图片识别；视觉辅助已开启但未正确配置（请检查视觉模型名）。'
+
+          for (const att of skipped) {
+            textParts.push(`\n[图片: ${att.name}]（路径: ${att.path}）注意：${hint}`)
+          }
+        }
+
+        // 非图片附件照常处理
         for (const att of attachments) {
-          if (att.isImage) {
-            textParts.push(`\n[图片: ${att.name}]（路径: ${att.path}）注意：当前模型不支持图片识别，如需分析图片内容请切换到支持 vision 的模型。`)
-          } else if (att.textContent) {
+          if (att.isImage) continue
+          if (att.textContent) {
             textParts.push(`\n[文件: ${att.name}]\n${att.textContent}`)
           } else {
             textParts.push(`\n[附件: ${att.name}]（路径: ${att.path}）`)
@@ -82,7 +266,20 @@ export class AgentService {
       }
     }
 
-    this.history.push({ role: 'user', content: userContent })
+    return { content: userContent, multipart }
+  }
+
+  async process(userInput: string, cb: AgentCallbacks, attachments?: any[]): Promise<void> {
+    const cfg = this.store.get()
+    const provider = this.store.activeProvider()
+    const ctx = new ContextManager(cfg)
+    this.abort = new AbortController()
+
+    const built = await this.buildUserContent(cfg, provider, userInput, attachments, cb)
+    let sentImages = built.multipart
+    let downgraded = false
+
+    this.history.push({ role: 'user', content: built.content })
     Logger.info(`[USER] ${userInput}${attachments ? ` (+${attachments.length} 附件)` : ''}`)
 
     try {
@@ -101,19 +298,57 @@ export class AgentService {
         const messages = [this.systemMessage(cfg), ...this.history]
         const tools = this.registry.getSchemas()
 
-        const result = await chatStream(
-          provider,
-          messages,
-          {
-            temperature: cfg.temperature,
-            maxTokens: cfg.maxTokens,
-            tools,
-            signal: this.abort.signal
-          },
-          {
-            onContent: (d) => cb.onEvent({ type: 'assistant_delta', text: d }),
-            onReasoning: (d) => cb.onEvent({ type: 'reasoning_delta', text: d })
+        let result
+        try {
+          result = await chatStream(
+            provider,
+            messages,
+            {
+              temperature: cfg.temperature,
+              maxTokens: cfg.maxTokens,
+              tools,
+              signal: this.abort.signal,
+              stream: cfg.stream,
+              thinking: cfg.thinkingMode
+            },
+            {
+              onContent: (d) => cb.onEvent({ type: 'assistant_delta', text: d }),
+              onReasoning: (d) => cb.onEvent({ type: 'reasoning_delta', text: d })
+            }
+          )
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          // 主模型声称支持 vision 但网关实际拒收图片：降级走视觉辅助路径重试一次
+          if (sentImages && !downgraded && isImageUnsupportedError(msg)) {
+            downgraded = true
+            sentImages = false
+            Logger.info(`[Vision] 模型 "${provider.model}" 实际不接受图片输入，降级为视觉辅助/文本描述重试`)
+            cb.onEvent({
+              type: 'vision',
+              status: 'error',
+              model: provider.model,
+              text: `主模型不接受图片输入，已自动降级重试`
+            })
+            const rebuilt = await this.buildUserContent(cfg, provider, userInput, attachments, cb, true)
+            // 按角色定位（而非固定下标），避免上下文压缩后索引失效
+            const idx = this.history.map((h) => h.role).lastIndexOf('user')
+            if (idx >= 0) this.history[idx] = { role: 'user', content: rebuilt.content }
+            continue
           }
+          throw e
+        }
+
+        // 接口未返回 usage 时本地估算
+        const completionText = result.content + (result.reasoning || '') +
+          result.toolCalls.map((t) => t.name + t.arguments).join('')
+        this.reportUsage(
+          result.usage ?? {
+            prompt: estimateTokens(messages),
+            completion: estimateText(completionText),
+            total: estimateTokens(messages) + estimateText(completionText),
+            estimated: true
+          },
+          cb
         )
 
         cb.onEvent({ type: 'assistant_message', content: result.content, reasoning: result.reasoning })

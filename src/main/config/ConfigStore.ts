@@ -99,7 +99,15 @@ export function defaultConfig(): AppConfig {
     compactThresholdTokens: 24000,
     keepRecentTurns: 6,
     skillsDir: 'skills',
-    mcpConfigPath: 'mcp.json'
+    mcpConfigPath: 'mcp.json',
+    visionAssist: {
+      enabled: false,
+      providerId: '',
+      model: '',
+      prompt: ''
+    },
+    stream: true,
+    thinkingMode: 'auto'
   }
 }
 
@@ -125,6 +133,8 @@ export class ConfigStore {
       if (!Array.isArray(this.cfg.providers) || this.cfg.providers.length === 0) {
         this.cfg.providers = defaultConfig().providers
       }
+      // 嵌套对象需深合并，避免旧配置缺字段
+      this.cfg.visionAssist = { ...defaultConfig().visionAssist, ...(parsed.visionAssist || {}) }
       // 解密 apiKey 到内存；旧版明文自动回写升级为密文
       let migrated = false
       this.cfg.providers = this.cfg.providers.map((p) => {

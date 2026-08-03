@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { AgentEvent, ToolSource } from '../../../shared/types'
+import type { AgentEvent, TokenUsage, ToolSource } from '../../../shared/types'
 
 export interface ToolCallView {
   id: string
@@ -31,6 +31,8 @@ export function useAgent() {
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
+  const [usage, setUsage] = useState<TokenUsage | null>(null)
+  const [lastUsage, setLastUsage] = useState<TokenUsage | null>(null)
   const currentAssistant = useRef<number>(-1)
 
   const patchAssistant = useCallback((fn: (t: ChatTurn) => void) => {
@@ -94,6 +96,15 @@ export function useAgent() {
         case 'compact':
           setStatus(`已压缩上下文：${e.before} → ${e.after} tokens`)
           break
+        case 'vision':
+          if (e.status === 'start') setStatus(`视觉模型 ${e.model} 识别图片中…`)
+          else if (e.status === 'done') setStatus(`图片识别完成（${e.model}）`)
+          else setStatus(`图片识别失败：${e.text || ''}`)
+          break
+        case 'usage':
+          setLastUsage(e.last)
+          setUsage(e.session)
+          break
         case 'error':
           patchAssistant((t) => {
             t.content += `\n\n**⚠ 错误：** ${e.message}`
@@ -134,6 +145,8 @@ export function useAgent() {
     await window.winagent.reset()
     setTurns([])
     setStatus('')
+    setUsage(null)
+    setLastUsage(null)
   }, [])
 
   const compact = useCallback(async () => {
@@ -146,5 +159,5 @@ export function useAgent() {
     setConfirm(null)
   }, [confirm])
 
-  return { turns, busy, status, confirm, send, stop, reset, compact, respondConfirm }
+  return { turns, busy, status, confirm, usage, lastUsage, send, stop, reset, compact, respondConfirm }
 }

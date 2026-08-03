@@ -11,7 +11,11 @@
 - **多 Provider**：OpenAI / DeepSeek / 任意 OpenAI 兼容端 / 本地 Ollama，一键切换
 - **模型自动拉取**：Ollama `/api/tags`、OpenAI 兼容 `/v1/models`
 - **文件/图片附件**：输入框 + 按钮选择文件和图片，图片自动以 vision 格式发送，文本文件内容内嵌；不支持 vision 的模型自动降级为路径描述
-- **Vision 模型识别**：自动按模型名关键词检测（`gpt-4o`、`vision`、`vl`、`llava`、`mimo`、`gemini`、`claude-3`、`qwen-vl` 等），也可在设置中手动指定「支持/不支持/自动检测」
+- **Vision 模型识别**：自动按模型名关键词检测（`gpt-4o`、`vision`、`vl`、`llava`、`gemini`、`claude-3`、`qwen-vl`、`glm-4v` 等），也可在设置中手动指定「支持/不支持/自动检测」
+- **视觉辅助（双模型协作）**：主模型为纯语言模型时，自动调用另一个视觉模型识别图片，再把识别结果回填给主模型继续完成任务。**支持同一 API 下用两个模型**（如主模型 `mimo-v2.5-pro` + 视觉模型 `mimo-v2.5`）
+- **流式输出开关**：可关闭流式，改为生成完毕后一次性返回
+- **深度思考开关**：自动 / 开启 / 关闭三态，接口不认识参数时自动去参重试
+- **Token 消耗统计**：顶栏实时显示会话累计 token，悬停查看输入/输出细分与最近一次用量
 - **流式对话**：Markdown 渲染、代码高亮、思维链折叠、工具调用可视化
 - **完整 Windows 工具集（43+ 个）**：
   - 文件：`list_directory`、`read_file`、`write_file`、`edit_file`、`multi_edit_file`、`delete_file`、`copy_file`、`move_file`、`search_files`、`find_files`、`get_file_info`、`create_directory`、`grep`
@@ -77,9 +81,74 @@ npm run dist
 
 - 点击输入框左侧 **+** 按钮选择文件，支持多选
 - 图片显示缩略图预览，文本文件显示文件图标
-- **图片**：支持 vision 的模型（`gpt-4o`、`qwen2.5-vl`、`llava`、`mimo-v2.5` 等）直接识别；不支持的模型自动降级为路径描述，不会报错。可在「设置 → 图片识别」中手动覆盖（自动检测 / 支持 / 不支持）
+- **图片**：支持 vision 的模型（`gpt-4o`、`qwen2.5-vl`、`llava` 等）直接识别；不支持的模型走视觉辅助或降级为路径描述，不会报错。可在「设置 → 图片识别」中手动覆盖（自动检测 / 支持 / 不支持）
 - **文本文件**（`.txt`/`.md`/`.json`/`.js`/`.ts`/`.py` 等）：内容自动读取并拼入消息
 - **其他文件**：传递文件名和路径信息，可配合工具操作
+
+## 视觉辅助（纯语言主模型 + 视觉模型协作）
+
+当主模型不支持图片（如 `deepseek-chat`、大多数本地 Ollama 模型）时，可让另一个视觉模型先“看图”，再把描述文本交回主模型接续完成任务。
+
+**工作流程**
+
+```
+用户上传图片
+  ↓
+主模型不支持 vision？→ 否 → 直接 multipart 发给主模型
+  ↓ 是
+视觉辅助已启用且配置正确？→ 否 → 退化为路径描述 + 提示
+  ↓ 是
+视觉模型逐张识别图片 → 描述文本
+  ↓
+描述文本拼入用户消息 → 主模型继续推理/调用工具
+```
+
+**配置方式**（设置 → 视觉辅助）
+
+| 项 | 说明 |
+|----|------|
+| 启用开关 | 勾选后才会在主模型不支持图片时触发 |
+| 接口来源 | 选「与主模型同一 API」则复用当前 Provider 的 Base URL / API Key；也可选另一个 Provider |
+| 视觉模型名 | 同一 API 双模型时必填；选了其他 Provider 时留空则用该 Provider 自己的模型 |
+| 识别指令 | 给视觉模型的提示词，留空用内置默认（原文转写、公式用 LaTeX、表格用 Markdown） |
+
+设置面板会实时回显**实际调用的接口与模型**，配置无效（模型名空、与主模型完全相同）时给出警告。
+
+**两种典型用法**
+
+| 场景 | 接口来源 | 视觉模型名 |
+|------|---------|-----------|
+| 同一家 API 下两个模型 | 与主模型同一 API | 例如 `mimo-v2.5`（主模型为 `mimo-v2.5-pro`）|
+| 跨家搭配 | 选另一个 Provider | 留空或填写覆盖模型名 |
+
+> 每张图片单独一次请求，避免多图混淆；单张失败不影响其他图片和主流程。识别进度在状态栏实时显示。
+> 若主模型被误判为支持图片（接口返回“不支持图片输入”），会自动降级走视觉辅助路径重试，不会直接报错。
+
+## 流式输出与深度思考
+
+设置 → 请求行为：
+
+- **流式输出**（默认开）：关闭后不再逐字显示，等模型生成完毕一次性返回。部分网关对流式 + 工具调用兼容不佳时可关掉。
+- **深度思考**：
+  - `自动`（默认）—— 不下发任何思考参数，由模型自己决定
+  - `开启` / `关闭` —— 同时下发 `enable_thinking`、`reasoning.enabled`、`thinking.type` 三种主流字段，兼容 Qwen3 / vLLM / OpenRouter / Claude 兼容端
+
+> 若接口不认识思考参数并报错，客户端会**自动去掉参数重试一次**，不会因此失败。思维链内容兼容 `reasoning_content`（DeepSeek/Qwen）与 `reasoning`（OpenRouter）两种字段。
+
+## Token 消耗统计
+
+顶栏实时显示本会话累计 token（如 `12.3k tokens`），鼠标悬停可看到：
+
+- 会话累计的输入 / 输出 / 总计
+- 最近一次请求的用量
+- 是否为估算值
+
+统计口径：
+
+- 优先取接口返回的真实 `usage`（流式下通过 `stream_options.include_usage` 获取）
+- 接口未返回时本地估算，数字前加 `~` 前缀
+- 包含工具调用循环的每一轮、视觉辅助模型、上下文压缩摘要的开销
+- `/clear` 或清空对话后归零
 
 ## Word 文档与数学公式
 
@@ -127,7 +196,15 @@ npm run dist
   "compactThresholdTokens": 24000,
   "keepRecentTurns": 6,
   "skillsDir": "skills",
-  "mcpConfigPath": "mcp.json"
+  "mcpConfigPath": "mcp.json",
+  "visionAssist": {
+    "enabled": false,        // 主模型不支持图片时，是否调用视觉模型代为识别
+    "providerId": "",        // 空 = 与主模型同一 API；否则指定另一个 provider id
+    "model": "",             // 视觉模型名，同一 API 双模型时必填
+    "prompt": ""             // 识别指令，留空用内置默认
+  },
+  "stream": true,            // 流式输出
+  "thinkingMode": "auto"     // 深度思考：auto / on / off
 }
 ```
 
@@ -153,7 +230,47 @@ Electron + TypeScript + React + Vite + TailwindCSS。Windows 系统能力通过 
 
 ## 更新日志
 
-### v1.0.0（2026-07-31）
+### v0.0.3（2026-08-03）
+
+**视觉辅助（双模型协作）**
+- 新增 `visionAssist` 配置（`enabled` / `providerId` / `model` / `prompt`）
+- 主模型不支持 vision 时，自动调用选定的视觉模型逐张识别图片，描述文本回填给主模型继续任务
+- 识别指令可自定义，默认要求原文转写、公式用 LaTeX、表格用 Markdown
+- 新增 `vision` 事件（start/done/error），状态栏实时显示识别进度
+- 单张图片识别失败不中断整体流程，错误以文本形式告知主模型
+- 设置界面新增「视觉辅助」区：开关、接口来源选择、视觉模型名、指令编辑框，实时回显实际调用目标并对无效配置告警
+- `detectVision()` 抽为公共函数，关键词列表提升为模块级常量
+- `ConfigStore.load()` 对 `visionAssist` 做深合并，兼容旧配置
+
+**同一 API 双模型**
+- `visionAssist` 新增 `model` 字段；`providerId` 留空表示复用主 Provider 的 baseUrl / apiKey，仅换模型名
+- 新增 `resolveVisionProvider()` 统一解析接口来源与模型，解析结果强制标记 `supportsVision: true`，避免关键词误判
+- 同 API 同模型时返回 undefined，防止自己调自己
+
+**流式输出开关**
+- 新增 `stream` 配置（默认 true）
+- `OpenAIClient` 实现非流式请求路径，支持 `tool_calls` / `reasoning_content` 解析，并回调一次让界面拿到内容
+
+**深度思考开关**
+- 新增 `thinkingMode` 配置（`auto` / `on` / `off`）
+- 同时下发 `enable_thinking`、`reasoning.enabled`、`thinking.type`，兼容主流网关
+- 接口不认识参数时自动去参重试一次
+- 流式解析兼容 OpenRouter 的 `delta.reasoning` 字段
+
+**Token 消耗统计**
+- 新增 `TokenUsage` 类型与 `usage` 事件
+- 优先使用接口真实 `usage`；流式下自动下发 `stream_options.include_usage`
+- 接口未返回时本地估算，显示时加 `~` 前缀区分
+- 统计覆盖每轮工具循环、视觉辅助模型与上下文压缩摘要
+- 顶栏显示会话累计，悬停查看输入/输出细分与最近一次用量；清空对话后归零
+
+**修复**
+- 主模型被误判为支持 vision 导致 404（`No endpoints found that support image input`）：新增 `isImageUnsupportedError()` 识别各网关文案，自动降级走视觉辅助路径重试（仅一次，防死循环）
+- 从自动检测关键词中移除 `mimo`：`mimo-v2.5-pro` 实际不支持图片输入，属误报
+- `buildUserContent()` 抽出并支持 `forceNoVision`，降级路径复用同一逻辑
+- 降级时按 `role` 定位最后一条用户消息，避免上下文压缩后下标错位
+
+### v0.0.2（2026-07-31）
 
 **Word 文档与公式**
 - 新增 `create_word_document`、`markdown_to_word`、`latex_formula_to_omml` 三个内置工具

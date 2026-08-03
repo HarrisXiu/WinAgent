@@ -14,7 +14,7 @@ interface PendingAttachment {
 }
 
 export default function App(): JSX.Element {
-  const { turns, busy, status, confirm, send, stop, reset, compact, respondConfirm } = useAgent()
+  const { turns, busy, status, confirm, usage, lastUsage, send, stop, reset, compact, respondConfirm } = useAgent()
   const [cfg, setCfg] = useState<AppConfig | null>(null)
   const [models, setModels] = useState<string[]>([])
   const [showSettings, setShowSettings] = useState(false)
@@ -34,6 +34,17 @@ export default function App(): JSX.Element {
   }, [turns])
 
   const activeProvider = cfg?.providers.find((p) => p.id === cfg.activeProviderId)
+
+  const fmtTokens = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
+  const usageTitle = usage
+    ? [
+        `会话累计：输入 ${usage.prompt} + 输出 ${usage.completion} = ${usage.total} tokens`,
+        lastUsage ? `最近一次：输入 ${lastUsage.prompt} + 输出 ${lastUsage.completion} = ${lastUsage.total}` : '',
+        usage.estimated ? '注：部分请求接口未返回用量，为本地估算值' : ''
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : ''
 
   const refreshModels = async (): Promise<void> => {
     if (!cfg) return
@@ -162,6 +173,15 @@ export default function App(): JSX.Element {
 
         <div className="ml-auto flex items-center gap-1">
           <span className="mr-2 text-xs text-muted">{status}</span>
+          {usage && usage.total > 0 && (
+            <span
+              title={usageTitle}
+              className="mr-2 cursor-default rounded bg-border/40 px-1.5 py-0.5 text-[11px] text-muted"
+            >
+              {usage.estimated ? '~' : ''}
+              {fmtTokens(usage.total)} tokens
+            </span>
+          )}
           <button
             title="压缩上下文"
             onClick={compact}
