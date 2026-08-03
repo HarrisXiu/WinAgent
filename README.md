@@ -37,7 +37,7 @@
 
 ## 快速开始
 
-**普通用户**：从 [Releases](https://github.com/HarrisXiu/WinAgent/releases) 下载 `WinAgent-<version>-portable.exe`，双击即用，无需安装。
+**普通用户**：从 [Releases](https://github.com/HarrisXiu/WinAgent/releases) 下载 `WinAgent-<version>.exe`，双击即用，无需安装。
 
 **开发者**（需 Node.js 18+）：
 
