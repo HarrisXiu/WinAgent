@@ -1,4 +1,4 @@
-@import 'highlight.js/styles/github-dark.css';
+@import 'highlight.js/styles/github.css';
 
 @tailwind base;
 @tailwind components;
@@ -12,44 +12,93 @@ body,
 }
 
 body {
-  background: #0d1117;
-  color: #e6edf3;
+  color-scheme: light;
+  background:
+    radial-gradient(900px 520px at 12% -8%, rgba(244, 113, 156, 0.12), transparent 60%),
+    radial-gradient(700px 460px at 105% 5%, rgba(109, 183, 217, 0.12), transparent 60%),
+    #fff8f4;
+  color: #3f3440;
   font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
   overflow: hidden;
 }
 
+::selection {
+  background: rgba(244, 113, 156, 0.25);
+}
+
+/* ---------- 滚动条 ---------- */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #30363d transparent;
+  scrollbar-color: #f0cdda transparent;
 }
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 *::-webkit-scrollbar-thumb {
-  background: #30363d;
-  border-radius: 4px;
+  background: #f0cdda;
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #e5b2c4;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
 }
 
+/* ---------- 表单控件：统一 focus ring ---------- */
+input,
+select,
+textarea {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: rgba(244, 113, 156, 0.7) !important;
+  box-shadow: 0 0 0 3px rgba(244, 113, 156, 0.15);
+}
+input[type='checkbox'] {
+  accent-color: #f4719c;
+}
+
+/* ---------- Markdown 正文（浅色） ---------- */
+.md-body {
+  line-height: 1.7;
+  color: #4a3d4c;
+}
 .md-body p {
   margin: 0.4em 0;
 }
 .md-body pre {
-  background: #0d1117;
-  border: 1px solid #30363d;
-  border-radius: 8px;
-  padding: 12px;
+  position: relative;
+  background: #fdf8f9;
+  border: 1px solid #f5dfe8;
+  border-radius: 10px;
+  padding: 26px 14px 12px;
   overflow-x: auto;
-  margin: 0.6em 0;
+  margin: 0.7em 0;
+}
+.md-body pre::after {
+  content: attr(data-lang);
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #c4a0b2;
 }
 .md-body code {
   font-family: 'Cascadia Code', 'Consolas', monospace;
   font-size: 13px;
 }
 .md-body :not(pre) > code {
-  background: #30363d55;
-  padding: 1px 5px;
-  border-radius: 4px;
+  background: rgba(244, 113, 156, 0.12);
+  color: #d14f83;
+  padding: 1px 6px;
+  border-radius: 5px;
 }
 .md-body ul,
 .md-body ol {
@@ -57,13 +106,34 @@ body {
   margin: 0.4em 0;
 }
 .md-body a {
-  color: #2f81f7;
+  color: #4a9fc7;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(74, 159, 199, 0.35);
+}
+.md-body a:hover {
+  border-bottom-color: #4a9fc7;
+}
+.md-body blockquote {
+  border-left: 3px solid #f4719c;
+  background: rgba(244, 113, 156, 0.07);
+  border-radius: 0 8px 8px 0;
+  padding: 2px 12px;
+  margin: 0.6em 0;
+  color: #8a7584;
 }
 .md-body table {
   border-collapse: collapse;
+  margin: 0.6em 0;
 }
 .md-body th,
 .md-body td {
-  border: 1px solid #30363d;
-  padding: 4px 8px;
+  border: 1px solid #f0cdda;
+  padding: 6px 10px;
+}
+.md-body th {
+  background: #fff2f6;
+}
+.md-body hr {
+  border-color: #f5dfe8;
+  margin: 1em 0;
 }

@@ -19,7 +19,7 @@ marked.use({
       } catch {
         html = escapeHtml(raw)
       }
-      return `<pre><code class="hljs language-${language}">${html}</code></pre>`
+      return `<pre data-lang="${language}"><code class="hljs language-${language}">${html}</code></pre>`
     }
   }
 })

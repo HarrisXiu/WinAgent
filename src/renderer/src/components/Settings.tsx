@@ -1,10 +1,27 @@
 import { useEffect, useState } from 'react'
-import { X, Plus, Trash2, RefreshCw, Save, FolderOpen } from 'lucide-react'
-import type { AppConfig, ProviderConfig, ToolInfo } from '../../../shared/types'
+import {
+  X,
+  Plus,
+  Trash2,
+  RefreshCw,
+  Save,
+  FolderOpen,
+  Settings as SettingsIcon,
+  Server,
+  Eye,
+  SlidersHorizontal,
+  MessageSquareText,
+  Cpu,
+  Wrench
+} from 'lucide-react'
+import type { AppConfig, ChatMode, ProviderConfig, ToolInfo } from '../../../shared/types'
 
 interface Props {
   onClose: () => void
   onSaved: (cfg: AppConfig) => void
+  initialTab?: TabKey
+  /** 挂载后自动弹出目录选择器，选中后直接填入 Skills 目录并保存 */
+  pickSkillsOnMount?: boolean
 }
 
 function newProvider(): ProviderConfig {
@@ -18,12 +35,25 @@ function newProvider(): ProviderConfig {
   }
 }
 
-export default function Settings({ onClose, onSaved }: Props): JSX.Element {
+const TABS = [
+  { key: 'models', label: '模型', icon: Server },
+  { key: 'vision', label: '视觉辅助', icon: Eye },
+  { key: 'generation', label: '生成参数', icon: SlidersHorizontal },
+  { key: 'system', label: '系统提示词', icon: MessageSquareText },
+  { key: 'advanced', label: '高级', icon: Cpu },
+  { key: 'tools', label: '工具', icon: Wrench }
+] as const
+export type TabKey = (typeof TABS)[number]['key']
+
+const inputCls = 'w-full rounded-lg border border-border bg-white px-2.5 py-1.5 text-sm text-gray-700'
+
+export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMount }: Props): JSX.Element {
   const [cfg, setCfg] = useState<AppConfig | null>(null)
   const [tools, setTools] = useState<ToolInfo[]>([])
   const [dataDir, setDataDir] = useState('')
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, string[]>>({})
   const [saving, setSaving] = useState(false)
+  const [tab, setTab] = useState<TabKey>(initialTab ?? 'models')
 
   useEffect(() => {
     window.winagent.getConfig().then(setCfg)
@@ -31,8 +61,30 @@ export default function Settings({ onClose, onSaved }: Props): JSX.Element {
     window.winagent.getDataDir().then(setDataDir)
   }, [])
 
-  if (!cfg) return <div className="p-6 text-muted">加载中…</div>
+  // 挂载后自动选择 Skills 文件夹：选好后直接填入并保存，不关闭面板
+  useEffect(() => {
+    if (!pickSkillsOnMount || !cfg) return
+    const pick = async (): Promise<void> => {
+      const dir = await window.winagent.pickDirectory()
+      if (!dir) return
+      const next = { ...cfg, skillsDir: dir }
+      setCfg(next)
+      setSaving(true)
+      try {
+        await window.winagent.saveConfig(next)
+        const t = await window.winagent.reloadTools()
+        setTools(t)
+      } catch (e) {
+        console.error('保存 Skills 目录失败:', e)
+      }
+      setSaving(false)
+      setTab('advanced')
+    }
+    void pick()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickSkillsOnMount, cfg === null])
 
+  if (!cfg) return <div className="flex h-full items-center justify-center text-muted">加载中…</div>
   const update = (patch: Partial<AppConfig>): void => setCfg({ ...cfg, ...patch })
   const updateProvider = (i: number, patch: Partial<ProviderConfig>): void => {
     const providers = [...cfg.providers]
@@ -85,318 +137,421 @@ export default function Settings({ onClose, onSaved }: Props): JSX.Element {
     mcp: tools.filter((t) => t.source === 'mcp')
   }
 
+  const checkboxCls = 'h-4 w-4 accent-accent'
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="flex h-[88vh] w-full max-w-3xl flex-col rounded-xl border border-border bg-panel shadow-2xl">
-        <div className="flex items-center justify-between border-b border-border px-5 py-3">
-          <h2 className="text-lg font-semibold">设置</h2>
-          <button onClick={onClose} className="rounded p-1 text-muted hover:bg-border/50 hover:text-white">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <div className="flex-1 space-y-6 overflow-y-auto px-5 py-4">
-          {/* Providers */}
-          <section>
-            <div className="mb-2 flex items-center justify-between">
-              <h3 className="font-medium">模型 Providers</h3>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-pink-900/20 p-4 backdrop-blur-sm">
+      <div className="flex h-[86vh] w-full max-w-4xl overflow-hidden rounded-2xl border border-border bg-white shadow-2xl">
+        {/* ============ 左侧导航 ============ */}
+        <aside className="flex w-48 shrink-0 flex-col border-r border-border bg-pink-50/50">
+          <div className="flex items-center gap-2.5 px-4 pb-4 pt-4">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-accent to-accent2 shadow-glow">
+              <SettingsIcon className="h-4 w-4 text-white" />
+            </div>
+            <span className="text-sm font-semibold tracking-tight text-gray-700">设置</span>
+          </div>
+          <nav className="flex-1 space-y-0.5 px-2.5">
+            {TABS.map((t) => (
               <button
-                onClick={() => update({ providers: [...cfg.providers, newProvider()] })}
-                className="flex items-center gap-1 rounded bg-accent/20 px-2 py-1 text-xs text-accent hover:bg-accent/30"
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] transition-colors ${
+                  tab === t.key
+                    ? 'bg-accent/10 font-medium text-accent'
+                    : 'text-muted hover:bg-pink-100/60 hover:text-accent'
+                }`}
               >
-                <Plus className="h-3.5 w-3.5" /> 添加
+                <t.icon className="h-4 w-4" />
+                {t.label}
               </button>
+            ))}
+          </nav>
+          <div className="px-4 pb-4">
+            <div className="mb-1 flex items-center gap-1.5 text-[11px] text-muted">
+              <FolderOpen className="h-3 w-3" />
+              数据目录
             </div>
-            <div className="space-y-3">
-              {cfg.providers.map((p, i) => (
-                <div key={p.id} className="rounded-lg border border-border bg-bg/50 p-3">
-                  <div className="mb-2 flex gap-2">
-                    <input
-                      className="flex-1 rounded border border-border bg-bg px-2 py-1 text-sm"
-                      value={p.label}
-                      placeholder="名称"
-                      onChange={(e) => updateProvider(i, { label: e.target.value })}
-                    />
-                    <select
-                      className="rounded border border-border bg-bg px-2 py-1 text-sm"
-                      value={p.type}
-                      onChange={(e) => updateProvider(i, { type: e.target.value as 'openai' | 'ollama' })}
-                    >
-                      <option value="openai">OpenAI 兼容</option>
-                      <option value="ollama">Ollama</option>
-                    </select>
-                    <button
-                      onClick={() => update({ providers: cfg.providers.filter((_, j) => j !== i) })}
-                      className="rounded p-1.5 text-muted hover:bg-red-500/20 hover:text-red-400"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <input
-                    className="mb-2 w-full rounded border border-border bg-bg px-2 py-1 text-sm"
-                    value={p.baseUrl}
-                    placeholder="Base URL（OpenAI 含 /v1；Ollama 填 http://localhost:11434）"
-                    onChange={(e) => updateProvider(i, { baseUrl: e.target.value })}
-                  />
-                  {p.type === 'openai' && (
-                    <input
-                      className="mb-2 w-full rounded border border-border bg-bg px-2 py-1 text-sm"
-                      value={p.apiKey}
-                      type="password"
-                      placeholder="API Key"
-                      onChange={(e) => updateProvider(i, { apiKey: e.target.value })}
-                    />
-                  )}
-                  <div className="mb-2 flex items-center gap-2 text-xs text-muted">
-                    <span>图片识别:</span>
-                    <select
-                      className="rounded border border-border bg-bg px-1.5 py-0.5"
-                      value={p.supportsVision === undefined ? 'auto' : p.supportsVision ? 'yes' : 'no'}
-                      onChange={(e) => {
-                        const v = e.target.value
-                        updateProvider(i, { supportsVision: v === 'auto' ? undefined : v === 'yes' })
-                      }}
-                    >
-                      <option value="auto">自动检测</option>
-                      <option value="yes">支持</option>
-                      <option value="no">不支持</option>
-                    </select>
-                  </div>
-                  <div className="flex gap-2">
-                    <input
-                      className="flex-1 rounded border border-border bg-bg px-2 py-1 text-sm"
-                      value={p.model}
-                      placeholder="模型名称"
-                      list={`models-${p.id}`}
-                      onChange={(e) => updateProvider(i, { model: e.target.value })}
-                    />
-                    <datalist id={`models-${p.id}`}>
-                      {(modelsByProvider[p.id] || []).map((m) => (
-                        <option key={m} value={m} />
-                      ))}
-                    </datalist>
-                    <button
-                      onClick={() => fetchModels(p)}
-                      className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted hover:text-white"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" /> 拉取模型
-                    </button>
-                  </div>
-                  {modelsByProvider[p.id] && (
-                    <div className="mt-1 text-[11px] text-muted">
-                      可用: {modelsByProvider[p.id].join(', ') || '（空）'}
-                    </div>
-                  )}
-                </div>
-              ))}
+            <div className="truncate rounded-lg bg-white px-2 py-1 font-mono text-[10.5px] text-muted" title={dataDir}>
+              {dataDir}
             </div>
-          </section>
+          </div>
+        </aside>
 
-          {/* 视觉辅助 */}
-          <section className="rounded-lg border border-border bg-bg/50 p-3">
-            <label className="flex items-center gap-2 text-sm font-medium">
-              <input
-                type="checkbox"
-                checked={cfg.visionAssist.enabled}
-                onChange={(e) =>
-                  update({ visionAssist: { ...cfg.visionAssist, enabled: e.target.checked } })
-                }
-              />
-              <span>视觉辅助（主模型不支持图片时，调用视觉模型识别）</span>
-            </label>
-            <p className="mt-1 text-[11px] text-muted">
-              主模型为纯语言模型时，图片先交由下方选定的视觉模型识别，识别结果以文本形式回填给主模型继续完成任务。
-            </p>
-            {cfg.visionAssist.enabled && (
-              <div className="mt-3 space-y-2">
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="block text-sm">
-                    <span className="mb-1 block text-muted">接口来源</span>
-                    <select
-                      className="w-full rounded border border-border bg-bg px-2 py-1 text-sm"
-                      value={cfg.visionAssist.providerId}
-                      onChange={(e) =>
-                        update({ visionAssist: { ...cfg.visionAssist, providerId: e.target.value } })
-                      }
-                    >
-                      <option value="">与主模型同一 API（只换模型名）</option>
-                      {cfg.providers.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="block text-sm">
-                    <span className="mb-1 block text-muted">
-                      视觉模型名{cfg.visionAssist.providerId ? '（留空用该 Provider 的模型）' : ''}
-                    </span>
-                    <input
-                      className="w-full rounded border border-border bg-bg px-2 py-1 text-sm"
-                      placeholder={cfg.visionAssist.providerId ? visionBaseModel : '例如 mimo-v2.5'}
-                      value={cfg.visionAssist.model}
-                      onChange={(e) =>
-                        update({ visionAssist: { ...cfg.visionAssist, model: e.target.value } })
-                      }
-                    />
-                  </label>
+        {/* ============ 右侧内容 ============ */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+            {/* ---------- 模型 Providers ---------- */}
+            {tab === 'models' && (
+              <section>
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-[15px] font-medium text-gray-800">模型 Providers</h3>
+                  <button
+                    onClick={() => update({ providers: [...cfg.providers, newProvider()] })}
+                    className="flex items-center gap-1 rounded-lg bg-accent/15 px-2.5 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/25"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> 添加
+                  </button>
                 </div>
-                {visionWarning && <p className="text-[11px] text-red-400">{visionWarning}</p>}
-                {!visionWarning && (
-                  <p className="text-[11px] text-muted">
-                    实际调用：{visionSourceLabel} · 模型 {visionEffectiveModel}
-                  </p>
-                )}
-                <label className="block text-sm">
-                  <span className="mb-1 block text-muted">识别指令（留空用默认）</span>
-                  <textarea
-                    className="h-20 w-full rounded border border-border bg-bg px-2 py-1 text-sm"
-                    placeholder="默认：完整客观描述图片，文字原文转写，公式用 LaTeX，表格用 Markdown"
-                    value={cfg.visionAssist.prompt}
+                <div className="space-y-3">
+                  {cfg.providers.map((p, i) => (
+                    <div key={p.id} className="rounded-xl border border-border/70 bg-pink-50/40 p-3.5">
+                      <div className="mb-2.5 flex gap-2">
+                        <input
+                          className={inputCls}
+                          value={p.label}
+                          placeholder="名称"
+                          onChange={(e) => updateProvider(i, { label: e.target.value })}
+                        />
+                        <select
+                          className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-sm text-gray-700"
+                          value={p.type}
+                          onChange={(e) => updateProvider(i, { type: e.target.value as 'openai' | 'ollama' })}
+                        >
+                          <option value="openai">OpenAI 兼容</option>
+                          <option value="ollama">Ollama</option>
+                        </select>
+                        <button
+                          onClick={() => update({ providers: cfg.providers.filter((_, j) => j !== i) })}
+                          className="rounded-lg p-2 text-muted transition-colors hover:bg-red-500/15 hover:text-red-400"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <input
+                        className={`${inputCls} mb-2.5`}
+                        value={p.baseUrl}
+                        placeholder="Base URL（OpenAI 含 /v1；Ollama 填 http://localhost:11434）"
+                        onChange={(e) => updateProvider(i, { baseUrl: e.target.value })}
+                      />
+                      {p.type === 'openai' && (
+                        <input
+                          className={`${inputCls} mb-2.5`}
+                          value={p.apiKey}
+                          type="password"
+                          placeholder="API Key"
+                          onChange={(e) => updateProvider(i, { apiKey: e.target.value })}
+                        />
+                      )}
+                      <div className="mb-2.5 flex items-center gap-2 text-xs text-muted">
+                        <span>图片识别:</span>
+                        <select
+                          className="rounded-lg border border-border bg-white px-2 py-1 text-xs text-gray-600"
+                          value={p.supportsVision === undefined ? 'auto' : p.supportsVision ? 'yes' : 'no'}
+                          onChange={(e) => {
+                            const v = e.target.value
+                            updateProvider(i, { supportsVision: v === 'auto' ? undefined : v === 'yes' })
+                          }}
+                        >
+                          <option value="auto">自动检测</option>
+                          <option value="yes">支持</option>
+                          <option value="no">不支持</option>
+                        </select>
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          className={inputCls}
+                          value={p.model}
+                          placeholder="模型名称"
+                          list={`models-${p.id}`}
+                          onChange={(e) => updateProvider(i, { model: e.target.value })}
+                        />
+                        <datalist id={`models-${p.id}`}>
+                          {(modelsByProvider[p.id] || []).map((m) => (
+                            <option key={m} value={m} />
+                          ))}
+                        </datalist>
+                        <button
+                          onClick={() => fetchModels(p)}
+                          className="flex shrink-0 items-center gap-1 rounded-lg border border-border px-3 py-1.5 text-xs text-muted transition-colors hover:text-accent"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" /> 拉取模型
+                        </button>
+                      </div>
+                      {modelsByProvider[p.id] && (
+                        <div className="mt-1.5 text-[11px] text-muted">
+                          可用: {modelsByProvider[p.id].join(', ') || '（空）'}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* ---------- 视觉辅助 ---------- */}
+            {tab === 'vision' && (
+              <section className="rounded-xl border border-border/70 bg-pink-50/40 p-4">
+                <label className="flex cursor-pointer items-center gap-2.5 text-sm font-medium text-gray-700">
+                  <input
+                    type="checkbox"
+                    className={checkboxCls}
+                    checked={cfg.visionAssist.enabled}
                     onChange={(e) =>
-                      update({ visionAssist: { ...cfg.visionAssist, prompt: e.target.value } })
+                      update({ visionAssist: { ...cfg.visionAssist, enabled: e.target.checked } })
                     }
                   />
+                  <span>视觉辅助（主模型不支持图片时，调用视觉模型识别）</span>
                 </label>
-              </div>
+                <p className="mt-1.5 pl-6 text-[11.5px] leading-relaxed text-muted">
+                  主模型为纯语言模型时，图片先交由下方选定的视觉模型识别，识别结果以文本形式回填给主模型继续完成任务。
+                </p>
+                {cfg.visionAssist.enabled && (
+                  <div className="mt-4 space-y-3.5 pl-6">
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="block text-sm">
+                        <span className="mb-1.5 block text-xs text-muted">接口来源</span>
+                        <select
+                          className={inputCls}
+                          value={cfg.visionAssist.providerId}
+                          onChange={(e) =>
+                            update({ visionAssist: { ...cfg.visionAssist, providerId: e.target.value } })
+                          }
+                        >
+                          <option value="">与主模型同一 API（只换模型名）</option>
+                          {cfg.providers.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="block text-sm">
+                        <span className="mb-1.5 block text-xs text-muted">
+                          视觉模型名{cfg.visionAssist.providerId ? '（留空用该 Provider 的模型）' : ''}
+                        </span>
+                        <input
+                          className={inputCls}
+                          placeholder={cfg.visionAssist.providerId ? visionBaseModel : '例如 mimo-v2.5'}
+                          value={cfg.visionAssist.model}
+                          onChange={(e) =>
+                            update({ visionAssist: { ...cfg.visionAssist, model: e.target.value } })
+                          }
+                        />
+                      </label>
+                    </div>
+                    {visionWarning ? (
+                      <p className="text-[11.5px] text-red-400">{visionWarning}</p>
+                    ) : (
+                      <p className="text-[11.5px] text-muted">
+                        实际调用：{visionSourceLabel} · 模型 {visionEffectiveModel}
+                      </p>
+                    )}
+                    <label className="block text-sm">
+                      <span className="mb-1.5 block text-xs text-muted">识别指令（留空用默认）</span>
+                      <textarea
+                        className="h-20 w-full rounded-lg border border-border bg-white px-2.5 py-2 text-sm leading-relaxed text-gray-700"
+                        placeholder="默认：完整客观描述图片，文字原文转写，公式用 LaTeX，表格用 Markdown"
+                        value={cfg.visionAssist.prompt}
+                        onChange={(e) =>
+                          update({ visionAssist: { ...cfg.visionAssist, prompt: e.target.value } })
+                        }
+                      />
+                    </label>
+                  </div>
+                )}
+              </section>
             )}
-          </section>
 
-          {/* 生成参数 */}
-          <section className="grid grid-cols-2 gap-3">
-            <label className="text-sm">
-              <span className="mb-1 block text-muted">Temperature</span>
-              <input
-                type="number"
-                step="0.1"
-                min="0"
-                max="2"
-                className="w-full rounded border border-border bg-bg px-2 py-1"
-                value={cfg.temperature}
-                onChange={(e) => update({ temperature: Number(e.target.value) })}
-              />
-            </label>
-            <label className="text-sm">
-              <span className="mb-1 block text-muted">Max Tokens</span>
-              <input
-                type="number"
-                className="w-full rounded border border-border bg-bg px-2 py-1"
-                value={cfg.maxTokens}
-                onChange={(e) => update({ maxTokens: Number(e.target.value) })}
-              />
-            </label>
-          </section>
-
-          <section>
-            <span className="mb-1 block text-sm text-muted">系统提示词</span>
-            <textarea
-              className="h-28 w-full rounded border border-border bg-bg px-2 py-1 text-sm"
-              value={cfg.systemPrompt}
-              onChange={(e) => update({ systemPrompt: e.target.value })}
-            />
-          </section>
-
-          <section className="grid grid-cols-2 gap-3">
-            <label className="text-sm">
-              <span className="mb-1 block text-muted">Skills 目录</span>
-              <input
-                className="w-full rounded border border-border bg-bg px-2 py-1"
-                value={cfg.skillsDir}
-                onChange={(e) => update({ skillsDir: e.target.value })}
-              />
-            </label>
-            <label className="text-sm">
-              <span className="mb-1 block text-muted">MCP 配置路径</span>
-              <input
-                className="w-full rounded border border-border bg-bg px-2 py-1"
-                value={cfg.mcpConfigPath}
-                onChange={(e) => update({ mcpConfigPath: e.target.value })}
-              />
-            </label>
-          </section>
-
-          {/* 请求行为 */}
-          <section className="space-y-2">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={cfg.stream}
-                onChange={(e) => update({ stream: e.target.checked })}
-              />
-              <span>流式输出（关闭后等模型生成完毕再一次性显示）</span>
-            </label>
-            <label className="flex items-center gap-3 text-sm">
-              <span>深度思考</span>
-              <select
-                className="rounded border border-border bg-bg px-2 py-1"
-                value={cfg.thinkingMode}
-                onChange={(e) => update({ thinkingMode: e.target.value as AppConfig['thinkingMode'] })}
-              >
-                <option value="auto">自动（不下发参数，由模型决定）</option>
-                <option value="on">开启</option>
-                <option value="off">关闭</option>
-              </select>
-            </label>
-            <p className="text-[11px] text-muted">
-              深度思考会下发 <code>enable_thinking</code> / <code>reasoning</code> / <code>thinking</code>{' '}
-              参数；若接口不认识会自动去掉参数重试，不会报错。
-            </p>
-          </section>
-
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={cfg.autoApproveTools}
-              onChange={(e) => update({ autoApproveTools: e.target.checked })}
-            />
-            <span>自动放行危险操作（不弹确认框）</span>
-          </label>
-
-          {/* 工具清单 */}
-          <section>
-            <h3 className="mb-2 font-medium">已加载工具（{tools.length}）</h3>
-            {(['builtin', 'skill', 'mcp'] as const).map((src) =>
-              toolsBySource[src].length ? (
-                <div key={src} className="mb-2">
-                  <div className="mb-1 text-xs uppercase tracking-wide text-muted">
-                    {src === 'builtin' ? '内置' : src === 'skill' ? 'Skills' : 'MCP'}（{toolsBySource[src].length}）
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {toolsBySource[src].map((t) => (
-                      <span
-                        key={t.name}
-                        title={t.description}
-                        className={`rounded px-1.5 py-0.5 text-[11px] ${
-                          t.dangerous ? 'bg-red-500/15 text-red-400' : 'bg-border/50 text-gray-300'
-                        }`}
-                      >
-                        {t.name}
-                      </span>
-                    ))}
-                  </div>
+            {/* ---------- 生成参数 ---------- */}
+            {tab === 'generation' && (
+              <section className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block text-sm">
+                    <span className="mb-1.5 block text-xs text-muted">Temperature</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="2"
+                      className={inputCls}
+                      value={cfg.temperature}
+                      onChange={(e) => update({ temperature: Number(e.target.value) })}
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    <span className="mb-1.5 block text-xs text-muted">Max Tokens</span>
+                    <input
+                      type="number"
+                      className={inputCls}
+                      value={cfg.maxTokens}
+                      onChange={(e) => update({ maxTokens: Number(e.target.value) })}
+                    />
+                  </label>
                 </div>
-              ) : null
+
+                <label className="flex cursor-pointer items-center gap-2.5 text-sm">
+                  <input
+                    type="checkbox"
+                    className={checkboxCls}
+                    checked={cfg.stream}
+                    onChange={(e) => update({ stream: e.target.checked })}
+                  />
+                  <span>流式输出（关闭后等模型生成完毕再一次性显示）</span>
+                </label>
+
+                <label className="flex items-center gap-3 text-sm text-gray-700">
+                  <span className="text-xs text-muted">深度思考</span>
+                  <select
+                    className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-sm text-gray-700"
+                    value={cfg.thinkingMode}
+                    onChange={(e) => update({ thinkingMode: e.target.value as AppConfig['thinkingMode'] })}
+                  >
+                    <option value="auto">自动（不下发参数，由模型决定）</option>
+                    <option value="on">开启</option>
+                    <option value="off">关闭</option>
+                  </select>
+                </label>
+                <p className="text-[11.5px] leading-relaxed text-muted">
+                  深度思考会下发 <code className="rounded bg-accent/10 px-1 py-0.5 text-[10.5px] text-accent">enable_thinking</code> /{' '}
+                  <code className="rounded bg-accent/10 px-1 py-0.5 text-[10.5px] text-accent">reasoning</code> /{' '}
+                  <code className="rounded bg-accent/10 px-1 py-0.5 text-[10.5px] text-accent">thinking</code>{' '}
+                  参数；若接口不认识会自动去掉参数重试，不会报错。
+                </p>
+
+                <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-border/70 bg-pink-50/40 p-3.5 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    className={checkboxCls}
+                    checked={cfg.autoApproveTools}
+                    onChange={(e) => update({ autoApproveTools: e.target.checked })}
+                  />
+                  <span>自动放行危险操作（不弹确认框）</span>
+                </label>
+              </section>
             )}
-          </section>
 
-          <div className="flex items-center gap-2 text-[11px] text-muted">
-            <FolderOpen className="h-3.5 w-3.5" />
-            数据目录: {dataDir}
+            {/* ---------- 系统提示词 ---------- */}
+            {tab === 'system' && (
+              <section>
+                <h3 className="mb-3 text-[15px] font-medium text-gray-800">对话模式与提示词</h3>
+                <div className="mb-3 flex gap-2">
+                  {(['agent', 'pet'] as ChatMode[]).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => update({ chatMode: m })}
+                      className={`rounded-lg px-3.5 py-1.5 text-xs font-medium transition-all ${
+                        cfg.chatMode === m
+                          ? 'bg-gradient-to-r from-accent to-accent2 text-white shadow-glow'
+                          : 'border border-border text-muted hover:text-accent'
+                      }`}
+                    >
+                      {m === 'agent' ? '🤖 专业 Agent' : '🦊 桌宠（安洁莉娜）'}
+                    </button>
+                  ))}
+                </div>
+                {cfg.chatMode === 'pet' ? (
+                  <>
+                    <h3 className="mb-1.5 text-[15px] font-medium text-gray-800">桌宠人设（安洁莉娜）</h3>
+                    <p className="mb-3 text-[11.5px] text-muted">
+                      桌宠模式下 AI 以安洁莉娜的角色人设陪伴聊天，同时保留工具能力为你「跑腿」。此提示词可自由修改或扩写。
+                    </p>
+                    <textarea
+                      className="h-52 w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm leading-relaxed text-gray-700"
+                      value={cfg.petPrompt}
+                      onChange={(e) => update({ petPrompt: e.target.value })}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <h3 className="mb-1.5 text-[15px] font-medium text-gray-800">系统提示词（Agent 模式）</h3>
+                    <p className="mb-3 text-[11.5px] text-muted">定义 WinAgent 的全局行为与角色设定，将注入每轮对话。</p>
+                    <textarea
+                      className="h-52 w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm leading-relaxed text-gray-700"
+                      value={cfg.systemPrompt}
+                      onChange={(e) => update({ systemPrompt: e.target.value })}
+                    />
+                  </>
+                )}
+              </section>
+            )}
+
+            {/* ---------- 高级 ---------- */}
+            {tab === 'advanced' && (
+              <section className="space-y-4">
+                <label className="block text-sm">
+                  <span className="mb-1.5 block text-xs text-muted">Skills 目录</span>
+                  <input
+                    className={inputCls}
+                    value={cfg.skillsDir}
+                    onChange={(e) => update({ skillsDir: e.target.value })}
+                  />
+                </label>
+                <label className="block text-sm">
+                  <span className="mb-1.5 block text-xs text-muted">MCP 配置路径</span>
+                  <input
+                    className={inputCls}
+                    value={cfg.mcpConfigPath}
+                    onChange={(e) => update({ mcpConfigPath: e.target.value })}
+                  />
+                </label>
+                <div className="flex items-center gap-2 rounded-xl border border-border/70 bg-pink-50/40 p-3.5 text-[11.5px] text-muted">
+                  <FolderOpen className="h-4 w-4 shrink-0 text-accent" />
+                  <span className="truncate" title={dataDir}>
+                    数据目录: <span className="font-mono text-gray-600">{dataDir}</span>
+                  </span>
+                </div>
+              </section>
+            )}
+
+            {/* ---------- 工具 ---------- */}
+            {tab === 'tools' && (
+              <section>
+                <h3 className="mb-3 text-[15px] font-medium text-gray-800">已加载工具（{tools.length}）</h3>
+                {(['builtin', 'skill', 'mcp'] as const).map((src) =>
+                  toolsBySource[src].length ? (
+                    <div key={src} className="mb-3.5">
+                      <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
+                        <span
+                          className={`rounded-md px-1.5 py-0.5 text-[10px] ${
+                            src === 'builtin'
+                              ? 'bg-accent/10 text-accent'
+                              : src === 'skill'
+                                ? 'bg-purple-500/15 text-purple-400'
+                                : 'bg-cyan-500/15 text-cyan-400'
+                          }`}
+                        >
+                          {src === 'builtin' ? '内置' : src === 'skill' ? 'Skills' : 'MCP'}
+                        </span>
+                        {toolsBySource[src].length} 个
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {toolsBySource[src].map((t) => (
+                          <span
+                            key={t.name}
+                            title={t.description}
+                            className={`rounded-lg px-2 py-1 text-[11px] ${
+                              t.dangerous
+                                ? 'bg-red-100 text-red-500 ring-1 ring-red-200'
+                                : 'bg-pink-50 text-gray-600'
+                            }`}
+                          >
+                            {t.name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null
+                )}
+              </section>
+            )}
           </div>
-        </div>
 
-        <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
-          <button onClick={onClose} className="rounded border border-border px-4 py-1.5 text-sm hover:bg-border/40">
-            取消
-          </button>
-          <button
-            onClick={save}
-            disabled={saving}
-            className="flex items-center gap-1.5 rounded bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent/90 disabled:opacity-50"
-          >
-            <Save className="h-4 w-4" />
-            {saving ? '保存中…' : '保存'}
-          </button>
+          <div className="flex justify-end gap-2 border-t border-border/70 px-6 py-3.5">
+            <button
+              onClick={onClose}
+              className="rounded-lg border border-border px-4 py-2 text-sm text-gray-600 transition-colors hover:bg-pink-50"
+            >
+              取消
+            </button>
+            <button
+              onClick={save}
+              disabled={saving}
+              className="flex items-center gap-1.5 rounded-lg bg-gradient-to-br from-accent to-accent2 px-4 py-2 text-sm font-medium text-white shadow-glow transition-opacity hover:opacity-90 disabled:opacity-50 disabled:shadow-none"
+            >
+              <Save className="h-4 w-4" />
+              {saving ? '保存中…' : '保存'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -42,6 +42,13 @@ export interface VisionAssistConfig {
  */
 export type ThinkingMode = 'auto' | 'on' | 'off'
 
+/**
+ * 对话模式：
+ * - agent：专业 Agent 形态，使用 systemPrompt，以高效完成任务为先
+ * - pet：桌宠聊天形态，使用 petPrompt（角色人设，如安洁莉娜），陪伴感优先
+ */
+export type ChatMode = 'agent' | 'pet'
+
 export interface AppConfig {
   activeProviderId: string
   providers: ProviderConfig[]
@@ -64,6 +71,10 @@ export interface AppConfig {
   stream: boolean
   /** 深度思考开关 */
   thinkingMode: ThinkingMode
+  /** 对话模式：agent=专业助手 / pet=桌宠角色 */
+  chatMode: ChatMode
+  /** 桌宠模式人设提示词（角色扮演） */
+  petPrompt: string
 }
 
 export interface ToolParameter {

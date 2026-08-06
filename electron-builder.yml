@@ -16,6 +16,7 @@ win:
     - target: portable
       arch:
         - x64
+  icon: build/icon.ico
   artifactName: WinAgent-${version}-portable.exe
 portable:
   artifactName: WinAgent-${version}-portable.exe

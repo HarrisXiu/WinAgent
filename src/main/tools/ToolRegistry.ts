@@ -7,6 +7,7 @@ import { inputTools } from './inputTools'
 import { windowTools } from './windowTools'
 import { httpTools } from './httpTools'
 import { docxTools } from './docxTools'
+import { imageTools } from './imageTools'
 import { loadSkills } from '../skills/SkillLoader'
 import { McpManager } from '../mcp/McpManager'
 import { Logger } from '../util/Logger'
@@ -29,7 +30,7 @@ export class ToolRegistry {
     this.mcp.dispose()
     // 内置工具
     this.addAll(
-      [...fileTools, ...systemTools, ...registryTools, ...inputTools, ...windowTools, ...httpTools, ...docxTools],
+      [...fileTools, ...systemTools, ...registryTools, ...inputTools, ...windowTools, ...httpTools, ...docxTools, ...imageTools],
       'builtin'
     )
     void cfg

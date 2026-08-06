@@ -76,6 +76,16 @@ function registerIpc(): void {
 
   ipcMain.handle('config:dataDir', () => getDataDir())
 
+  // 选择本地文件夹（用于设置 Skills 目录）
+  ipcMain.handle('dialog:pickDirectory', async () => {
+    if (!mainWindow) return null
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择 Skills 文件夹',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
+  })
+
   ipcMain.handle('file:read', async (_e, filePath: string) => {
     const ext = path.extname(filePath).toLowerCase()
     const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']

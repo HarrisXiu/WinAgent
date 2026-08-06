@@ -117,7 +117,8 @@ export class AgentService {
   }
 
   private systemMessage(cfg: AppConfig): ChatMessage {
-    return { role: 'system', content: cfg.systemPrompt }
+    // 桌宠模式使用角色人设提示词；Agent 模式使用用户系统提示词
+    return { role: 'system', content: cfg.chatMode === 'pet' ? cfg.petPrompt : cfg.systemPrompt }
   }
 
   /**

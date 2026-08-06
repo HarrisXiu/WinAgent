@@ -15,6 +15,8 @@ const api = {
   saveConfig: (cfg: AppConfig): Promise<AppConfig> => ipcRenderer.invoke('config:save', cfg),
   getDataDir: (): Promise<string> => ipcRenderer.invoke('config:dataDir'),
 
+  pickDirectory: (): Promise<string | null> => ipcRenderer.invoke('dialog:pickDirectory'),
+
   listTools: (): Promise<ToolInfo[]> => ipcRenderer.invoke('tools:list'),
   reloadTools: (): Promise<ToolInfo[]> => ipcRenderer.invoke('tools:reload'),
 

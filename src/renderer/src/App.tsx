@@ -1,9 +1,50 @@
 import { useEffect, useRef, useState } from 'react'
-import { Settings as SettingsIcon, Send, Square, Trash2, Minimize2, RefreshCw, AlertTriangle, Plus, X, FileText, ImageIcon } from 'lucide-react'
-import type { AppConfig } from '../../shared/types'
+import {
+  Settings as SettingsIcon,
+  Send,
+  Square,
+  Trash2,
+  Minimize2,
+  RefreshCw,
+  AlertTriangle,
+  Plus,
+  X,
+  FileText,
+  ImageIcon,
+  Wrench,
+  Puzzle,
+  Server
+} from 'lucide-react'
+import type { AppConfig, ChatMode } from '../../shared/types'
 import { useAgent } from './lib/useAgent'
 import Message from './components/Message'
-import Settings from './components/Settings'
+import Settings, { type TabKey } from './components/Settings'
+import avatarImg from './assets/angelina/avatar.png'
+import zuozuoGif from './assets/angelina/zuozuo.gif'
+import kanshuGif from './assets/angelina/kanshu.gif'
+import tanxianGif from './assets/angelina/tanxian.gif'
+import paizhaoGif from './assets/angelina/paizhao.gif'
+import cloudImg from './assets/angelina/cloud.png'
+import wandImg from './assets/angelina/wand.png'
+import bubbleImg from './assets/angelina/bubble.png'
+import heartImg from './assets/angelina/heart.png'
+
+/** Angelina 实时状态：空闲 / 思考 / 执行工具 / 图片识别 / 回答中 */
+export type AiState = 'idle' | 'think' | 'tool' | 'vision' | 'talk'
+export const AI_STATE_GIF: Record<AiState, string> = {
+  idle: zuozuoGif,
+  think: kanshuGif,
+  tool: tanxianGif,
+  vision: paizhaoGif,
+  talk: zuozuoGif
+}
+export const AI_STATE_LABEL: Record<AiState, string> = {
+  idle: '待命中',
+  think: '思考中',
+  tool: '执行工具中',
+  vision: '识别图片中',
+  talk: '回答中'
+}
 
 interface PendingAttachment {
   name: string
@@ -18,6 +59,8 @@ export default function App(): JSX.Element {
   const [cfg, setCfg] = useState<AppConfig | null>(null)
   const [models, setModels] = useState<string[]>([])
   const [showSettings, setShowSettings] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<TabKey>('models')
+  const [pickSkills, setPickSkills] = useState(false)
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -130,15 +173,55 @@ export default function App(): JSX.Element {
     }
   }
 
+  const iconBtn =
+    'flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-pink-100/70 hover:text-accent'
+
+  const openSettings = (tab: TabKey = 'models', autoPickSkills = false): void => {
+    setSettingsTab(tab)
+    setPickSkills(autoPickSkills)
+    setShowSettings(true)
+  }
+
+  // 切换对话模式：换模式相当于换人格，清空当前会话
+  const switchMode = async (mode: ChatMode): Promise<void> => {
+    if (!cfg || cfg.chatMode === mode) return
+    const next = { ...cfg, chatMode: mode }
+    setCfg(next)
+    await window.winagent.saveConfig(next)
+    await reset()
+    setInput('')
+  }
+
+  // 根据对话实时状态计算 Angelina 动作
+  const aiState: AiState = (() => {
+    if (!busy) return 'idle'
+    const lastTurn = turns[turns.length - 1]
+    if (lastTurn?.toolCalls.some((tc) => tc.running)) return 'tool'
+    if (/视觉|识别/.test(status)) return 'vision'
+    if (lastTurn?.streaming && lastTurn.content) return 'talk'
+    return 'think'
+  })()
+
+  const features = [
+    { icon: Wrench, title: 'Windows 工具集', desc: '文件、系统、网络、输入、窗口自动化', tab: 'tools' as TabKey },
+    { icon: Puzzle, title: 'Skills + MCP', desc: '自定义技能与外部工具动态挂载', tab: 'advanced' as TabKey, pickSkills: true },
+    { icon: Server, title: 'OpenAI / Ollama', desc: '云端 API 与本地模型无缝切换', tab: 'models' as TabKey }
+  ]
+
   return (
     <div className="flex h-full flex-col bg-bg">
-      <header className="flex items-center gap-2 border-b border-border bg-panel px-4 py-2">
-        <span className="mr-2 font-semibold tracking-tight">
-          Win<span className="text-accent">Agent</span>
-        </span>
+      {/* ================= 顶栏 ================= */}
+      <header className="relative z-10 flex items-center gap-2.5 border-b border-border bg-white/70 px-4 py-2 backdrop-blur">
+        <div className="mr-1.5 flex items-center gap-2.5">
+          <img src={avatarImg} alt="Angelina" className="h-8 w-8 rounded-full object-cover shadow-glow" />
+          <span className="text-[15px] font-semibold tracking-tight text-gray-700">
+            Win
+            <span className="bg-gradient-to-r from-accent to-accent2 bg-clip-text text-transparent">Agent</span>
+          </span>
+        </div>
 
         <select
-          className="rounded border border-border bg-bg px-2 py-1 text-sm outline-none"
+          className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-[13px] text-gray-700"
           value={cfg?.activeProviderId || ''}
           onChange={(e) => switchProvider(e.target.value)}
         >
@@ -151,7 +234,7 @@ export default function App(): JSX.Element {
 
         <div className="flex items-center gap-1">
           <input
-            className="w-52 rounded border border-border bg-bg px-2 py-1 text-sm outline-none"
+            className="w-52 rounded-lg border border-border bg-white px-2.5 py-1.5 text-[13px] text-gray-700"
             value={activeProvider?.model || ''}
             list="topbar-models"
             placeholder="模型"
@@ -162,86 +245,175 @@ export default function App(): JSX.Element {
               <option key={m} value={m} />
             ))}
           </datalist>
-          <button
-            title="拉取模型列表"
-            onClick={refreshModels}
-            className="rounded p-1.5 text-muted hover:bg-border/50 hover:text-white"
-          >
+          <button title="拉取模型列表" onClick={refreshModels} className={iconBtn}>
             <RefreshCw className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="ml-auto flex items-center gap-1">
-          <span className="mr-2 text-xs text-muted">{status}</span>
+        {/* 对话模式切换 */}
+        <div className="ml-auto flex items-center gap-1.5">
+          <div className="flex rounded-lg border border-border bg-white p-0.5 shadow-sm">
+            <button
+              onClick={() => switchMode('agent')}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-all ${
+                cfg?.chatMode === 'pet'
+                  ? 'text-muted hover:text-accent'
+                  : 'bg-gradient-to-r from-accent to-accent2 text-white shadow-glow'
+              }`}
+            >
+              Agent
+            </button>
+            <button
+              onClick={() => switchMode('pet')}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-all ${
+                cfg?.chatMode === 'pet'
+                  ? 'bg-gradient-to-r from-accent to-accent2 text-white shadow-glow'
+                  : 'text-muted hover:text-accent'
+              }`}
+            >
+              桌宠
+            </button>
+          </div>
+          {status && (
+            <span className="max-w-56 truncate text-xs text-muted">{status}</span>
+          )}
           {usage && usage.total > 0 && (
             <span
               title={usageTitle}
-              className="mr-2 cursor-default rounded bg-border/40 px-1.5 py-0.5 text-[11px] text-muted"
+              className="cursor-default rounded-full border border-accent/25 bg-accent/10 px-2.5 py-0.5 text-[11px] font-medium text-accent"
             >
               {usage.estimated ? '~' : ''}
               {fmtTokens(usage.total)} tokens
             </span>
           )}
-          <button
-            title="压缩上下文"
-            onClick={compact}
-            className="rounded p-1.5 text-muted hover:bg-border/50 hover:text-white"
-          >
+          <button title="压缩上下文" onClick={compact} className={iconBtn}>
             <Minimize2 className="h-4 w-4" />
           </button>
-          <button
-            title="清空对话"
-            onClick={reset}
-            className="rounded p-1.5 text-muted hover:bg-border/50 hover:text-white"
-          >
+          <button title="清空对话" onClick={reset} className={iconBtn}>
             <Trash2 className="h-4 w-4" />
           </button>
-          <button
-            title="设置"
-            onClick={() => setShowSettings(true)}
-            className="rounded p-1.5 text-muted hover:bg-border/50 hover:text-white"
-          >
+          <button title="设置" onClick={() => openSettings()} className={iconBtn}>
             <SettingsIcon className="h-4 w-4" />
           </button>
         </div>
       </header>
 
+      {/* ================= 主区域：左侧立绘 + 右侧对话 ================= */}
+      <div className="flex min-h-0 flex-1">
+        {/* 左侧：Angelina 大立绘，实时随对话状态切换 */}
+        {turns.length > 0 && (
+          <aside className="flex w-52 shrink-0 flex-col items-center border-r border-border/60 bg-white/40 py-6 backdrop-blur">
+            <div className="relative">
+              <div className="absolute inset-8 rounded-full bg-gradient-to-br from-accent/25 to-accent2/25 blur-2xl" />
+              <img
+                src={AI_STATE_GIF[aiState]}
+                alt="Angelina"
+                className="relative h-44 w-44 object-contain drop-shadow-xl"
+              />
+              <img src={bubbleImg} alt="" className="absolute -left-7 top-3 h-9 w-9 animate-bounce object-contain" />
+              <img src={heartImg} alt="" className="absolute -right-5 top-8 h-6 w-6 animate-pulse object-contain" />
+              <img src={cloudImg} alt="" className="absolute -left-8 bottom-2 h-8 w-8 object-contain opacity-90" />
+            </div>
+
+            <div className="mt-4 flex items-center gap-2">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-60" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-green-400" />
+              </span>
+              <span className="text-sm font-semibold text-gray-700">Angelina</span>
+            </div>
+
+            <div className="mt-2.5 flex items-center gap-2 rounded-full border border-border bg-white/80 px-3.5 py-1.5 shadow-card">
+              {aiState === 'idle' ? (
+                <span className="text-xs text-muted">待命中</span>
+              ) : (
+                <>
+                  <span className="flex gap-0.5">
+                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent" />
+                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:150ms]" />
+                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:300ms]" />
+                  </span>
+                  <span className="text-xs font-medium text-accent">{AI_STATE_LABEL[aiState]}</span>
+                </>
+              )}
+            </div>
+          </aside>
+        )}
+
+        {/* 右侧：消息 + 输入 */}
+        <div className="flex min-w-0 flex-1 flex-col">
+      {/* ================= 消息区 ================= */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {turns.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center text-center text-muted">
-            <div className="mb-2 text-2xl font-semibold text-gray-300">
-              Win<span className="text-accent">Agent</span>
+          <div className="relative flex h-full flex-col items-center justify-center text-center">
+            {/* 角色动图 + 漂浮装饰 */}
+            <div className="relative mb-3">
+              <div className="absolute inset-4 rounded-full bg-gradient-to-br from-accent/30 to-accent2/30 blur-2xl" />
+              <img src={zuozuoGif} alt="Angelina" className="relative h-52 w-52 object-contain drop-shadow-xl" />
+              <img src={bubbleImg} alt="" className="absolute -left-12 top-3 h-10 w-10 animate-bounce object-contain" />
+              <img src={heartImg} alt="" className="absolute -right-9 top-8 h-7 w-7 animate-pulse object-contain" />
+              <img src={wandImg} alt="" className="absolute -right-14 bottom-5 h-12 w-12 animate-bounce object-contain [animation-delay:300ms]" />
+              <img src={cloudImg} alt="" className="absolute -left-14 bottom-1 h-9 w-9 object-contain opacity-90" />
             </div>
-            <p className="max-w-md text-sm">
-              自主可控的 Windows AI 助手。兼容 OpenAI 格式 API 与本地 Ollama，内置完整 Windows 工具集，
-              支持 skills 与 MCP 挂载。
+
+            <h1 className="mb-2 text-[28px] font-semibold tracking-tight">
+              <span className="bg-gradient-to-r from-accent to-accent2 bg-clip-text text-transparent">WinAgent</span>
+            </h1>
+            <p className="mb-8 max-w-md text-sm leading-relaxed text-muted">
+              {cfg?.chatMode === 'pet'
+                ? '这里是安洁莉娜的陪伴空间~ 来自罗德岛的信使会陪你聊天，也能替你跑腿处理电脑上的杂活。'
+                : '自主可控的 Windows AI 助手。兼容 OpenAI 格式 API 与本地 Ollama，内置完整 Windows 工具集，支持 skills 与 MCP 挂载。'}
             </p>
-            <p className="mt-3 text-xs">输入 <code className="rounded bg-border/50 px-1">/clear</code> 清空、<code className="rounded bg-border/50 px-1">/compact</code> 压缩上下文</p>
+
+            <div className="grid grid-cols-3 gap-3">
+              {features.map((f) => (
+                <button
+                  key={f.title}
+                  onClick={() => openSettings(f.tab, f.pickSkills)}
+                  title={`点击前往「${f.title}」设置`}
+                  className="group w-44 cursor-pointer rounded-2xl border border-border bg-white/80 p-4 text-left shadow-card transition-all hover:border-accent/40 hover:shadow-glow"
+                >
+                  <f.icon className="mb-2.5 h-5 w-5 text-accent transition-transform group-hover:scale-110" />
+                  <div className="mb-1 text-[13px] font-medium text-gray-700">{f.title}</div>
+                  <div className="text-[11px] leading-relaxed text-muted">{f.desc}</div>
+                </button>
+              ))}
+            </div>
+
+            <p className="mt-8 text-xs text-muted">
+              输入 <code className="rounded-md bg-accent/10 px-1.5 py-0.5 text-[11px] text-accent">/clear</code> 清空 ·{' '}
+              <code className="rounded-md bg-accent/10 px-1.5 py-0.5 text-[11px] text-accent">/compact</code> 压缩上下文
+            </p>
           </div>
         ) : (
-          turns.map((t, i) => <Message key={i} turn={t} />)
+          <div className="mx-auto flex max-w-3xl flex-col gap-1 px-4 pb-6 pt-4">
+            {turns.map((t, i) => (
+              <Message key={i} turn={t} aiState={aiState} />
+            ))}
+          </div>
         )}
       </div>
 
-      <div className="border-t border-border bg-panel p-3">
+      {/* ================= 输入区 ================= */}
+      <div className="mx-auto w-full max-w-3xl px-4 pb-4">
         {attachments.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
             {attachments.map((att, i) => (
               <div
                 key={i}
-                className="group relative flex items-center gap-2 rounded-lg border border-border bg-bg px-2 py-1.5"
+                className="group flex items-center gap-2.5 rounded-xl border border-border bg-white/80 py-1.5 pl-1.5 pr-2 shadow-card backdrop-blur"
               >
                 {att.isImage && att.dataUrl ? (
-                  <img src={att.dataUrl} alt={att.name} className="h-10 w-10 rounded object-cover" />
+                  <img src={att.dataUrl} alt={att.name} className="h-8 w-8 rounded-lg object-cover" />
                 ) : (
-                  <div className="flex h-10 w-10 items-center justify-center rounded bg-border/40">
-                    {att.isImage ? <ImageIcon className="h-5 w-5 text-muted" /> : <FileText className="h-5 w-5 text-muted" />}
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/10">
+                    {att.isImage ? <ImageIcon className="h-4 w-4 text-accent" /> : <FileText className="h-4 w-4 text-accent" />}
                   </div>
                 )}
-                <span className="max-w-32 truncate text-xs text-gray-300">{att.name}</span>
+                <span className="max-w-36 truncate text-xs text-gray-600">{att.name}</span>
                 <button
                   onClick={() => removeAttachment(i)}
-                  className="ml-1 rounded p-0.5 text-muted hover:bg-red-500/20 hover:text-red-400"
+                  className="rounded-md p-0.5 text-muted transition-colors hover:bg-red-100 hover:text-red-400"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -249,27 +421,17 @@ export default function App(): JSX.Element {
             ))}
           </div>
         )}
-        <div className="flex items-end gap-2 rounded-xl border border-border bg-bg px-3 py-2">
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            accept="image/*,.txt,.md,.json,.js,.ts,.tsx,.jsx,.py,.java,.c,.cpp,.h,.css,.html,.xml,.yml,.yaml,.csv,.log,.sh,.bat"
-            onChange={onFileSelect}
-          />
-          <button
-            title="添加文件或图片"
-            onClick={() => fileInputRef.current?.click()}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-border/50 hover:text-white"
-          >
-            <Plus className="h-5 w-5" />
-          </button>
+
+        <div className="rounded-2xl border border-border bg-white/90 shadow-card backdrop-blur transition-all focus-within:border-accent/50 focus-within:shadow-[0_0_0_3px_rgba(244,113,156,0.12),0_8px_30px_rgba(244,113,156,0.15)]">
           <textarea
             ref={taRef}
-            className="max-h-40 flex-1 resize-none bg-transparent text-sm outline-none"
+            className="max-h-40 w-full resize-none bg-transparent px-4 pt-3.5 text-sm leading-relaxed text-gray-700 outline-none placeholder:text-muted"
             rows={1}
-            placeholder="给 WinAgent 下达指令…（Enter 发送，Shift+Enter 换行）"
+            placeholder={
+              cfg?.chatMode === 'pet'
+                ? '和安洁莉娜聊聊天，或者让她帮你跑跑腿…'
+                : '给 WinAgent 下达指令…'
+            }
             value={input}
             onChange={(e) => {
               setInput(e.target.value)
@@ -278,25 +440,49 @@ export default function App(): JSX.Element {
             }}
             onKeyDown={onKeyDown}
           />
-          {busy ? (
+          <div className="flex items-center gap-2 px-3 pb-2.5">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              accept="image/*,.txt,.md,.json,.js,.ts,.tsx,.jsx,.py,.java,.c,.cpp,.h,.css,.html,.xml,.yml,.yaml,.csv,.log,.sh,.bat"
+              onChange={onFileSelect}
+            />
             <button
-              onClick={stop}
-              className="flex h-9 w-9 items-center justify-center rounded-lg bg-red-500/80 text-white hover:bg-red-500"
+              title="添加文件或图片"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-pink-100/70 hover:text-accent"
             >
-              <Square className="h-4 w-4" />
+              <Plus className="h-4 w-4" />
             </button>
-          ) : (
-            <button
-              onClick={submit}
-              disabled={!input.trim() && attachments.length === 0}
-              className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
-            >
-              <Send className="h-4 w-4" />
-            </button>
-          )}
+            <span className="text-[11px] text-muted">Enter 发送 · Shift+Enter 换行</span>
+            <div className="ml-auto">
+              {busy ? (
+                <button
+                  onClick={stop}
+                  title="停止生成"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-400 text-white shadow-lg shadow-red-300/40 transition-all hover:bg-red-500"
+                >
+                  <Square className="h-3.5 w-3.5" />
+                </button>
+              ) : (
+                <button
+                  onClick={submit}
+                  disabled={!input.trim() && attachments.length === 0}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-accent to-accent2 text-white shadow-glow transition-all hover:opacity-90 disabled:opacity-30 disabled:shadow-none"
+                >
+                  <Send className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
         </div>
       </div>
 
+      {/* ================= 设置弹窗 ================= */}
       {showSettings && (
         <Settings
           onClose={() => setShowSettings(false)}
@@ -304,20 +490,26 @@ export default function App(): JSX.Element {
             setCfg(saved)
             setShowSettings(false)
           }}
+          initialTab={settingsTab}
+          pickSkillsOnMount={pickSkills}
         />
       )}
 
+      {/* ================= 危险操作确认 ================= */}
       {confirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-md rounded-xl border border-border bg-panel p-5 shadow-2xl">
-            <div className="mb-3 flex items-center gap-2 text-yellow-400">
-              <AlertTriangle className="h-5 w-5" />
-              <h3 className="font-semibold">确认执行危险操作</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-pink-900/20 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-border bg-white p-5 shadow-2xl">
+            <div className="mb-3 flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-100">
+                <AlertTriangle className="h-5 w-5 text-amber-500" />
+              </div>
+              <h3 className="text-[15px] font-semibold text-gray-800">确认执行危险操作</h3>
             </div>
-            <p className="mb-2 text-sm text-gray-300">
-              工具 <span className="font-mono text-accent">{confirm.name}</span> 即将执行：
+            <p className="mb-2 text-sm text-gray-600">
+              工具 <span className="rounded-md bg-accent/10 px-1.5 py-0.5 font-mono text-[13px] text-accent">{confirm.name}</span>{' '}
+              即将执行：
             </p>
-            <pre className="mb-4 max-h-48 overflow-auto rounded bg-black/40 p-2 text-xs text-gray-300">
+            <pre className="mb-4 max-h-48 overflow-auto rounded-xl border border-border bg-pink-50/50 p-3 font-mono text-xs leading-relaxed text-gray-600">
               {(() => {
                 try {
                   return JSON.stringify(JSON.parse(confirm.args), null, 2)
@@ -329,13 +521,13 @@ export default function App(): JSX.Element {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => respondConfirm(false)}
-                className="rounded border border-border px-4 py-1.5 text-sm hover:bg-border/40"
+                className="rounded-lg border border-border px-4 py-1.5 text-sm text-gray-600 transition-colors hover:bg-pink-50"
               >
                 拒绝
               </button>
               <button
                 onClick={() => respondConfirm(true)}
-                className="rounded bg-yellow-500 px-4 py-1.5 text-sm font-medium text-black hover:bg-yellow-400"
+                className="rounded-lg bg-gradient-to-br from-amber-400 to-orange-400 px-4 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90"
               >
                 允许执行
               </button>
