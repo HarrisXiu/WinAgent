@@ -117,8 +117,27 @@ export class AgentService {
   }
 
   private systemMessage(cfg: AppConfig): ChatMessage {
-    // 桌宠模式使用角色人设提示词；Agent 模式使用用户系统提示词
-    return { role: 'system', content: cfg.chatMode === 'pet' ? cfg.petPrompt : cfg.systemPrompt }
+    // 模式已合并：安洁莉娜人设（petPrompt）+ 完整 Agent 工具能力与规则
+    const toolNames = this.registry.getSchemas().map((t) => t.name)
+    const capability = [
+      '',
+      '【能力说明】',
+      '你拥有完整的 Windows 工具能力（与专业 Agent 完全相同），可以直接调用工具执行实际操作：',
+      `可用工具：${toolNames.join(', ')}`,
+      '',
+      '【执行规则】',
+      '- 用中文回复，保持安洁莉娜的人设口吻，同时专业高效地完成任务',
+      '- 查询类操作直接执行并展示结果；修改/删除类操作先说明再执行',
+      '- 涉及本地文件时用 read_file（传入绝对路径）读取后回答，不要拒绝说"无法访问"',
+      '- 涉及个人知识库时用 search_knowledge_base / read_note 检索',
+      '- 多步骤任务逐步执行并报告每步结果；操作失败时分析原因并给建议',
+      '- 只使用上面列出的工具名，不要发明不存在的工具名',
+      '',
+      '【图片生成规则】用户需要图片时，用 generate_image_prompt 生成可复用的绘图提示词并完整展示，绝不编造图片内容。',
+      '【文件编辑规则】修改已存在文件优先用 edit_file / multi_edit_file，仅新建或小文件用 write_file。',
+      '【Word 文档规则】生成 Word/docx 时：Markdown 风格用 markdown_to_word；精细排版用 create_word_document；数学公式用 LaTeX 写在 $...$ 中。'
+    ].join('\n')
+    return { role: 'system', content: cfg.petPrompt + capability }
   }
 
   /**

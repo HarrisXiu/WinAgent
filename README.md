@@ -1,9 +1,9 @@
 # WinAgent
 
- **Windows 桌面 AI Agent**。兼容 **OpenAI 格式 API** 与 **本地 Ollama**，带聊天窗口、可本地切换模型、内置完整 Windows 工具集，支持**文件/图片附件输入**，并预留 **skills（本地脚本插件）** 与 **MCP** 两种扩展挂载接口。可打包为**免安装便携 exe**，在不同电脑上拷贝即用。
+ **Windows 桌面 AI 助手**。兼容 **OpenAI 格式 API** 与 **本地 Ollama**，以《明日方舟》安洁莉娜的桌宠形象陪伴聊天，同时内置**完整 Windows 工具集**（53+ 个工具）与 **LLM Wiki 个人知识库**——你只负责剪藏，AI 负责理解和沉淀。支持 **skills（含 SKILL.md 格式）** 与 **MCP** 扩展挂载，可打包为**免安装压缩包**，在不同电脑上拷贝即用。
 
-## 下一步目标为构建llm wiki 当前为将来的个人知识库入口 欢迎各位大佬的评论和指导 所有评论和邮件我都会认真阅读和回复的 期待与大佬们交流如果有兴趣也欢迎加入此项目
-   邮箱(email):530313@qq.com;
+欢迎各位大佬的评论和指导，所有评论和邮件我都会认真阅读和回复，期待与大家交流！如有兴趣也欢迎加入此项目。
+邮箱(email):530313@qq.com;
 
 
 ## 功能特性
@@ -17,7 +17,7 @@
 - **深度思考开关**：自动 / 开启 / 关闭三态，接口不认识参数时自动去参重试
 - **Token 消耗统计**：顶栏实时显示会话累计 token，悬停查看输入/输出细分与最近一次用量
 - **流式对话**：Markdown 渲染、代码高亮、思维链折叠、工具调用可视化
-- **完整 Windows 工具集（43+ 个）**：
+- **完整 Windows 工具集（53+ 个）**：
   - 文件：`list_directory`、`read_file`、`write_file`、`edit_file`、`multi_edit_file`、`delete_file`、`copy_file`、`move_file`、`search_files`、`find_files`、`get_file_info`、`create_directory`、`grep`
   - 系统：`list_processes`、`kill_process`、`run_command`、`get_system_info`、`take_screenshot`、`list_startup_items`、`add_startup_item`、`remove_startup_item`
   - 注册表：`registry_list`、`registry_read`、`registry_write`、`registry_delete_value`、`registry_delete_key`
@@ -25,6 +25,7 @@
   - 窗口：`find_windows`、`set_window_state`、`bring_window_to_front`、`close_window`
   - 网络：`http_request`、`http_download`
   - Word 文档：`create_word_document`、`markdown_to_word`、`latex_formula_to_omml`
+  - 知识库：`search_knowledge_base`、`read_note`、`list_notes`、`read_raw_file`、`add_question`、`save_knowledge_output`、`lint_knowledge_base`、`merge_knowledge_pages`、`reflect_knowledge_base`
 - **Word 文档生成**：直接输出 `.docx`，支持标题/段落/列表/表格/分页，数学公式以 **Word 原生可编辑公式（OMML）** 插入（非图片，双击可用公式编辑器修改）
 - **Skills 挂载**：`skills/` 目录下的脚本插件（node/python/command）
 - **MCP 挂载**：`mcp.json` 挂载外部 MCP server（stdio / HTTP）
@@ -35,12 +36,16 @@
 - **上下文压缩（两阶段）**：阶段一免 LLM 轻量压缩（截断旧工具结果、剥离旧图片 base64），阶段二 LLM 摘要旧消息；摘要失败自动降级，不中断对话
 - **便携**：数据（`config.json`、`Logs/`）保存在 exe 同级目录
 - **Angelina 可爱主题**：《明日方舟》安洁莉娜主题界面——奶油色系 UI、动态角色立绘（左侧常驻，随对话状态切换「思考/执行工具/识别图片/回答」动作动画）、空状态 GIF 动图
-- **Agent / 桌宠双模式**：顶栏一键切换。**Agent 模式**为专业助手；**桌宠模式**下 AI 以安洁莉娜的角色人设陪伴聊天（可编辑人设提示词），同时保留全部工具能力「替你跑腿」
+- **单一桌宠模式（Agent 能力合并）**：AI 以安洁莉娜的角色人设陪伴聊天（人设提示词可编辑），同时拥有专业 Agent 的**完整工具能力**——读文件、操作 Windows、检索知识库，系统提示词运行时自动附加工具清单，不会"拒绝访问本地文件"
+- **LLM Wiki 个人知识库（Karpathy 模式）**：基于 Andrej Karpathy `llm-wiki` 思路——**你只负责剪藏，LLM 负责理解和沉淀**。三层架构（raw 原始文件只读 / wiki 编译层 / outputs 输出），拖拽文件自动编译为 sources/concepts/entities 页面，支持概念对齐、confidence 体系、QUESTIONS 队列、LINT/REFLECT/MERGE
+- **文档自动解析**：拖入 PDF / PPTX / DOCX / XLSX / PPT / DOC / XLS / Markdown / 文本，自动提取文本 → AI 分析 → 生成知识库页面（带进度条）；PPT 通过 Office COM 转换，旧版格式全覆盖
+- **知识库面板**：侧边滑出，文件树分层展示（📥 raw 只读 / 📚 wiki 可编辑），中缝可拖拽调整宽度，量子粒子关系图谱
+- **SKILL.md 格式支持**：除原生 `manifest.json` 外，支持 Anthropic 官方 `SKILL.md` 格式 skill，GitHub 上的 skill 可直接放入 `skills/` 目录使用
 - **图片生成提示词**：`generate_image_prompt` 工具——需要图片时生成可直接复制到 Midjourney / Stable Diffusion / 即梦AI 的绘图 Prompt（支持 17 种风格、6 种宽高比），不编造图片
 
 ## 快速开始
 
-**普通用户**：从 [Releases](https://github.com/HarrisXiu/WinAgent/releases) 下载 `WinAgent-<version>.exe`，双击即用，无需安装。
+**普通用户**：从 [Releases](https://github.com/HarrisXiu/WinAgent/releases) 下载 `WinAgent-<version>-win64.zip`，解压后双击 `win-unpacked/WinAgent.exe` 即用，无需安装。首次启动会询问是否创建桌面快捷方式。
 
 **开发者**（需 Node.js 18+）：
 
@@ -51,16 +56,17 @@ npm install
 npm run dev
 ```
 
-## 打包便携版
+## 打包
 
 ```bash
-npm run dist
+npm run dist       # 生成 release/WinAgent-<version>-win64.zip（解压即用）
+npm run dist:dir   # 只生成 release/win-unpacked/ 文件夹（不压缩，调试用）
+npm run build:icon # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO 图标
 ```
 
-产物在 `release/WinAgent-<version>-portable.exe`。这是**免安装便携版**：拷到任意 Windows 电脑双击即可运行，`config.json` / `skills/` / `mcp.json` / `Logs/` 会在 exe 同级目录读写。
-## 注意：config.json中包含ApiKey 请注意隐私保护
+**免安装便携**：解压 zip 得到 `win-unpacked/` 文件夹，拷到任意 Windows 电脑双击 `WinAgent.exe` 即可运行；`config.json` / `skills/` / `mcp.json` / `Logs/` / `wiki/`（知识库）在 exe 同级目录读写。
 
-> 提示：`npm run pack` 生成免打包的解压目录（`release/win-unpacked/`），便于调试。
+> ⚠ 注意：`config.json` 中包含加密的 ApiKey，请注意隐私保护。打包前请先关闭正在运行的应用（否则 exe/dll 被占用无法覆盖）。
 
 ## 使用本地 Ollama (使用本地小模型可能导致agent无法正确调用工具 不建议使用)
 
@@ -180,6 +186,43 @@ npm run dist
 
 > 实现为 `LaTeX → MathML（temml）→ OMML（mathml2omml）→ OOXML 写入 docx（jszip）`，纯 JS 无原生模块，**无需安装 Word 也能生成**。已修复 `mml2omml` 双重转义 bug 和空公式位多余空格问题。
 
+## LLM Wiki 个人知识库
+
+基于 Andrej Karpathy [llm-wiki](https://github.com/karpathy/llm-wiki) 思路的个人知识库，核心理念：**你只负责剪藏，LLM 负责理解和沉淀**——知识「编译一次、持续维护」，而非每次查询重新推导。
+
+### 三层架构
+
+```
+<vault>/（默认为 exe 同级 wiki/ 目录，可在设置中修改）
+├── raw/          📥 原始文件（你拥有，AI 只读）—— 拖拽/复制文件进来自动处理
+│   ├── articles/ clippings/ images/ pdfs/ notes/ personal/
+├── wiki/         📚 编译层（AI 维护，你可浏览/修正）
+│   ├── index.md  log.md  overview.md  QUESTIONS.md   （系统文件，自动维护）
+│   ├── sources/   每篇来源的摘要页（Summary/Key Points/Concepts/Contradictions）
+│   ├── concepts/  概念页（中文 title + aliases + Evolution Log + confidence）
+│   ├── entities/  实体页（人物/工具/机构/论文）
+│   └── synthesis/ outputs/ templates/
+└── outputs/      查询答案、lint 报告
+```
+
+### 使用方式
+
+- **剪藏**：把任何文档（PDF / PPTX / DOCX / XLSX / PPT / DOC / XLS / Markdown / 文本）拖进窗口 → 自动导入 raw/ → AI 提取文本、分析内容、生成 sources/concepts/entities 页面（带进度条）。手动复制文件到 raw/ 目录也会被自动监视编译
+- **浏览**：点顶栏 📚 打开知识库面板——raw 层只读预览（不可变原则），wiki 层可编辑修正；文件树分层展示，中缝可拖拽调整宽度；量子粒子关系图谱可视化
+- **对话检索**：直接问"我的知识库里有什么？"/"搜索知识库中关于 X 的内容"，AI 自动调用 `search_knowledge_base` / `read_note` / `read_raw_file` 检索并溯源回答
+- **记录问题**：说"我想搞清楚 X" → 加入 QUESTIONS.md 队列，之后摄入的新来源能回答时自动提示
+- **健康检查**：说"检查知识库" → LINT 9 项检查（broken links / stub / SHA-256 完整性 / stale 等）
+- **综合分析**：说"综合分析知识库" → REFLECT 四阶段（反向检验 / 模式扫描 / 深度合成 / Gap Analysis）
+- **去重合并**：重复概念页 → AI 先与你确认方案再执行 MERGE（保留 redirect 页）
+
+### 机制亮点
+
+- **概念对齐**：新来源提取的概念与已有概念页做 slug/aliases/语义匹配，命中则更新（Evolution Log 追加"强化/修正"），不重复建页
+- **confidence 体系**：1 来源 low → 3+ medium → 5+ 弹窗由你确认后晋升 high（你的主动背书，非计数器输出）
+- **possibly_outdated**：来源超过 2 年自动标注
+- **SHA-256 完整性**：每篇来源记录哈希，LINT 检测 raw 文件是否被篡改
+- **个人写作**：放入 `raw/personal/` 的文章走个人写作流程（写入 My Position，不参与 confidence 计数）
+
 ## 配置文件
 
 `config.json`（exe 同级目录，首次运行自动生成）：
@@ -232,6 +275,33 @@ WinAgent 拥有较高系统权限（删文件、改注册表、执行命令、�
 Electron + TypeScript + React + Vite + TailwindCSS。Windows 系统能力通过 Node `fs` 与 PowerShell 实现，**不依赖原生模块**，便于便携打包。
 
 ## 更新日志
+
+### v0.2.0（2026-08-07）
+
+**LLM Wiki 个人知识库（Karpathy 模式）**
+- 三层架构：raw/（原始文件只读）+ wiki/（编译层）+ outputs/，目录自动初始化
+- 拖拽任意文档（PDF/PPTX/DOCX/XLSX/PPT/DOC/XLS/MD/TXT）→ 自动导入 raw/ → 提取文本 → AI 编译为 sources/concepts/entities 页面，带实时进度条
+- 概念名称对齐（slug + aliases 匹配，避免重复建页）、Evolution Log、confidence 体系（5+ 来源用户确认晋升 high）
+- possibly_outdated 标注、SHA-256 完整性、个人写作流程（raw/personal/）
+- 系统文件自动维护：index.md / log.md / overview.md / QUESTIONS.md
+- 知识库面板：分层文件树（raw 只读 / wiki 可编辑）、中缝拖拽调宽、量子粒子图谱、raw 源码/预览切换
+- Agent 知识库工具 9 个：search_knowledge_base、read_note、list_notes、read_raw_file、add_question、save_knowledge_output、lint_knowledge_base（9 项检查）、merge_knowledge_pages、reflect_knowledge_base
+- raw/ 目录自动监视：任何方式放入的文件自动编译（防抖 + 去重）
+
+**Agent 模式合并入桌宠模式**
+- 移除模式切换，单一安洁莉娜桌宠：人设 + 完整 Agent 工具能力
+- 系统提示词运行时自动附加工具清单与执行规则，不再"拒绝访问本地文件"
+
+**文档格式支持**
+- PDF（pdf-parse）、PPTX/DOCX/XLSX（jszip）、PPT（Office COM 转换）、DOC（word-extractor）、XLS（SheetJS）全格式文本提取
+- 旧版二进制格式识别、未知二进制 NUL 检测，提取失败给出明确原因
+
+**其他**
+- SKILL.md 格式适配（Anthropic 官方 skill 可直接挂载）+ PDF 读取 skill
+- skills 路径打包回退（resources/skills）、pdf-parse 1.x require 加载修复
+- 注释功能修复（CodeMirror 选中文本获取）、预览滚动修复、系统文件保护
+- 打包模式改为 zip（解压即用）+ 首次启动询问桌面快捷方式
+- 版本号 0.2.0
 
 ### v0.1.0（2026-08-06）
 

@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs'
 import path from 'path'
 import { spawn } from 'child_process'
+import matter from 'gray-matter'
 import type { Tool } from '../tools/types'
 import { Logger } from '../util/Logger'
 
@@ -57,22 +58,85 @@ export async function loadSkills(skillsDir: string): Promise<Tool[]> {
   }
   for (const name of entries) {
     const dir = path.join(skillsDir, name)
-    const manifestPath = path.join(dir, 'manifest.json')
     try {
       const st = await fs.stat(dir)
       if (!st.isDirectory()) continue
-      const manifest: SkillManifest = JSON.parse(await fs.readFile(manifestPath, 'utf-8'))
-      if (!manifest.name || !manifest.entry) continue
-      tools.push({
-        schema: {
-          name: manifest.name,
-          description: `[skill] ${manifest.description || manifest.name}`,
-          parameters: manifest.parameters || { type: 'object', properties: {}, required: [] }
-        },
-        dangerous: manifest.dangerous,
-        run: (args) => execSkill(dir, manifest, args)
-      })
-      Logger.info(`[Skill] 已加载: ${manifest.name}`)
+
+      // 格式 1：manifest.json（WinAgent 原生格式）
+      const manifestPath = path.join(dir, 'manifest.json')
+      const skillMdPath = path.join(dir, 'SKILL.md')
+      let manifest: SkillManifest | null = null
+      let skillMdText: string | null = null
+      try {
+        manifest = JSON.parse(await fs.readFile(manifestPath, 'utf-8'))
+      } catch {
+        manifest = null
+      }
+      try {
+        skillMdText = await fs.readFile(skillMdPath, 'utf-8')
+      } catch {
+        skillMdText = null
+      }
+
+      // 格式 2：SKILL.md（Anthropic 官方格式，frontmatter 提供元数据）
+      let mdMeta: Record<string, any> = {}
+      let mdBody = ''
+      if (!manifest && skillMdText) {
+        const parsed = matter(skillMdText)
+        mdMeta = (parsed.data || {}) as Record<string, any>
+        mdBody = parsed.content.trim()
+      }
+
+      if (manifest) {
+        if (!manifest.name || !manifest.entry) continue
+        tools.push({
+          schema: {
+            name: manifest.name,
+            description: `[skill] ${manifest.description || manifest.name}`,
+            parameters: manifest.parameters || { type: 'object', properties: {}, required: [] }
+          },
+          dangerous: manifest.dangerous,
+          run: (args) => execSkill(dir, manifest!, args)
+        })
+        Logger.info(`[Skill] 已加载 (manifest.json): ${manifest.name}`)
+        continue
+      }
+
+      if (skillMdText && mdMeta.name) {
+        const name = String(mdMeta.name)
+        const description = String(mdMeta.description || name)
+        // 可执行字段：entry/command（兼容官方 executable-manifest 提案与自定义扩展）
+        const entry = mdMeta.entry ? String(mdMeta.entry) : null
+        const runtime = (mdMeta.runtime as 'node' | 'python' | 'command') || 'node'
+        const parameters = (mdMeta.parameters as SkillManifest['parameters']) || {
+          type: 'object' as const,
+          properties: {},
+          required: []
+        }
+        const dangerous = !!mdMeta.dangerous
+        const mdContent = skillMdText
+
+        tools.push({
+          schema: {
+            name,
+            description: `[skill] ${description}（SKILL.md 指令：${mdBody.slice(0, 200)}…）`,
+            parameters
+          },
+          dangerous,
+          run: async (args) => {
+            if (entry) {
+              // 有入口脚本 → 作为可执行工具运行（stdin JSON → stdout 结果）
+              return execSkill(dir, { name, description, entry, runtime, parameters, dangerous }, args)
+            }
+            // 无入口脚本 → 返回 SKILL.md 完整指令，由 LLM 遵循执行
+            return `以下是技能「${name}」的操作指令（SKILL.md 全文），请严格遵循执行：\n\n${mdContent}`
+          }
+        })
+        Logger.info(`[Skill] 已加载 (SKILL.md): ${name}`)
+        continue
+      }
+
+      Logger.info(`[Skill] 跳过 ${name}: 缺少 manifest.json 或 SKILL.md`)
     } catch (e) {
       Logger.error(`[Skill] 加载失败 ${name}: ${String(e)}`)
     }

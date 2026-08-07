@@ -17,7 +17,7 @@ export interface ChatTurn {
   reasoning?: string
   toolCalls: ToolCallView[]
   streaming?: boolean
-  attachments?: Array<{ name: string; isImage: boolean; dataUrl?: string; path: string }>
+  attachments?: Array<{ name: string; isImage: boolean; dataUrl?: string; path: string; mime?: string }>
 }
 
 export interface ConfirmRequest {
@@ -127,12 +127,12 @@ export function useAgent() {
     }
   }, [patchAssistant])
 
-  const send = useCallback(async (text: string, attachments?: Array<{ name: string; isImage: boolean; dataUrl?: string; path: string }>) => {
+  const send = useCallback(async (text: string, attachments?: Array<{ name: string; isImage: boolean; dataUrl?: string; path: string; mime?: string }>) => {
     if (!text.trim() || busy) return
     setTurns((prev) => [...prev, { role: 'user', content: text, toolCalls: [], attachments }])
     setBusy(true)
     setStatus('思考中…')
-    await window.winagent.send(text, attachments)
+    await window.winagent.send(text, attachments as any)
   }, [busy])
 
   const stop = useCallback(() => {

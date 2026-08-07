@@ -423,45 +423,16 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
             {/* ---------- 系统提示词 ---------- */}
             {tab === 'system' && (
               <section>
-                <h3 className="mb-3 text-[15px] font-medium text-gray-800">对话模式与提示词</h3>
-                <div className="mb-3 flex gap-2">
-                  {(['agent', 'pet'] as ChatMode[]).map((m) => (
-                    <button
-                      key={m}
-                      onClick={() => update({ chatMode: m })}
-                      className={`rounded-lg px-3.5 py-1.5 text-xs font-medium transition-all ${
-                        cfg.chatMode === m
-                          ? 'bg-gradient-to-r from-accent to-accent2 text-white shadow-glow'
-                          : 'border border-border text-muted hover:text-accent'
-                      }`}
-                    >
-                      {m === 'agent' ? '🤖 专业 Agent' : '🦊 桌宠（安洁莉娜）'}
-                    </button>
-                  ))}
-                </div>
-                {cfg.chatMode === 'pet' ? (
-                  <>
-                    <h3 className="mb-1.5 text-[15px] font-medium text-gray-800">桌宠人设（安洁莉娜）</h3>
-                    <p className="mb-3 text-[11.5px] text-muted">
-                      桌宠模式下 AI 以安洁莉娜的角色人设陪伴聊天，同时保留工具能力为你「跑腿」。此提示词可自由修改或扩写。
-                    </p>
-                    <textarea
-                      className="h-52 w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm leading-relaxed text-gray-700"
-                      value={cfg.petPrompt}
-                      onChange={(e) => update({ petPrompt: e.target.value })}
-                    />
-                  </>
-                ) : (
-                  <>
-                    <h3 className="mb-1.5 text-[15px] font-medium text-gray-800">系统提示词（Agent 模式）</h3>
-                    <p className="mb-3 text-[11.5px] text-muted">定义 WinAgent 的全局行为与角色设定，将注入每轮对话。</p>
-                    <textarea
-                      className="h-52 w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm leading-relaxed text-gray-700"
-                      value={cfg.systemPrompt}
-                      onChange={(e) => update({ systemPrompt: e.target.value })}
-                    />
-                  </>
-                )}
+                <h3 className="mb-3 text-[15px] font-medium text-gray-800">提示词</h3>
+                <p className="mb-3 text-[11.5px] text-muted">
+                  模式已合并：AI 以安洁莉娜的人设陪伴聊天，同时保留完整工具能力为你「跑腿」。此提示词可自由修改或扩写；工具清单与执行规则会在运行时自动附加。
+                </p>
+                <h3 className="mb-1.5 text-[15px] font-medium text-gray-800">桌宠人设（安洁莉娜）</h3>
+                <textarea
+                  className="h-52 w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm leading-relaxed text-gray-700"
+                  value={cfg.petPrompt}
+                  onChange={(e) => update({ petPrompt: e.target.value })}
+                />
               </section>
             )}
 
@@ -483,6 +454,16 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                     value={cfg.mcpConfigPath}
                     onChange={(e) => update({ mcpConfigPath: e.target.value })}
                   />
+                </label>
+                <label className="block text-sm">
+                  <span className="mb-1.5 block text-xs text-muted">知识库 (Vault) 路径</span>
+                  <input
+                    className={inputCls}
+                    value={cfg.vaultPath || ''}
+                    placeholder="默认为 data/wiki（Obsidian 兼容格式）"
+                    onChange={(e) => update({ vaultPath: e.target.value })}
+                  />
+                  <p className="mt-1 text-[11px] text-muted/70">修改后需重启应用生效。知识库使用 Obsidian 兼容的 Markdown 格式。</p>
                 </label>
                 <div className="flex items-center gap-2 rounded-xl border border-border/70 bg-pink-50/40 p-3.5 text-[11.5px] text-muted">
                   <FolderOpen className="h-4 w-4 shrink-0 text-accent" />

@@ -43,11 +43,10 @@ export interface VisionAssistConfig {
 export type ThinkingMode = 'auto' | 'on' | 'off'
 
 /**
- * 对话模式：
- * - agent：专业 Agent 形态，使用 systemPrompt，以高效完成任务为先
- * - pet：桌宠聊天形态，使用 petPrompt（角色人设，如安洁莉娜），陪伴感优先
+ * 对话模式：已合并为单一桌宠模式（安洁莉娜人设 + 完整 Agent 工具能力）
+ * 保留字段兼容旧配置
  */
-export type ChatMode = 'agent' | 'pet'
+export type ChatMode = 'pet'
 
 export interface AppConfig {
   activeProviderId: string
@@ -75,6 +74,8 @@ export interface AppConfig {
   chatMode: ChatMode
   /** 桌宠模式人设提示词（角色扮演） */
   petPrompt: string
+  /** Wiki 个人知识库 Vault 路径（默认相对于 dataDir） */
+  vaultPath: string
 }
 
 export interface ToolParameter {
@@ -143,3 +144,145 @@ export interface ToolInfo {
 export interface ModelInfo {
   id: string
 }
+
+// ==================== Wiki 知识库类型 ====================
+
+/** 笔记元数据（轻量，不含正文） */
+export interface NoteMeta {
+  path: string           // 相对于 vault 根目录, 如 "projects/my-note.md"
+  title: string          // 显示标题
+  tags: string[]
+  created: string        // ISO 时间戳
+  updated: string
+  kind: 'file' | 'folder'
+  children?: NoteMeta[]  // 文件夹子项
+}
+
+/** 笔记注释/批注 */
+export interface NoteAnnotation {
+  id: string
+  text: string
+  range: string          // "line:3-5" 或 "paragraph:2"
+  created: string
+}
+
+/** 笔记完整内容 */
+export interface NoteContent extends NoteMeta {
+  rawBody: string        // frontmatter 之后的 markdown 正文
+  links: string[]        // 解析出的 [[wiki-link]] 目标列表
+  aiSummary?: string
+  aiAnalyzedAt?: string
+  annotations?: NoteAnnotation[]
+  /** frontmatter graph-excluded 标记（系统文件不参与图谱） */
+  graphExcluded?: boolean
+}
+
+/** 写入笔记的数据 */
+export interface NoteData {
+  title: string
+  tags: string[]
+  body: string
+}
+
+/** 图谱节点 */
+export interface GraphNode {
+  id: string             // 笔记路径(无扩展名)
+  label: string
+  tags: string[]
+  degree: number
+  strength: number       // 0-1
+  x?: number
+  y?: number
+  vx?: number
+  vy?: number
+}
+
+/** 图谱边 */
+export interface GraphEdge {
+  source: string
+  target: string
+  type: 'link' | 'tag' | 'ai'
+  weight: number
+}
+
+/** 图谱数据 */
+export interface GraphData {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+}
+
+/** 搜索结果 */
+export interface SearchResult {
+  path: string
+  title: string
+  snippet: string
+  score: number
+}
+
+/** 标签及计数 */
+export interface TagWithCount {
+  tag: string
+  count: number
+}
+
+/** AI 分析建议 */
+export interface AISuggestion {
+  tags?: string[]
+  summary?: string
+  relations?: Array<{ target: string; reason: string }>
+}
+
+/** INGEST 单次 LLM 分析结果（LLM Wiki 编译模式） */
+export interface IngestConcept {
+  name: string              // 概念中文名
+  nameEn?: string           // 概念英文名
+  definition: string        // 一句话定义
+  matchSlug?: string        // 命中已有概念时填入其 slug（LLM 从传入列表中判断）
+}
+
+export interface IngestEntity {
+  name: string
+  type: string              // person / tool / institution / paper
+  description: string
+  matchSlug?: string
+}
+
+export interface IngestAnalysis {
+  slug: string              // 英文小写连字符，如 attention-is-all-you-need
+  title: string             // 中文标题
+  summary: string           // 2-4 句摘要
+  keyPoints: string[]       // 3-8 条核心要点
+  concepts: IngestConcept[]
+  entities: IngestEntity[]
+  contradictions?: string[] // 与其他来源的分歧
+  answeredQuestions?: string[] // 匹配到的开放问题（来自 QUESTIONS.md）
+}
+
+/** INGEST 完成后的结果（返回前端展示） */
+export interface IngestResult {
+  sourcePath: string        // wiki/sources/<slug>.md
+  conceptPaths: string[]    // 新建/更新的概念页
+  entityPaths: string[]     // 新建/更新的实体页
+  created: string[]         // 新建的路径
+  updated: string[]         // 更新的路径
+  logEntry: string          // 写入 log.md 的条目
+  /** 达到 5+ 来源且非 high 的概念（等待用户确认晋升） */
+  confirmHigh?: Array<{ slug: string; title: string; sourceCount: number }>
+  /** 本来源回答了的开放问题 */
+  answeredQuestions?: string[]
+}
+
+/** INGEST 进度事件（主进程 → 渲染进程） */
+export interface IngestProgress {
+  file: string              // 正在处理的源文件名
+  stage: string             // 阶段描述（中文）
+  percent: number           // 0-100
+  done?: boolean            // true = 处理完成
+  error?: string            // 错误信息（失败时）
+}
+
+/** Vault 文件变更事件（主→渲染推送） */
+export type VaultChangeEvent =
+  | { type: 'created'; path: string }
+  | { type: 'modified'; path: string }
+  | { type: 'deleted'; path: string }

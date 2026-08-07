@@ -137,3 +137,67 @@ input[type='checkbox'] {
   border-color: #f5dfe8;
   margin: 1em 0;
 }
+
+/* ==================== Wiki 知识库样式 ==================== */
+
+/* Wiki 侧边栏文件树 */
+.wiki-tree-item {
+  @apply flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-gray-600 transition-colors;
+}
+.wiki-tree-item:hover {
+  @apply bg-pink-100/50 text-accent;
+}
+.wiki-tree-item.active {
+  @apply bg-accent/10 text-accent font-medium;
+}
+
+/* Wiki 编辑器 CodeMirror 暗色覆盖 */
+.wiki-editor .cm-editor {
+  @apply h-full;
+}
+.wiki-editor .cm-editor .cm-scroller {
+  @apply font-mono text-sm leading-relaxed;
+}
+
+/* Wiki 拖拽导入遮罩 */
+.wiki-drop-overlay {
+  @apply fixed inset-0 z-50 flex items-center justify-center bg-wiki-dark/80 backdrop-blur-sm;
+  animation: wikiDropPulse 1.5s ease-in-out infinite;
+}
+@keyframes wikiDropPulse {
+  0%, 100% { background-color: rgba(10, 10, 20, 0.7); }
+  50% { background-color: rgba(168, 85, 247, 0.15); }
+}
+
+/* 知识库侧边面板滑入动画 */
+.wiki-slide-panel {
+  animation: wikiSlideIn 0.2s ease-out;
+}
+@keyframes wikiSlideIn {
+  from { width: 0; opacity: 0; }
+  to   { width: 42vw; opacity: 1; }
+}
+
+/* Wiki 标签样式 */
+.wiki-tag {
+  @apply inline-flex items-center rounded-full bg-wiki-accent/15 px-2.5 py-0.5 text-[11px] font-medium text-wiki-accent transition-colors;
+}
+.wiki-tag:hover {
+  @apply bg-wiki-accent/25;
+}
+
+/* Wiki 图谱面板 — 浮动窗口 */
+.wiki-graph-panel {
+  @apply absolute inset-4 z-50 flex flex-col rounded-2xl border border-wiki-border bg-wiki-dark shadow-2xl overflow-hidden;
+  box-shadow: 0 0 60px rgba(168, 85, 247, 0.2), 0 8px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* Wiki 状态栏 */
+.wiki-statusbar {
+  @apply flex items-center gap-4 border-t border-border/60 bg-white/80 px-4 py-1 text-[11px] text-muted;
+}
+
+/* CodeMirror Wiki 链接语法高亮 */
+.cm-wikilink {
+  @apply text-wiki-accent underline decoration-wiki-accent/40 underline-offset-2;
+}

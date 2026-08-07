@@ -57,6 +57,24 @@ Word 文档：create_word_document, markdown_to_word, latex_formula_to_omml
 
 【文件编辑规则】修改已存在文件优先用 edit_file / multi_edit_file（精确字符串替换），仅新建或小文件用 write_file。
 【Word 文档规则】用户要求生成 Word/docx 时：内容为 Markdown 风格用 markdown_to_word；需精细控制排版用 create_word_document。数学公式用 LaTeX 语法写在 $...$（行内）或 formula 块 / $$...$$（独立）中，会插入为 Word 原生可编辑公式。复杂公式可先用 latex_formula_to_omml 校验语法。
+
+【知识库工具】
+search_knowledge_base: 全文搜索个人知识库（vault），查找相关资料和笔记
+read_note: 读取知识库中指定笔记的完整内容
+list_notes: 列出知识库中的所有笔记（分层结构：raw 原始文件区 + wiki 编译知识区）
+read_raw_file: 读取知识库 raw 层（原始剪藏）的完整内容，用于溯源查看原文
+add_question: 将用户的开放问题记录到 QUESTIONS.md 问题队列
+save_knowledge_output: 将高价值查询答案持久化到 wiki/outputs/（避免答案消失在对话中）
+lint_knowledge_base: 对知识库执行 9 项健康检查（broken links、stub、哈希完整性、stale 等）
+merge_knowledge_pages: 合并重复的知识库页面（先与用户确认方案，绝不自动合并）
+reflect_knowledge_base: 对知识库执行综合分析（反向检验、模式扫描、Gap Analysis）
+
+当用户询问与你已存储的知识、文档、笔记相关的问题时，优先使用 search_knowledge_base 查找相关资料，必要时用 read_note 阅读全文再作答。如果知识库中有相关信息，明确告诉用户这是来自其个人知识库的内容。
+查询回答时遵循溯源规则：核心结论必须追溯到 wiki/sources/ 下的具体来源页（不允许只引用 concept 页）；注明各来源 confidence 级别；来源相互矛盾时显式标注分歧。若答案有复用价值，调用 save_knowledge_output 持久化到 wiki/outputs/。
+当用户说「我想搞清楚 X」「记录一个问题」时，调用 add_question 加入问题队列。
+当用户说「检查/健康检查知识库」时，调用 lint_knowledge_base。
+当用户说「综合分析/reflect 知识库」时，调用 reflect_knowledge_base。
+当发现两个页面内容重复需要合并时，先向用户展示合并方案并确认，确认后调用 merge_knowledge_pages。
 注意：写 HKLM 注册表、改系统目录、模拟输入等操作可能需要以管理员身份运行。`
 
 /** 桌宠模式默认人设：明日方舟·安洁莉娜 */
@@ -133,8 +151,9 @@ export function defaultConfig(): AppConfig {
     },
     stream: true,
     thinkingMode: 'auto',
-    chatMode: 'agent',
-    petPrompt: DEFAULT_PET_PROMPT
+    chatMode: 'pet',
+    petPrompt: DEFAULT_PET_PROMPT,
+    vaultPath: ''
   }
 }
 
@@ -206,6 +225,12 @@ export class ConfigStore {
 
   resolvePath(p: string): string {
     if (!p) return getDataDir()
+    return path.isAbsolute(p) ? p : path.join(getDataDir(), p)
+  }
+
+  /** 解析 vault 路径：默认 '{dataDir}/wiki' */
+  resolveVaultPath(): string {
+    const p = this.cfg.vaultPath || 'wiki'
     return path.isAbsolute(p) ? p : path.join(getDataDir(), p)
   }
 }

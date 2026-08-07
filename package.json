@@ -1,6 +1,6 @@
 {
   "name": "winagent",
-  "version": "1.2.0",
+  "version": "0.2.0",
   "description": "Windows AI Agent（OpenAI 兼容 + 本地 Ollama，内置完整 Windows 工具集，支持 skills 与 MCP 挂载）",
   "author": "WinAgent",
   "license": "MIT",
@@ -9,16 +9,28 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
+    "build:icon": "node scripts/build-icon.js",
     "pack": "electron-vite build && electron-builder --dir",
-    "dist": "electron-vite build && electron-builder"
+    "dist": "electron-vite build && electron-builder",
+    "dist:dir": "electron-vite build && electron-builder --dir"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/commands": "^6.10.4",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.8",
+    "gray-matter": "^4.0.3",
     "highlight.js": "^11.9.0",
     "jszip": "^3.10.1",
     "lucide-react": "^0.400.0",
     "marked": "^12.0.2",
     "mathml2omml": "^0.5.0",
-    "temml": "^0.13.3"
+    "pdf-parse": "^1.1.1",
+    "temml": "^0.13.3",
+    "word-extractor": "^1.0.4",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/node": "^20.12.7",
@@ -29,6 +41,8 @@
     "electron": "^30.0.1",
     "electron-builder": "^24.13.3",
     "electron-vite": "^2.1.0",
+    "jimp": "^1.6.1",
+    "png-to-ico": "^3.0.2",
     "postcss": "^8.4.38",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

@@ -19,18 +19,24 @@ interface Entry {
 
 export class ToolRegistry {
   private tools = new Map<string, Entry>()
+  private wikiTools: Tool[] = []
   private mcp = new McpManager()
 
   private addAll(tools: Tool[], source: ToolSource): void {
     for (const t of tools) this.tools.set(t.schema.name, { tool: t, source })
   }
 
+  /** 注册知识库工具（在 initialize 前调用，工具将在下次 initialize 时生效） */
+  setWikiTools(tools: Tool[]): void {
+    this.wikiTools = tools
+  }
+
   async initialize(cfg: AppConfig): Promise<void> {
     this.tools.clear()
     this.mcp.dispose()
-    // 内置工具
+    // 内置工具（含知识库工具）
     this.addAll(
-      [...fileTools, ...systemTools, ...registryTools, ...inputTools, ...windowTools, ...httpTools, ...docxTools, ...imageTools],
+      [...fileTools, ...systemTools, ...registryTools, ...inputTools, ...windowTools, ...httpTools, ...docxTools, ...imageTools, ...this.wikiTools],
       'builtin'
     )
     void cfg
