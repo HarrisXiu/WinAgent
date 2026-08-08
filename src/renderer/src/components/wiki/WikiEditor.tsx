@@ -1,8 +1,11 @@
-import { useState, useCallback, useRef } from 'react'
-import { Edit3, Eye, Save, X, Trash2, Loader2, MessageSquarePlus, FileCode2, FileText, ImageIcon } from 'lucide-react'
+import { useState, useCallback, useRef, useEffect } from 'react'
+import { Edit3, Eye, Save, X, Trash2, Loader2, MessageSquarePlus, FileCode2, FileText, ImageIcon, Columns2 } from 'lucide-react'
 import CodeMirrorEditor, { type CodeMirrorEditorHandle } from './CodeMirrorEditor'
 import MarkdownPreview from './MarkdownPreview'
 import type { NoteContent, NoteData } from '../../../../shared/types'
+
+/** 双栏对照模式：compiled=仅编译内容 / split=左右对照 / raw=仅原文 */
+type DualMode = 'compiled' | 'split' | 'raw'
 
 interface Props {
   note: NoteContent | null
@@ -31,7 +34,71 @@ export default function WikiEditor({
   // 只读模式：源码/渲染视图切换
   const [rawSourceView, setRawSourceView] = useState(false)
 
+  // === 双栏对照（source/personal-writing 页：AI 编译内容 + 原文） ===
+  const [dualMode, setDualMode] = useState<DualMode>('compiled')
+  const [rawNote, setRawNote] = useState<NoteContent | null>(null)
+  const [splitRatio, setSplitRatio] = useState(50)
+  const splitDragRef = useRef<{ startX: number; startRatio: number } | null>(null)
+
   const cmRef = useRef<CodeMirrorEditorHandle>(null)
+
+  // 是否可用双栏对照：非编辑态、非 raw 只读、且该页关联了原始文件（frontmatter raw_file）
+  const dualAvailable = !!note && !editing && !readonly && !!note.rawFile
+
+  // 切换笔记时加载原文 + 重置视图模式
+  useEffect(() => {
+    setRawNote(null)
+    setDualMode('compiled')
+    if (note?.rawFile) {
+      window.winagent.wiki.readNote(note.rawFile).then(setRawNote).catch(() => setRawNote(null))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [note?.path])
+
+  // 分栏比例拖拽（照抄 App.tsx startPanelDrag 模式，按容器宽度换算百分比）
+  const startSplitDrag = useCallback((e: React.MouseEvent): void => {
+    e.preventDefault()
+    const container = (e.currentTarget as HTMLElement).parentElement
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    splitDragRef.current = { startX: e.clientX, startRatio: splitRatio }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    const onMove = (ev: MouseEvent): void => {
+      if (!splitDragRef.current || !container) return
+      const delta = ev.clientX - splitDragRef.current.startX
+      const newRatio = Math.min(85, Math.max(15, splitDragRef.current.startRatio + (delta / rect.width) * 100))
+      setSplitRatio(newRatio)
+    }
+    const onUp = (): void => {
+      splitDragRef.current = null
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [splitRatio])
+
+  /** 原文栏内容（二进制 raw 文件 rawBody 为空 → 占位说明） */
+  const renderRawPane = (): JSX.Element => {
+    if (rawNote && rawNote.rawBody.trim()) {
+      return (
+        <MarkdownPreview key={`raw-${note?.path}`} content={rawNote.rawBody} notePath={rawNote.path} onLinkClick={onLinkClick} />
+      )
+    }
+    return (
+      <div className="flex h-full items-center justify-center px-6 text-center">
+        <div className="max-w-xs">
+          <div className="mb-2 text-3xl">📄</div>
+          <div className="text-[12.5px] leading-relaxed text-muted">
+            原始文件为二进制格式（pdf/图片），无法在知识库中预览，请在文件管理器中打开查看。AI 编译内容见左侧栏。
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   // 添加注释（CM6 的选中文本必须通过 view.state 获取，window.getSelection 取不到）
   const handleAddAnnotation = useCallback(() => {
@@ -171,6 +238,32 @@ export default function WikiEditor({
             </>
           ) : (
             <>
+              {/* 双栏对照三态切换（source/personal-writing 页） */}
+              {dualAvailable && (
+                <div
+                  className="flex items-center gap-0.5 rounded-lg border border-border bg-pink-50/60 p-0.5"
+                  title="AI 编译内容 与 原文 对照查看"
+                >
+                  {(
+                    [
+                      ['compiled', '编译'],
+                      ['split', '对照'],
+                      ['raw', '原文']
+                    ] as Array<[DualMode, string]>
+                  ).map(([m, label]) => (
+                    <button
+                      key={m}
+                      onClick={() => setDualMode(m)}
+                      className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] font-medium transition-colors ${
+                        dualMode === m ? 'bg-white text-accent shadow-sm' : 'text-muted hover:text-gray-700'
+                      }`}
+                    >
+                      {m === 'split' && <Columns2 className="h-3 w-3" />}
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
               <button
                 onClick={togglePreview}
                 title={previewMode ? '编辑' : '预览'}
@@ -245,6 +338,34 @@ export default function WikiEditor({
                 onLinkClick={onLinkClick}
               />
             </div>
+          )
+        ) : dualAvailable && dualMode !== 'compiled' ? (
+          /* ===== 双栏对照（AI 编译内容 | 原文） ===== */
+          dualMode === 'split' ? (
+            <div className="flex min-w-0 flex-1">
+              {/* 左：AI 编译内容 */}
+              <div className="min-w-0 shrink-0" style={{ width: `${splitRatio}%` }}>
+                <MarkdownPreview
+                  key={`compiled-${note.path}`}
+                  content={note.rawBody}
+                  notePath={note.path}
+                  onLinkClick={onLinkClick}
+                />
+              </div>
+              {/* 中缝拖拽手柄 */}
+              <div
+                className="w-1 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-accent/50 active:bg-accent/60"
+                onMouseDown={startSplitDrag}
+                title="拖拽调整对照比例"
+              />
+              {/* 右：原文 */}
+              <div className="min-w-0 shrink-0" style={{ width: `${100 - splitRatio}%` }}>
+                {renderRawPane()}
+              </div>
+            </div>
+          ) : (
+            /* 仅原文 */
+            <div className="flex-1">{renderRawPane()}</div>
           )
         ) : (
           <>

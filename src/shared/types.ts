@@ -175,6 +175,8 @@ export interface NoteContent extends NoteMeta {
   annotations?: NoteAnnotation[]
   /** frontmatter graph-excluded 标记（系统文件不参与图谱） */
   graphExcluded?: boolean
+  /** frontmatter raw_file 字段（source/personal-writing 页指向的原始文件 relPath，双栏对照用） */
+  rawFile?: string
 }
 
 /** 写入笔记的数据 */
@@ -256,6 +258,10 @@ export interface IngestAnalysis {
   entities: IngestEntity[]
   contradictions?: string[] // 与其他来源的分歧
   answeredQuestions?: string[] // 匹配到的开放问题（来自 QUESTIONS.md）
+  /** 来源写作语言（如 zh / en），用于跨语言合并检测 */
+  language?: string
+  /** 若本来源是译文/转述，填原始出处（URL 或标题）；原创来源省略 */
+  canonicalSource?: string
 }
 
 /** INGEST 完成后的结果（返回前端展示） */
@@ -270,6 +276,40 @@ export interface IngestResult {
   confirmHigh?: Array<{ slug: string; title: string; sourceCount: number }>
   /** 本来源回答了的开放问题 */
   answeredQuestions?: string[]
+}
+
+/** 批量摄入：首篇编译完成后的暂停态（交互式标定） */
+export interface BatchIngestStartResult {
+  /** 第一批原始文件 relPath（双栏对照用） */
+  rawFile: string
+  first: IngestResult
+  /** 批量总数（含已编译的首篇） */
+  total: number
+}
+
+/** 批量摄入：剩余文件全部编译完成后的汇总 */
+export interface BatchIngestDoneResult {
+  results: IngestResult[]
+  errors: Array<{ path: string; error: string }>
+  /** 聚合的待确认 high 概念（按 slug 去重） */
+  confirmHigh: Array<{ slug: string; title: string; sourceCount: number }>
+}
+
+/** 工作流（LINT/REFLECT/MERGE/QUERY）统一返回 */
+export interface WorkflowResult {
+  ok: boolean
+  /** 报告页 relPath（渲染层在编辑器中打开它） */
+  reportPath: string
+  summary: string
+  error?: string
+}
+
+/** LINT 结果（UI 需要结构化 issues 与重新摄入列表） */
+export interface LintWorkflowResult extends WorkflowResult {
+  /** 全部问题行（含检查编号） */
+  issues: string[]
+  /** 检查 6 SHA-256 变化的 raw 文件路径（UI 提供「重新摄入」按钮） */
+  modifiedRawFiles: string[]
 }
 
 /** INGEST 进度事件（主进程 → 渲染进程） */

@@ -97,6 +97,7 @@ export class AiPipeline {
    * 并要求 LLM 基于已有概念列表做概念名称对齐（matchSlug）
    * @param openQuestions 开放问题列表（来自 QUESTIONS.md，判断本来源是否能回答）
    * @param isPersonal 是否为个人写作（raw/personal/，走个人写作流程）
+   * @param contract 知识库行为契约（vault 根 CLAUDE.md 前 MAX_CONTRACT_CHARS 字符，每次摄入重新读盘）
    */
   async ingestSource(
     provider: ProviderConfig,
@@ -104,7 +105,8 @@ export class AiPipeline {
     rawBody: string,
     existingConcepts: ExistingConceptInfo[],
     openQuestions: string[] = [],
-    isPersonal = false
+    isPersonal = false,
+    contract = ''
   ): Promise<IngestAnalysis> {
     this.abortController = new AbortController()
     const signal = this.abortController.signal
@@ -126,6 +128,10 @@ export class AiPipeline {
 - 不参与已有概念的 source_count 计数（但 matchSlug 对齐规则照常）`
       : ''
 
+    const contractRule = contract
+      ? `\n\n=== 知识库行为契约（CLAUDE.md，必须遵守）===\n${contract}`
+      : ''
+
     const messages: ChatMessage[] = [
       {
         role: 'system',
@@ -143,15 +149,16 @@ export class AiPipeline {
     {"name": "实体名", "type": "person|tool|institution|paper", "description": "一句话描述", "matchSlug": "命中已有实体的 slug（否则省略）"}
   ],
   "contradictions": ["与知识库已有内容的分歧（若无则省略）"],
-  "answeredQuestions": ["本来源能回答的开放问题原文（若下方开放问题列表中有能回答的，复制原问题文本；没有则省略该字段"]
+  "answeredQuestions": ["本来源能回答的开放问题原文（若下方开放问题列表中有能回答的，复制原问题文本；没有则省略该字段"],
+  "language": "来源写作语言代码（zh/en/ja/…，无法判断则省略）",
+  "canonicalSource": "若本来源是译文/转述/转载，填原始出处（URL 或标题）；原创来源省略该字段"
 }
-
 ${personalRule}
 概念对齐规则（重要）：
 - 下方提供了知识库中已有概念列表（slug + 中文名 + aliases）
 - 提取概念时，若该概念与已有概念的 slug、中文名、aliases 或语义相同 → 在 matchSlug 填入已有概念的 slug，表示"更新已有页"
 - 只有确实不存在时才作为新概念（不填 matchSlug）
-- 实体同理（知识库已有实体在下方列出时对齐）`
+- 实体同理（知识库已有实体在下方列出时对齐）${contractRule}`
       },
       {
         role: 'user',
@@ -173,11 +180,15 @@ ${questionList}
     try {
       const result = await chatStream(provider, messages, {
         temperature: 0.3,
-        maxTokens: 1500,
+        maxTokens: 3000,
         stream: false,
         signal
       })
-      return sanitizeIngest(parseJsonObject(result.content) ?? {})
+      const parsed = parseJsonObject(result.content)
+      if (!parsed) {
+        console.warn('[AiPipeline] INGEST LLM 输出无法解析为 JSON，将使用空兜底。前 200 字符:', result.content.slice(0, 200))
+      }
+      return sanitizeIngest(parsed ?? {})
     } catch (e) {
       throw new Error(`INGEST 分析失败: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
@@ -365,7 +376,9 @@ function sanitizeIngest(raw: any): IngestAnalysis {
       }))
       .slice(0, 10),
     contradictions: strArr(raw.contradictions),
-    answeredQuestions: strArr(raw.answeredQuestions)
+    answeredQuestions: strArr(raw.answeredQuestions),
+    language: str(raw.language, undefined as any) || undefined,
+    canonicalSource: str(raw.canonicalSource, undefined as any) || undefined
   }
 }
 

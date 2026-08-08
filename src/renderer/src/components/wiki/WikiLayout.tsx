@@ -11,9 +11,14 @@ interface Props {
   onSwitchVaultPath: () => void
   /** 紧凑模式：默认关闭右侧详情面板，适合在侧边栏中展示 */
   compact?: boolean
+  /**
+   * 拖拽文件委派：独立窗口模式下由 WikiWindowApp 接管
+   * （1 个走单文件快路径，多个走批量标定）。未提供时使用本组件内置逻辑。
+   */
+  onDropFiles?: (files: File[]) => void
 }
 
-export default function WikiLayout({ onSwitchVaultPath, compact }: Props): JSX.Element {
+export default function WikiLayout({ onSwitchVaultPath, compact, onDropFiles }: Props): JSX.Element {
   const wiki = useWiki()
   const [dragOver, setDragOver] = useState(false)
   const [showRightPanel, setShowRightPanel] = useState(!compact)
@@ -149,6 +154,12 @@ export default function WikiLayout({ onSwitchVaultPath, compact }: Props): JSX.E
     const files = e.dataTransfer.files
     if (!files || files.length === 0) return
 
+    // 独立窗口模式：委派给 WikiWindowApp 处理（单文件快路径 / 多文件批量标定）
+    if (onDropFiles) {
+      onDropFiles(Array.from(files))
+      return
+    }
+
     for (const file of Array.from(files)) {
       const filePath = (file as any).path
       if (!filePath) continue
@@ -173,7 +184,7 @@ export default function WikiLayout({ onSwitchVaultPath, compact }: Props): JSX.E
         setIngestMsg({ text: `✗ 导入失败: ${err.message || '无法读取该文件'}`, ok: false })
       }
     }
-  }, [wiki])
+  }, [wiki, onDropFiles])
 
   // 处理 Wiki 链接点击
   const handleLinkClick = useCallback(async (target: string) => {

@@ -14,14 +14,13 @@ import {
   Wrench,
   Puzzle,
   Server,
-  BookOpen,
-  Sparkles
+  BookOpen
 } from 'lucide-react'
 import type { AppConfig, ChatMode } from '../../shared/types'
 import { useAgent } from './lib/useAgent'
 import Message from './components/Message'
 import Settings, { type TabKey } from './components/Settings'
-import WikiLayout from './components/wiki/WikiLayout'
+import ConfirmHighDialog, { type ConfirmHighItem } from './components/wiki/ConfirmHighDialog'
 import avatarImg from './assets/angelina/avatar.png'
 import zuozuoGif from './assets/angelina/zuozuo.gif'
 import kanshuGif from './assets/angelina/kanshu.gif'
@@ -66,38 +65,11 @@ export default function App(): JSX.Element {
   const [pickSkills, setPickSkills] = useState(false)
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
-  // 知识库面板 + 拖拽处理
-  const [showWikiPanel, setShowWikiPanel] = useState(false)
-  const [wikiPanelWidth, setWikiPanelWidth] = useState<number | null>(null) // px；null = 默认 42vw
+  // 知识库独立窗口 + 拖拽处理
   const [dragOver, setDragOver] = useState(false)
   const [wikiProcessing, setWikiProcessing] = useState<Array<{ file: string; status: 'processing' | 'done' | 'error'; message?: string; progress?: number; stage?: string }>>([])
-  // confidence high 用户确认（概念 5+ 来源）
-  const [confirmHigh, setConfirmHigh] = useState<Array<{ slug: string; title: string; sourceCount: number }> | null>(null)
-  const [confirming, setConfirming] = useState(false)
-
-  const handleConfirmHigh = async (approve: boolean): Promise<void> => {
-    if (!confirmHigh || confirmHigh.length === 0 || confirming) return
-    setConfirming(true)
-    try {
-      if (approve) {
-        for (const c of confirmHigh) {
-          await window.winagent.wiki.confirmConcept(c.slug, 'concepts')
-        }
-        setWikiProcessing((prev) => [
-          ...prev,
-          { file: '✓ confidence', status: 'done', message: `已将 ${confirmHigh.length} 个概念确认为 high` }
-        ])
-      } else {
-        setWikiProcessing((prev) => [
-          ...prev,
-          { file: 'confidence', status: 'done', message: '已跳过 high 确认（保持 low/medium）' }
-        ])
-      }
-    } finally {
-      setConfirming(false)
-      setConfirmHigh(null)
-    }
-  }
+  // confidence high 用户确认（概念 5+ 来源，独立窗口与主窗口共用组件）
+  const [confirmHigh, setConfirmHigh] = useState<ConfirmHighItem[] | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -230,32 +202,6 @@ export default function App(): JSX.Element {
     setShowSettings(true)
   }
 
-  // 面板宽度拖拽（中缝手柄）
-  const panelDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
-
-  const startPanelDrag = (e: React.MouseEvent): void => {
-    e.preventDefault()
-    const startWidth = wikiPanelWidth ?? window.innerWidth * 0.42
-    panelDragRef.current = { startX: e.clientX, startWidth }
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-    const onMove = (ev: MouseEvent): void => {
-      if (!panelDragRef.current) return
-      const delta = panelDragRef.current.startX - ev.clientX
-      const newWidth = Math.min(780, Math.max(360, panelDragRef.current.startWidth + delta))
-      setWikiPanelWidth(newWidth)
-    }
-    const onUp = (): void => {
-      panelDragRef.current = null
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-  }
-
   // 根据对话实时状态计算 Angelina 动作
   const aiState: AiState = (() => {
     if (!busy) return 'idle'
@@ -312,7 +258,6 @@ export default function App(): JSX.Element {
             result.confirmHigh.map((c) => ({ slug: c.slug, title: c.title, sourceCount: c.sourceCount }))
           )
         }
-        setShowWikiPanel(true)
       } catch (err: any) {
         setWikiProcessing((prev) =>
           prev.map((p) => (p.file === file.name ? { ...p, status: 'error', message: err.message || '导入失败' } : p))
@@ -371,11 +316,9 @@ export default function App(): JSX.Element {
         {/* 模式已合并：桌宠（含 Agent 全部能力） */}
         <div className="ml-auto flex items-center gap-1.5">
           <button
-            title="知识库浏览器"
-            onClick={() => setShowWikiPanel((v) => !v)}
-            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-              showWikiPanel ? 'bg-accent/15 text-accent' : 'text-muted hover:bg-pink-100/70 hover:text-accent'
-            }`}
+            title="知识库浏览器（弹出独立窗口）"
+            onClick={() => window.winagent.wiki.openWindow()}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-pink-100/70 hover:text-accent"
           >
             <BookOpen className="h-4 w-4" />
           </button>
@@ -580,33 +523,6 @@ export default function App(): JSX.Element {
       </div>
         </div>
 
-      {/* 知识库浏览器侧边面板（中缝可拖拽调整宽度） */}
-      {showWikiPanel && (
-        <>
-          <div
-            className="h-full w-1.5 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-accent/30 active:bg-accent/40"
-            onMouseDown={startPanelDrag}
-            title="拖拽调整知识库宽度"
-          />
-          <div
-            className="wiki-slide-panel flex h-full min-w-[360px] shrink-0 flex-col border-l border-border"
-            style={wikiPanelWidth ? { width: `${wikiPanelWidth}px` } : undefined}
-          >
-            <div className="flex h-9 items-center justify-between border-b border-border px-3">
-              <span className="text-xs font-medium text-gray-600">知识库浏览器</span>
-              <button
-                onClick={() => setShowWikiPanel(false)}
-                className="rounded p-1 text-muted transition-colors hover:bg-pink-100/70 hover:text-accent"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-            <div className="min-h-0 flex-1">
-              <WikiLayout onSwitchVaultPath={() => openSettings('advanced')} compact />
-            </div>
-          </div>
-        </>
-      )}
       </div>
 
     {/* 拖拽导入遮罩 */}
@@ -684,45 +600,19 @@ export default function App(): JSX.Element {
         />
       )}
 
-      {/* ================= confidence high 确认（概念 5+ 来源） ================= */}
+      {/* ================= confidence high 确认（概念 5+ 来源，共享组件） ================= */}
       {confirmHigh && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-pink-900/20 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-border bg-white p-5 shadow-2xl">
-            <div className="mb-3 flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-100">
-                <Sparkles className="h-5 w-5 text-purple-500" />
-              </div>
-              <h3 className="text-[15px] font-semibold text-gray-800">确认概念置信度为 high？</h3>
-            </div>
-            <p className="mb-3 text-sm text-gray-600">
-              以下概念已达到 5+ 个来源且无重大矛盾。high 是你的主动背书（而非计数器输出），确认后后续查询会高权重引用它们：
-            </p>
-            <div className="mb-4 space-y-2">
-              {confirmHigh.map((c) => (
-                <div key={c.slug} className="flex items-center justify-between rounded-xl border border-border bg-pink-50/50 px-3 py-2">
-                  <span className="text-[13px] font-medium text-gray-700">{c.title}</span>
-                  <span className="font-mono text-[11px] text-muted">{c.slug} · {c.sourceCount} sources</span>
-                </div>
-              ))}
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => handleConfirmHigh(false)}
-                disabled={confirming}
-                className="rounded-lg border border-border px-4 py-1.5 text-sm text-gray-600 transition-colors hover:bg-pink-50 disabled:opacity-50"
-              >
-                保持现状
-              </button>
-              <button
-                onClick={() => handleConfirmHigh(true)}
-                disabled={confirming}
-                className="rounded-lg bg-gradient-to-br from-purple-400 to-accent px-4 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-              >
-                {confirming ? '确认中…' : '确认 high'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmHighDialog
+          items={confirmHigh}
+          onClose={() => setConfirmHigh(null)}
+          onDone={() => {
+            setWikiProcessing((prev) => [
+              ...prev,
+              { file: 'confidence', status: 'done', message: 'high 确认已处理' }
+            ])
+            setConfirmHigh(null)
+          }}
+        />
       )}
 
       {/* ================= 危险操作确认 ================= */}

@@ -13,10 +13,10 @@ extraResources:
     to: mcp.json
 win:
   target:
-    - target: zip
+    - target: portable
       arch:
         - x64
   icon: build/icon.ico
-  artifactName: WinAgent-${version}-win64.zip
+  artifactName: WinAgent-${version}-win64.exe
 compression: maximum
 npmRebuild: false

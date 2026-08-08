@@ -14,10 +14,14 @@ import { GraphEngine } from './wiki/GraphEngine'
 import type { GraphInput } from './wiki/GraphEngine'
 import { AiPipeline } from './wiki/AiPipeline'
 import { createWikiTools } from './tools/wikiTools'
-import type { AgentEvent, AppConfig, ChatMessage, NoteData, GraphData, AISuggestion, IngestResult, IngestProgress } from '../shared/types'
+import { MAX_CONTRACT_CHARS } from './wiki/contract'
+import { runLint, runMerge, runReflect, runQuery } from './wiki/WorkflowService'
+import type { AgentEvent, AppConfig, ChatMessage, NoteData, GraphData, AISuggestion, IngestResult, IngestProgress, BatchIngestStartResult, BatchIngestDoneResult, WorkflowResult } from '../shared/types'
 import matter from 'gray-matter'
 
 let mainWindow: BrowserWindow | null = null
+/** 知识库独立窗口（顶栏「知识库浏览器」弹出） */
+let wikiWindow: BrowserWindow | null = null
 const store = new ConfigStore()
 const registry = new ToolRegistry()
 let agent: AgentService
@@ -74,6 +78,62 @@ function createWindow(): void {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
+  }
+}
+
+/** 知识库独立窗口（?view=wiki 渲染 WikiWindowApp） */
+function createWikiWindow(): void {
+  if (wikiWindow && !wikiWindow.isDestroyed()) {
+    wikiWindow.focus()
+    return
+  }
+  wikiWindow = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    minWidth: 960,
+    minHeight: 600,
+    backgroundColor: '#fff8f4',
+    title: '知识库',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+
+  wikiWindow.webContents.setWindowOpenHandler((details) => {
+    shell.openExternal(details.url)
+    return { action: 'deny' }
+  })
+
+  // 阻止拖拽文件到窗口导致的导航（文件应进入知识库而非被打开）
+  wikiWindow.webContents.on('will-navigate', (e) => {
+    e.preventDefault()
+  })
+
+  // index.html 的 <title>WinAgent</title> 会覆盖窗口标题，这里固定为「知识库」
+  wikiWindow.webContents.on('page-title-updated', (e) => {
+    e.preventDefault()
+    wikiWindow?.setTitle('知识库')
+  })
+
+  wikiWindow.on('closed', () => {
+    wikiWindow = null
+  })
+
+  if (process.env.ELECTRON_RENDERER_URL) {
+    wikiWindow.loadURL(process.env.ELECTRON_RENDERER_URL + '?view=wiki')
+  } else {
+    wikiWindow.loadFile(path.join(__dirname, '../renderer/index.html'), { query: { view: 'wiki' } })
+  }
+}
+
+/** 广播 wiki 事件到所有窗口（agent:event / agent:confirm 只发主窗口，不广播） */
+function sendToWindows(channel: string, ...args: unknown[]): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send(channel, ...args)
   }
 }
 
@@ -170,6 +230,11 @@ function registerIpc(): void {
 }
 
 function registerWikiIpc(): void {
+  // === 窗口 ===
+  ipcMain.handle('wiki:window:open', () => {
+    createWikiWindow()
+  })
+
   // === Vault ===
   ipcMain.handle('wiki:vault:path', () => vaultManager?.getVaultPath() || '')
 
@@ -312,8 +377,8 @@ function registerWikiIpc(): void {
       }, refreshedNote.rawBody)
       rebuildGraph().catch(() => {})
 
-      // 通知渲染进程
-      mainWindow?.webContents.send('wiki:vault:changed', {
+      // 通知渲染进程（广播到所有窗口）
+      sendToWindows('wiki:vault:changed', {
         type: 'modify', path: relPath
       })
 
@@ -332,6 +397,115 @@ function registerWikiIpc(): void {
   ipcMain.handle('wiki:ingest', async (_e, rawRelPath: string): Promise<IngestResult> => {
     if (!vaultManager || !aiPipeline || !searchIndex) throw new Error('Wiki 未初始化')
     return runIngest(rawRelPath)
+  })
+
+  // === 批量摄入（交互式标定） ===
+  ipcMain.handle('wiki:ingest:batchStart', async (_e, paths: string[]): Promise<BatchIngestStartResult> => {
+    if (!vaultManager || !aiPipeline || !searchIndex) throw new Error('Wiki 未初始化')
+    if (batchSession) throw new Error('已有批量摄入在进行中，请先完成或停止')
+    if (!Array.isArray(paths) || paths.length === 0) throw new Error('未选择文件')
+
+    // 去重 + 过滤已编译文件（复用扫描逻辑：查 sources 页 raw_file 引用）
+    const compiledRaw = await listCompiledRawFiles()
+    const unique = Array.from(new Set(paths.map((p) => p.replace(/\\/g, '/'))))
+    const pending = unique.filter((p) => !compiledRaw.has(p))
+    const skipped = unique.filter((p) => compiledRaw.has(p))
+    if (pending.length === 0) {
+      throw new Error(`所选 ${unique.length} 个文件均已编译过（${skipped.length} 个跳过）`)
+    }
+
+    // 全部预写 recentIngests，抑制 fs.watch 触发的 autoIngest 双重编译
+    const now = Date.now()
+    for (const p of pending) recentIngests.set(p, now)
+
+    // 编译第 1 篇后暂停（异常直接抛出，不建立会话）
+    const firstPath = pending[0]
+    const first = await runIngest(firstPath)
+    batchSession = {
+      pending: pending.slice(1),
+      done: [first],
+      errors: skipped.length
+        ? [{ path: '（跳过）', error: `${skipped.length} 个文件已编译过，未重复摄入` }]
+        : [],
+      active: false
+    }
+    return { rawFile: firstPath, first, total: pending.length }
+  })
+
+  ipcMain.handle('wiki:ingest:batchContinue', async (): Promise<BatchIngestDoneResult> => {
+    if (!vaultManager || !aiPipeline || !searchIndex) throw new Error('Wiki 未初始化')
+    if (!batchSession) return { results: [], errors: [], confirmHigh: [] }
+    if (batchSession.active) throw new Error('批量摄入正在执行中')
+    batchSession.active = true
+    try {
+      for (const p of batchSession.pending) {
+        try {
+          batchSession.done.push(await runIngest(p))
+        } catch (e) {
+          batchSession.errors.push({ path: p, error: e instanceof Error ? e.message : String(e) })
+        }
+      }
+      // 聚合待确认 high 概念（按 slug 去重）
+      const confirmHighMap = new Map<string, { slug: string; title: string; sourceCount: number }>()
+      for (const r of batchSession.done) {
+        for (const c of r.confirmHigh ?? []) {
+          const prev = confirmHighMap.get(c.slug)
+          if (!prev || c.sourceCount > prev.sourceCount) confirmHighMap.set(c.slug, c)
+        }
+      }
+      const result: BatchIngestDoneResult = {
+        results: batchSession.done,
+        errors: batchSession.errors,
+        confirmHigh: Array.from(confirmHighMap.values())
+      }
+      batchSession = null
+      return result
+    } finally {
+      if (batchSession) batchSession.active = false
+    }
+  })
+
+  ipcMain.handle('wiki:ingest:batchAbort', async (): Promise<{ ok: boolean }> => {
+    batchSession = null
+    return { ok: true }
+  })
+
+  // === 工作流（LINT / REFLECT / MERGE / QUERY） ===
+  ipcMain.handle('wiki:workflow:lint', async (): Promise<WorkflowResult> => {
+    if (!vaultManager) throw new Error('Wiki 未初始化')
+    const r = await runLint(vaultManager)
+    if (r.ok) sendToWindows('wiki:vault:changed', { type: 'created', path: r.reportPath })
+    return r
+  })
+
+  ipcMain.handle('wiki:workflow:reflect', async (): Promise<WorkflowResult> => {
+    if (!vaultManager) throw new Error('Wiki 未初始化')
+    const r = await runReflect(vaultManager, store)
+    if (r.ok) sendToWindows('wiki:vault:changed', { type: 'created', path: r.reportPath })
+    return r
+  })
+
+  ipcMain.handle('wiki:workflow:merge', async (_e, keep: string, remove: string, area: string): Promise<WorkflowResult> => {
+    if (!vaultManager) throw new Error('Wiki 未初始化')
+    const r = await runMerge(vaultManager, keep, remove, area)
+    if (r.ok) {
+      sendToWindows('wiki:vault:changed', { type: 'created', path: r.reportPath })
+      sendToWindows('wiki:vault:changed', { type: 'deleted', path: `wiki/${area}/${remove}.md` })
+    }
+    return r
+  })
+
+  ipcMain.handle('wiki:workflow:query', async (_e, query: string): Promise<WorkflowResult> => {
+    if (!vaultManager || !searchIndex) throw new Error('Wiki 未初始化')
+    const r = await runQuery(vaultManager, searchIndex, store, query)
+    if (r.ok) sendToWindows('wiki:vault:changed', { type: 'created', path: r.reportPath })
+    return r
+  })
+
+  // === URL 导入（网页抓取 → raw/clippings → INGEST） ===
+  ipcMain.handle('wiki:import:url', async (_e, url: string): Promise<{ ok: boolean; relPath?: string; sourcePath?: string; error?: string }> => {
+    if (!vaultManager || !aiPipeline || !searchIndex) throw new Error('Wiki 未初始化')
+    return runUrlImport(url)
   })
 
   // === 概念 confidence 确认（用户背书 high） ===
@@ -384,7 +558,7 @@ function registerWikiIpc(): void {
   // === Vault 变更事件 ===
   if (vaultManager) {
     vaultManager.onChange((event) => {
-      mainWindow?.webContents.send('wiki:vault:changed', event)
+      sendToWindows('wiki:vault:changed', event)
       // raw/ 新文件自动触发 INGEST（任何方式放入 raw/ 的文件都会被编译）
       if (event.type === 'created' && event.path.startsWith('raw/') && event.path !== 'raw/') {
         scheduleAutoIngest(event.path)
@@ -397,6 +571,15 @@ function registerWikiIpc(): void {
 const autoIngestQueue = new Map<string, ReturnType<typeof setTimeout>>()
 const recentIngests = new Map<string, number>()
 
+/** 批量摄入会话（交互式标定：先编译 1 篇暂停审查，确认后继续） */
+interface BatchSession {
+  pending: string[]          // 剩余未编译 relPaths
+  done: IngestResult[]       // 已完成结果
+  errors: Array<{ path: string; error: string }>
+  active: boolean            // continue 执行中（防重入）
+}
+let batchSession: BatchSession | null = null
+
 function scheduleAutoIngest(relPath: string): void {
   // 检查是否最近（60 秒内）已处理过
   const last = recentIngests.get(relPath)
@@ -407,6 +590,9 @@ function scheduleAutoIngest(relPath: string): void {
   if (existing) clearTimeout(existing)
   const timer = setTimeout(async () => {
     autoIngestQueue.delete(relPath)
+    // 复查去重窗口：批量摄入等流程已预写 recentIngests，避免同一文件被编译两次
+    const last = recentIngests.get(relPath)
+    if (last && Date.now() - last < 60000) return
     recentIngests.set(relPath, Date.now())
     try {
       Logger.info(`[AutoIngest] 检测到 raw 新文件: ${relPath}`)
@@ -450,9 +636,103 @@ async function rebuildGraph(): Promise<void> {
   graphEngine.rebuild(inputs)
 }
 
-/** 推送 INGEST 进度事件到渲染进程 */
+/** 推送 INGEST 进度事件到渲染进程（广播所有窗口） */
 function emitIngestProgress(p: IngestProgress): void {
-  mainWindow?.webContents.send('wiki:ingest:progress', p)
+  sendToWindows('wiki:ingest:progress', p)
+}
+
+/**
+ * URL 直接导入（教程 defuddle 的 WinAgent 版）：
+ * 抓取网页 → 提取标题与正文段落 → 写入 raw/clippings/（frontmatter 含 source_url）→ 立即 INGEST
+ */
+async function runUrlImport(url: string): Promise<{ ok: boolean; relPath?: string; sourcePath?: string; error?: string }> {
+  const target = (url || '').trim()
+  if (!/^https?:\/\//i.test(target)) {
+    return { ok: false, error: '请输入合法的 http/https 链接' }
+  }
+  let host = ''
+  try {
+    host = new URL(target).hostname.replace(/^www\./, '')
+  } catch {
+    return { ok: false, error: 'URL 格式不合法' }
+  }
+
+  let html = ''
+  try {
+    const res = await fetch(target, {
+      signal: AbortSignal.timeout(20000),
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) WinAgent/0.2' }
+    })
+    if (!res.ok) return { ok: false, error: `网页请求失败：HTTP ${res.status}` }
+    const buf = await res.arrayBuffer()
+    // 非文本内容（pdf 等）走文件导入路径，不在此处理
+    const contentType = res.headers.get('content-type') || ''
+    if (!/text\/html|application\/xhtml/i.test(contentType)) {
+      return { ok: false, error: `该 URL 返回的是 ${contentType.split(';')[0] || '未知类型'}，请下载后拖入知识库` }
+    }
+    html = Buffer.from(buf).toString('utf-8')
+  } catch (e) {
+    return { ok: false, error: `抓取网页失败：${e instanceof Error ? e.message : String(e)}` }
+  }
+
+  // 提取标题 + 正文（去 script/style/nav，段落化）
+  const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || host)
+    .replace(/<[^>]+>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120)
+  const cleaned = html
+    .replace(/<(script|style|noscript|iframe|svg|nav|footer|header)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li|blockquote|pre)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .join('\n\n')
+    .slice(0, 30000)
+  if (!cleaned) {
+    return { ok: false, error: '网页正文为空（可能是 JS 渲染页面，请复制内容后保存为文件拖入）' }
+  }
+
+  // 写入 raw/clippings/
+  const today = new Date().toISOString().slice(0, 10)
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9一-龥]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 60) || host.replace(/[^a-z0-9]/g, '-')
+  const relPath = `raw/clippings/${today}-${host}-${slug}.md`
+  const rawBody = [
+    `# ${title}`,
+    ``,
+    `> 来源：${target}`,
+    ``,
+    cleaned,
+    ``
+  ].join('\n')
+  const rawFm = {
+    title,
+    date: today,
+    source_url: target,
+    domain: host,
+    tags: []
+  }
+  const absPath = path.join(vaultManager!.getVaultPath(), relPath)
+  await fs.mkdir(path.dirname(absPath), { recursive: true })
+  await fs.writeFile(absPath, matter.stringify(rawBody, rawFm), 'utf-8')
+
+  // 立即 INGEST（recentIngests 去重窗口防止 watcher 重复编译）
+  recentIngests.set(relPath, Date.now())
+  const ingestResult = await runIngest(relPath)
+  return { ok: true, relPath, sourcePath: ingestResult.sourcePath }
 }
 
 /** 执行一次 INGEST（LLM Wiki 编译）：raw 文件 → sources/concepts/entities 页 */
@@ -525,15 +805,19 @@ async function runIngest(rawRelPath: string): Promise<IngestResult> {
   } catch { /* no frontmatter */ }
   const possiblyOutdated = !!rawDate && isOlderThan(rawDate, 730)
 
-  // 3. 读取已有概念列表 + 开放问题（用于对齐与匹配）
+  // 3. 读取已有概念列表 + 开放问题（用于对齐与匹配）+ 行为契约（每次读盘，标定闭环生效）
   const existingConcepts = await listConceptSlugs()
   const openQuestions = await vaultManager.getOpenQuestions()
   const isPersonal = rawRelPath.startsWith('raw/personal/')
+  let contract = ''
+  try {
+    contract = (await fs.readFile(path.join(vaultManager.getVaultPath(), 'CLAUDE.md'), 'utf-8')).slice(0, MAX_CONTRACT_CHARS)
+  } catch { /* 无契约文件，使用内置默认规则 */ }
 
   // 4. LLM 分析（无文本内容的文件跳过分析，直接生成基础来源页）
   emitIngestProgress({ file: fileName, stage: 'AI 分析内容…', percent: 25 })
   const analysis = rawText.trim()
-    ? await aiPipeline.ingestSource(provider, rawTitle, rawText, existingConcepts, openQuestions, isPersonal)
+    ? await aiPipeline.ingestSource(provider, rawTitle, rawText, existingConcepts, openQuestions, isPersonal, contract)
     : {
         slug: slugify(rawTitle) || 'untitled',
         title: rawTitle,
@@ -559,6 +843,9 @@ async function runIngest(rawRelPath: string): Promise<IngestResult> {
     last_verified: today,
     possibly_outdated: possiblyOutdated
   }
+  // 跨语言合并前提：language / canonical_source（译文/转述的原始出处）
+  if (analysis.language) sourceFm.language = analysis.language
+  if (analysis.canonicalSource) sourceFm.canonical_source = analysis.canonicalSource
   if (isPersonal) {
     sourceFm.status = 'draft'
     sourceFm.confidence_at_writing = 'medium'
@@ -800,7 +1087,7 @@ async function runIngest(rawRelPath: string): Promise<IngestResult> {
     } catch { /* skip */ }
   }
   rebuildGraph().catch(() => {})
-  mainWindow?.webContents.send('wiki:vault:changed', { type: 'created', path: sourcePath })
+  sendToWindows('wiki:vault:changed', { type: 'created', path: sourcePath })
 
   emitIngestProgress({ file: fileName, stage: '完成', percent: 100, done: true })
   return result
@@ -1002,8 +1289,8 @@ async function indexWikiVault(): Promise<void> {
 
     await searchIndex.rebuild(indexData)
     await rebuildGraph()
-    // 通知渲染进程 vault 已就绪
-    mainWindow?.webContents.send('wiki:vault:changed', { type: 'modified', path: '' })
+    // 通知渲染进程 vault 已就绪（广播所有窗口）
+    sendToWindows('wiki:vault:changed', { type: 'modified', path: '' })
     Logger.info(`Wiki 索引完成: ${indexData.length} 篇笔记`)
     // 扫描 raw/ 中未编译的文件（无对应 source 页），自动补编译
     await ingestPendingRawFiles()
@@ -1012,39 +1299,43 @@ async function indexWikiVault(): Promise<void> {
   }
 }
 
+/** 收集已有 source 页引用的 raw_file 路径集合（用于去重与批量过滤） */
+async function listCompiledRawFiles(): Promise<Set<string>> {
+  const compiled = new Set<string>()
+  if (!vaultManager) return compiled
+  const sourceDir = path.join(vaultManager.getVaultPath(), 'wiki', 'sources')
+  try {
+    const sourceFiles = await fs.readdir(sourceDir)
+    for (const f of sourceFiles.filter((f) => f.endsWith('.md'))) {
+      try {
+        const raw = await fs.readFile(path.join(sourceDir, f), 'utf-8')
+        const parsed = matter(raw)
+        const rf = (parsed.data as any).raw_file
+        if (typeof rf === 'string') compiled.add(rf.replace(/\\/g, '/'))
+      } catch { /* skip */ }
+    }
+  } catch { /* sources 目录不存在 */ }
+  return compiled
+}
+
 /** 启动时对 raw/ 中未编译（无对应 source 页）的文件自动 INGEST */
 async function ingestPendingRawFiles(): Promise<void> {
   if (!vaultManager || !aiPipeline) return
   try {
-    // 收集已有 source 页引用的 raw_file 列表
-    const sourceDir = path.join(vaultManager.getVaultPath(), 'wiki', 'sources')
-    const compiled = new Set<string>()
-    try {
-      const sourceFiles = await fs.readdir(sourceDir)
-      for (const f of sourceFiles.filter((f) => f.endsWith('.md'))) {
-        try {
-          const raw = await fs.readFile(path.join(sourceDir, f), 'utf-8')
-          const parsed = matter(raw)
-          const rf = (parsed.data as any).raw_file
-          if (typeof rf === 'string') compiled.add(rf.replace(/\\/g, '/'))
-        } catch { /* skip */ }
-      }
-    } catch { /* sources 目录不存在 */ }
+    const compiled = await listCompiledRawFiles()
 
-    // 扫描 raw/ 下所有文件（排除图片——图片无文本也可编译基础页，但避免噪音只处理文本类）
-    const allNotes = await vaultManager.listNotes()
-    const rawFiles = flattenWikiNotes(allNotes).filter(
-      (n) => n.kind === 'file' && n.path.startsWith('raw/') && !compiled.has(n.path)
-    )
-    if (rawFiles.length === 0) return
-    Logger.info(`[AutoIngest] 发现 ${rawFiles.length} 个未编译的 raw 文件，开始自动编译…`)
+    // 扫描 raw/ 下所有可摄入的文件（不限 .md）
+    const allRawFiles = await vaultManager.listRawFiles()
+    const pending = allRawFiles.filter((p) => !compiled.has(p))
+    if (pending.length === 0) return
+    Logger.info(`[AutoIngest] 发现 ${pending.length} 个未编译的 raw 文件，开始自动编译…`)
     // 串行编译（避免并发 LLM 调用过载）
-    for (const n of rawFiles) {
+    for (const relPath of pending) {
       try {
-        await runIngest(n.path)
-        Logger.info(`[AutoIngest] 已编译: ${n.path}`)
+        await runIngest(relPath)
+        Logger.info(`[AutoIngest] 已编译: ${relPath}`)
       } catch (e) {
-        Logger.error(`[AutoIngest] 跳过（失败）: ${n.path}: ${String(e)}`)
+        Logger.error(`[AutoIngest] 跳过（失败）: ${relPath}: ${String(e)}`)
       }
     }
   } catch (err) {

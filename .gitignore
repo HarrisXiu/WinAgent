@@ -9,3 +9,6 @@ Logs/
 
 # Angelina 原始素材目录（版权素材，不提交；应用所需素材已在 src/renderer/src/assets/angelina/）
 Angelina/
+
+# 知识库 vault 目录（运行时生成，不提交）
+wiki/

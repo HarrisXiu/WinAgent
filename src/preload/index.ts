@@ -2,7 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AgentEvent, AppConfig, ToolInfo,
   NoteMeta, NoteContent, NoteData, NoteAnnotation,
-  GraphData, SearchResult, TagWithCount, AISuggestion, VaultChangeEvent, IngestResult, IngestProgress
+  GraphData, SearchResult, TagWithCount, AISuggestion, VaultChangeEvent, IngestResult, IngestProgress,
+  BatchIngestStartResult, BatchIngestDoneResult, WorkflowResult, LintWorkflowResult
 } from '../shared/types'
 
 export interface AttachmentData {
@@ -51,6 +52,9 @@ const api = {
 
   // ==================== Wiki API ====================
   wiki: {
+    /** 打开/聚焦知识库独立窗口 */
+    openWindow: (): void => { void ipcRenderer.invoke('wiki:window:open') },
+
     vaultPath: (): Promise<string> => ipcRenderer.invoke('wiki:vault:path'),
     setVaultPath: (p: string): Promise<void> => ipcRenderer.invoke('wiki:vault:setPath', p),
 
@@ -88,6 +92,26 @@ const api = {
     },
     confirmConcept: (slug: string, area: 'concepts' | 'entities'): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('wiki:concept:confirm', slug, area),
+
+    // 批量摄入（交互式标定）
+    ingestBatchStart: (paths: string[]): Promise<BatchIngestStartResult> =>
+      ipcRenderer.invoke('wiki:ingest:batchStart', paths),
+    ingestBatchContinue: (): Promise<BatchIngestDoneResult> =>
+      ipcRenderer.invoke('wiki:ingest:batchContinue'),
+    ingestBatchAbort: (): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('wiki:ingest:batchAbort'),
+
+    // 工作流（LINT / REFLECT / MERGE / QUERY）
+    workflowLint: (): Promise<LintWorkflowResult> => ipcRenderer.invoke('wiki:workflow:lint'),
+    workflowReflect: (): Promise<WorkflowResult> => ipcRenderer.invoke('wiki:workflow:reflect'),
+    workflowMerge: (keep: string, remove: string, area: string): Promise<WorkflowResult> =>
+      ipcRenderer.invoke('wiki:workflow:merge', keep, remove, area),
+    workflowQuery: (query: string): Promise<WorkflowResult> =>
+      ipcRenderer.invoke('wiki:workflow:query', query),
+
+    // URL 导入（网页抓取 → raw/clippings → INGEST）
+    importUrl: (url: string): Promise<{ ok: boolean; relPath?: string; sourcePath?: string; error?: string }> =>
+      ipcRenderer.invoke('wiki:import:url', url),
 
     importFile: (srcPath: string, targetDir?: string): Promise<string> =>
       ipcRenderer.invoke('wiki:import:file', srcPath, targetDir),

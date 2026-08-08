@@ -2,6 +2,7 @@ import { promises as fs, watch, type Dirent } from 'fs'
 import path from 'path'
 import matter from 'gray-matter'
 import type { NoteMeta, NoteContent, NoteData, NoteAnnotation, TagWithCount } from '../../shared/types'
+import { WINAGENT_CONTRACT_MD } from './contract'
 
 export interface VaultChangeEvent {
   type: 'created' | 'modified' | 'deleted'
@@ -14,6 +15,14 @@ type ChangeCallback = (event: VaultChangeEvent) => void
 export const RAW_SUBDIRS = ['articles', 'clippings', 'images', 'pdfs', 'notes', 'personal']
 export const WIKI_SUBDIRS = ['sources', 'concepts', 'entities', 'synthesis', 'templates', 'outputs']
 export const SYSTEM_FILES = ['index.md', 'log.md', 'overview.md', 'QUESTIONS.md']
+
+/** INGEST 管线可处理的文件扩展名（与 runIngest 中的分类一致） */
+export const INGESTIBLE_EXTS = [
+  '.md', '.txt', '.markdown', '.json', '.js', '.ts', '.tsx', '.jsx', '.py',
+  '.java', '.c', '.cpp', '.h', '.css', '.html', '.xml', '.yml', '.yaml', '.csv', '.log', '.sh', '.bat',
+  '.pdf', '.pptx', '.docx', '.xlsx', '.xlsm', '.ppt', '.doc', '.xls',
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'
+]
 
 export class VaultManager {
   private vaultPath: string
@@ -62,10 +71,15 @@ export class VaultManager {
     this.startWatching()
   }
 
-  /** 判断是否为系统文件（index/log/overview/QUESTIONS，不参与图谱） */
+  /** 判断是否为系统文件（index/log/overview/QUESTIONS/CLAUDE.md，不参与图谱） */
   isSystemFile(relPath: string): boolean {
     const normalized = relPath.replace(/\\/g, '/')
-    return SYSTEM_FILES.some((f) => normalized === `wiki/${f}`) || normalized.startsWith('wiki/outputs/')
+    return (
+      SYSTEM_FILES.some((f) => normalized === `wiki/${f}`) ||
+      normalized.startsWith('wiki/outputs/') ||
+      normalized === 'CLAUDE.md' ||
+      normalized === 'USER_GUIDE.md'
+    )
   }
 
   /** 追加一个开放问题到 wiki/QUESTIONS.md */
@@ -248,6 +262,43 @@ export class VaultManager {
         'utf-8'
       )
     }
+    // 行为契约：vault 根 CLAUDE.md（用户可编辑，管线每次摄入时读盘注入）
+    const contractPath = path.join(this.vaultPath, 'CLAUDE.md')
+    try {
+      await fs.access(contractPath)
+    } catch {
+      await fs.writeFile(contractPath, WINAGENT_CONTRACT_MD, 'utf-8')
+    }
+    // 用户指南：CLAUDE.md 的配套文档（契约修订时同步追加变更记录）
+    const guidePath = path.join(this.vaultPath, 'USER_GUIDE.md')
+    try {
+      await fs.access(guidePath)
+    } catch {
+      await fs.writeFile(
+        guidePath,
+        matter.stringify(
+          `# WinAgent 知识库使用指南
+
+## 入口
+- 主窗口顶栏「知识库浏览器」按钮 → 弹出独立知识库窗口（可拖拽文件批量摄入）。
+- 知识库窗口顶部工具栏：批量摄入 / AI 问答 / 健康检查 / 综合分析 / 去重合并 / 开放问题 / URL 导入。
+
+## 日常流程
+1. 阅读文章 → 拖入知识库窗口（或点击「批量摄入」选择文件）。
+2. 多文件批量摄入会先编译 1 篇供审查（AI 编译内容 + 原文对照），确认质量后继续。
+3. 对编译质量不满意 → 点击「调整契约规则」编辑 CLAUDE.md，保存后继续批量即生效。
+4. 定期点击「健康检查」查看知识库状态（SOURCE MODIFIED 可一键重新摄入）。
+5. 每月点击「综合分析」发现跨来源模式与内容空白。
+
+## 规则
+- 全部行为规则见根目录 CLAUDE.md（本文件的配套契约，由用户维护）。
+- CLAUDE.md 每次修订时，本文件底部会自动追加变更记录。
+`,
+          { type: 'system-guide', 'graph-excluded': true, updated: new Date().toISOString() }
+        ),
+        'utf-8'
+      )
+    }
   }
 
   /** 创建页面模板（LLM Wiki 模式标准结构） */
@@ -422,7 +473,9 @@ export class VaultManager {
         this.notesDir,
         { recursive: true },
         (eventType: string, filename: string | null) => {
-          if (!filename || !filename.endsWith('.md')) return
+          if (!filename) return
+          const ext = path.extname(filename).toLowerCase()
+          if (!INGESTIBLE_EXTS.includes(ext)) return
           const relPath = filename.replace(/\\/g, '/')
           if (eventType === 'rename') {
             fs.access(path.join(this.notesDir, filename))
@@ -479,6 +532,8 @@ export class VaultManager {
     }
 
     for (const f of files.sort((a, b) => a.name.localeCompare(b.name))) {
+      // 根级 CLAUDE.md 为行为契约（系统文件），不在文件树中展示，避免误删
+      if (!dir && (f.name === 'CLAUDE.md' || f.name === 'USER_GUIDE.md')) continue
       const relPath = (dir ? `${dir}/${f.name}` : f.name).replace(/\\/g, '/')
       try {
         const raw = await fs.readFile(path.join(base, f.name), 'utf-8')
@@ -504,6 +559,31 @@ export class VaultManager {
       }
     }
 
+    return result
+  }
+
+  /** 列出 raw/ 目录下所有可摄入的文件（不限 .md），返回相对路径列表 */
+  async listRawFiles(): Promise<string[]> {
+    const result: string[] = []
+    const scan = async (dir: string, rel: string): Promise<void> => {
+      let entries: Dirent[]
+      try {
+        entries = (await fs.readdir(dir, { withFileTypes: true })) as Dirent[]
+      } catch {
+        return
+      }
+      for (const e of entries) {
+        if (e.isDirectory()) {
+          await scan(path.join(dir, e.name), `${rel}/${e.name}`)
+        } else if (e.isFile()) {
+          const ext = path.extname(e.name).toLowerCase()
+          if (INGESTIBLE_EXTS.includes(ext)) {
+            result.push(`${rel}/${e.name}`.replace(/^\//, '').replace(/\\/g, '/'))
+          }
+        }
+      }
+    }
+    await scan(this.rawDir, 'raw')
     return result
   }
 
@@ -559,7 +639,8 @@ export class VaultManager {
       aiSummary: fm.aiSummary,
       aiAnalyzedAt: fm.aiAnalyzedAt,
       annotations: Array.isArray(fm.annotations) ? fm.annotations : [],
-      graphExcluded: fm['graph-excluded'] === true || fm['graph-excluded'] === 'true'
+      graphExcluded: fm['graph-excluded'] === true || fm['graph-excluded'] === 'true',
+      rawFile: typeof fm.raw_file === 'string' && fm.raw_file ? fm.raw_file : undefined
     }
   }
 
@@ -592,9 +673,35 @@ export class VaultManager {
 
     const content = matter.stringify(data.body, frontmatter)
     await fs.writeFile(fullPath, content, 'utf-8')
+
+    // 契约修订同步：CLAUDE.md 保存后，在 USER_GUIDE.md 底部追加变更记录（文档维护规则）
+    const normalized = relPath.replace(/\\/g, '/')
+    if (normalized === 'CLAUDE.md') {
+      await this.syncContractChangelog(data.title || '契约规则')
+    }
   }
 
-  /** 删除笔记 */
+  /** 文档维护规则：CLAUDE.md 每次修订时同步 USER_GUIDE.md 变更记录 */
+  private async syncContractChangelog(summary: string): Promise<void> {
+    const guidePath = path.join(this.vaultPath, 'USER_GUIDE.md')
+    const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ')
+    try {
+      const raw = await fs.readFile(guidePath, 'utf-8')
+      const parsed = matter(raw)
+      let body = parsed.content
+      const marker = '## 契约修订记录'
+      const line = `- ${stamp}：CLAUDE.md 已修订（${summary}）`
+      if (body.includes(marker)) {
+        body = `${body.trimEnd()}\n${line}\n`
+      } else {
+        body = `${body.trimEnd()}\n\n${marker}\n\n${line}\n`
+      }
+      const fm = { ...(parsed.data as Record<string, any>), updated: new Date().toISOString() }
+      await fs.writeFile(guidePath, matter.stringify(body, fm), 'utf-8')
+    } catch {
+      /* USER_GUIDE.md 不存在则跳过（ensureSystemFiles 会重建） */
+    }
+  }
   async deleteNote(relPath: string): Promise<void> {
     const fullPath = path.join(this.notesDir, relPath)
     await fs.unlink(fullPath)

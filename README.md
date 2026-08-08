@@ -276,6 +276,40 @@ Electron + TypeScript + React + Vite + TailwindCSS。Windows 系统能力通过 
 
 ## 更新日志
 
+### v0.2.1（2026-08-08）
+
+**知识库独立窗口（第二窗口）**
+- 主窗口顶栏点击 📖 图标弹出知识库独立窗口（`?view=wiki` 渲染 `WikiWindowApp`），与主窗口解耦，可独立拖拽、缩放、关闭
+- 独立窗口顶栏工具栏：批量摄入、AI 问答、健康检查、综合分析、去重合并、开放问题、URL 导入
+- 批量摄入交互式标定流程：先编译第 1 篇供用户审查 → 确认质量达标后继续批量 → 可中途「调整契约规则」（编辑 CLAUDE.md 后立即生效）或停止
+- 拖拽文件到独立窗口：1 个走单文件快路径，多个走批量标定
+- Toast 通知系统：操作结果以右下角气泡提示（成功/失败），8 秒自动消失
+- LINT 发现 SOURCE MODIFIED 时弹出重新摄入提示条，一键全部重编译
+
+**Wiki 浏览器增强**
+- 右侧详情面板四标签页：标签（Tag）、反链（Backlinks）、AI 分析、注释（Annotations）
+- 注释功能：编辑模式选中文本 → 添加注释 → 右侧面板管理/删除
+- 反向链接面板：显示引用当前笔记的所有页面，点击跳转
+- 标签面板：当前笔记标签管理 + 全库标签云（含计数），点击按标签筛选
+- AI 分析面板：对当前笔记调用 LLM 生成建议标签、关联概念、摘要
+- ConfirmHighDialog：概念达 5+ 来源时弹窗确认是否晋升 confidence: high
+- 量子粒子图谱视图：全库 wikilink 关系可视化
+
+**工作流扩展**
+- AI 问答（workflow:query）：基于知识库检索回答，答案带 [[source]] 溯源 + Confidence Notes + Limitations，落盘 wiki/outputs/
+- 去重合并（workflow:merge）：Jaccard 相似度检测重复概念/实体，保留页吸收 aliases + Sources + Evolution Log，全库 wikilink 改写，被合并页替换为 redirect
+- 综合分析（workflow:reflect）：Stage 0 反向检验（SHA-256 校验来源完整性）+ Gap Analysis（识别知识缺口），生成 synthesis 报告
+- 健康检查（workflow:lint）：10 项检查含 SOURCE MODIFIED 检测（raw 文件 SHA-256 变化时提示重新摄入）
+
+**URL 导入**
+- 粘贴网页 URL → 抓取正文 → 保存到 raw/clippings/（含 source_url frontmatter）→ 自动 AI 编译为 sources/concepts/entities 页
+
+**修复：INGEST 管线无法处理非 .md 文件**
+- 文件监听器（`VaultManager.startWatching`）原先只放行 `.md` 文件，PDF/Word/PPT/Excel/图片等放入 `raw/` 后不触发自动编译 → 新增 `INGESTIBLE_EXTS` 常量覆盖全部可摄入格式，watcher 按扩展名过滤
+- `listNotes()` 只列出 `.md` 文件，启动补偿扫描 `ingestPendingRawFiles()` 无法发现未编译的非 Markdown 文件 → 新增 `listRawFiles()` 方法递归扫描 `raw/` 下所有可摄入文件，`ingestPendingRawFiles()` 改用此方法
+- `AiPipeline.ingestSource()` 的 `maxTokens` 从 1500 提高到 3000，减少复杂来源 JSON 输出被截断导致解析失败的概率
+- LLM 输出无法解析为 JSON 时输出 `console.warn` 日志，便于排查
+
 ### v0.2.0（2026-08-07）
 
 **LLM Wiki 个人知识库（Karpathy 模式）**

@@ -30,7 +30,7 @@ export default function MarkdownPreview({ content, notePath, onLinkClick }: Prop
 
   return (
     <div
-      className="md-body h-full overflow-y-auto px-5 py-4"
+      className="md-body h-full overflow-auto px-5 py-4"
       onClick={handleClick}
       dangerouslySetInnerHTML={{ __html: html }}
     />

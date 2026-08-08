@@ -1,6 +1,6 @@
 {
   "name": "winagent",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Windows AI Agent（OpenAI 兼容 + 本地 Ollama，内置完整 Windows 工具集，支持 skills 与 MCP 挂载）",
   "author": "WinAgent",
   "license": "MIT",

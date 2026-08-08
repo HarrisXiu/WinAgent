@@ -46,6 +46,27 @@ body {
   background: transparent;
 }
 
+/* 知识库独立窗口：加粗滚动条 + 可见轨道（上下左右均可滚动） */
+.wiki-window *::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.wiki-window *::-webkit-scrollbar-track {
+  background: rgba(240, 205, 218, 0.18);
+  border-radius: 8px;
+}
+.wiki-window *::-webkit-scrollbar-thumb {
+  background: #f0cdda;
+  border-radius: 8px;
+  border: 2px solid #fff8f4;
+}
+.wiki-window *::-webkit-scrollbar-thumb:hover {
+  background: #e5b2c4;
+}
+.wiki-window *::-webkit-scrollbar-corner {
+  background: rgba(240, 205, 218, 0.18);
+}
+
 /* ---------- 表单控件：统一 focus ring ---------- */
 input,
 select,
@@ -167,15 +188,6 @@ input[type='checkbox'] {
 @keyframes wikiDropPulse {
   0%, 100% { background-color: rgba(10, 10, 20, 0.7); }
   50% { background-color: rgba(168, 85, 247, 0.15); }
-}
-
-/* 知识库侧边面板滑入动画 */
-.wiki-slide-panel {
-  animation: wikiSlideIn 0.2s ease-out;
-}
-@keyframes wikiSlideIn {
-  from { width: 0; opacity: 0; }
-  to   { width: 42vw; opacity: 1; }
 }
 
 /* Wiki 标签样式 */
