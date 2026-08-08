@@ -164,7 +164,7 @@ export default function WikiEditor({
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* 标题栏 */}
       <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
         {editing ? (
@@ -331,7 +331,7 @@ export default function WikiEditor({
               </pre>
             </div>
           ) : (
-            <div className="flex-1">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <MarkdownPreview
                 content={note.rawBody}
                 notePath={note.path}
@@ -342,9 +342,9 @@ export default function WikiEditor({
         ) : dualAvailable && dualMode !== 'compiled' ? (
           /* ===== 双栏对照（AI 编译内容 | 原文） ===== */
           dualMode === 'split' ? (
-            <div className="flex min-w-0 flex-1">
+            <div className="flex min-h-0 min-w-0 flex-1">
               {/* 左：AI 编译内容 */}
-              <div className="min-w-0 shrink-0" style={{ width: `${splitRatio}%` }}>
+              <div className="flex min-h-0 min-w-0 shrink-0 flex-col overflow-hidden" style={{ width: `${splitRatio}%` }}>
                 <MarkdownPreview
                   key={`compiled-${note.path}`}
                   content={note.rawBody}
@@ -359,18 +359,18 @@ export default function WikiEditor({
                 title="拖拽调整对照比例"
               />
               {/* 右：原文 */}
-              <div className="min-w-0 shrink-0" style={{ width: `${100 - splitRatio}%` }}>
+              <div className="flex min-h-0 min-w-0 shrink-0 flex-col overflow-hidden" style={{ width: `${100 - splitRatio}%` }}>
                 {renderRawPane()}
               </div>
             </div>
           ) : (
             /* 仅原文 */
-            <div className="flex-1">{renderRawPane()}</div>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{renderRawPane()}</div>
           )
         ) : (
           <>
             {editing || !previewMode ? (
-              <div className={`wiki-editor flex-1 ${previewMode && editing ? 'border-r border-border' : ''}`}>
+              <div className={`wiki-editor min-h-0 flex-1 ${previewMode && editing ? 'border-r border-border' : ''}`}>
                 {editing ? (
                   <CodeMirrorEditor
                     ref={cmRef}
@@ -389,7 +389,7 @@ export default function WikiEditor({
 
             {/* 预览面板 */}
             {(previewMode || !editing) && (
-              <div className={`min-h-0 ${editing && previewMode ? 'w-1/2' : 'flex-1'}`}>
+              <div className={`flex min-h-0 flex-col overflow-hidden ${editing && previewMode ? 'w-1/2' : 'flex-1'}`}>
                 <MarkdownPreview
                   content={editing ? editBody : note.rawBody}
                   notePath={note.path}

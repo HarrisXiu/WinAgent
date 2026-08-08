@@ -310,6 +310,11 @@ Electron + TypeScript + React + Vite + TailwindCSS。Windows 系统能力通过 
 - `AiPipeline.ingestSource()` 的 `maxTokens` 从 1500 提高到 3000，减少复杂来源 JSON 输出被截断导致解析失败的概率
 - LLM 输出无法解析为 JSON 时输出 `console.warn` 日志，便于排查
 
+**修复：Wiki 界面内容过长无法滚动**
+- flexbox height 链断裂：`WikiWindowApp` 包裹 `WikiLayout` 的容器非 flex 布局，导致子元素 `flex-1` 无效、高度由内容撑开 → 容器加 `flex flex-col`，整条 height 链贯通
+- `WikiEditor` 根元素 `h-full` → `min-h-0 flex-1`，所有 `MarkdownPreview` 包裹容器加 `flex flex-col` + `min-h-0 overflow-hidden`
+- `MarkdownPreview` 自身 `h-full overflow-auto` → `min-h-0 flex-1 overflow-auto`，内容过长时在 flex 布局中正确滚动
+
 ### v0.2.0（2026-08-07）
 
 **LLM Wiki 个人知识库（Karpathy 模式）**
