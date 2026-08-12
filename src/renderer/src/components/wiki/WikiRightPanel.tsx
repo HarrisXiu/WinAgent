@@ -22,6 +22,12 @@ interface Props {
   aiSuggestion: AISuggestion | null
   aiAnalyzing: boolean
   aiError: string | null
+  /** raw 只读层（隐藏 AI 一键应用按钮） */
+  readonly?: boolean
+  /** 一键应用：摘要插入正文顶部 */
+  onApplySummary?: () => void
+  /** 一键应用：关联笔记 wikilink 追加正文底部 */
+  onApplyRelations?: () => void
   annotations: NoteAnnotation[]
   onRemoveAnnotation: (id: string) => void
 }
@@ -30,6 +36,7 @@ export default function WikiRightPanel({
   currentNote, allTags, backlinks, allNotes,
   onAddTag, onRemoveTag, onNavigate, onClose,
   onAnalyze, onCancelAi, aiSuggestion, aiAnalyzing, aiError,
+  readonly = false, onApplySummary, onApplyRelations,
   annotations, onRemoveAnnotation
 }: Props): JSX.Element {
   const [activeTab, setActiveTab] = useState<TabKey>('tags')
@@ -42,15 +49,15 @@ export default function WikiRightPanel({
   ]
 
   return (
-    <aside className="flex h-full w-[280px] shrink-0 flex-col border-l border-border bg-white/60 backdrop-blur">
+    <aside className="flex h-full w-[280px] shrink-0 flex-col border-l border-border bg-panel/60 backdrop-blur">
       {/* 标题栏 */}
       <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
-        <span className="text-[13px] font-medium text-gray-600">
+        <span className="text-[13px] font-medium text-text-secondary">
           {currentNote ? '笔记详情' : '面板'}
         </span>
         <button
           onClick={onClose}
-          className="rounded-md p-1 text-muted transition-colors hover:bg-pink-100/70 hover:text-accent"
+          className="rounded-md p-1 text-muted transition-colors hover:bg-surface-hover/70 hover:text-accent"
         >
           <X className="h-4 w-4" />
         </button>
@@ -67,7 +74,7 @@ export default function WikiRightPanel({
               className={`flex flex-1 items-center justify-center gap-1 px-2 py-2 text-[11px] font-medium transition-colors ${
                 activeTab === tab.key
                   ? 'border-b-2 border-accent text-accent'
-                  : 'text-muted hover:text-gray-600'
+                  : 'text-muted hover:text-text-secondary'
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -110,6 +117,9 @@ export default function WikiRightPanel({
             suggestion={aiSuggestion}
             analyzing={aiAnalyzing}
             error={aiError}
+            readonly={readonly}
+            onApplySummary={onApplySummary}
+            onApplyRelations={onApplyRelations}
           />
         )}
         {activeTab === 'annotations' && (

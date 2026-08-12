@@ -72,7 +72,10 @@ const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, Props>(function Code
         EditorView.theme({
           '&': {
             height: '100%',
-            fontSize: '14px'
+            fontSize: '14px',
+            // 主题色用 CSS 变量：data-theme / 用户主色变化时编辑器自动跟随，无需重建实例
+            backgroundColor: 'rgb(var(--panel))',
+            color: 'rgb(var(--text))'
           },
           '.cm-scroller': {
             fontFamily: '"Cascadia Code", "JetBrains Mono", "Fira Code", Consolas, "Microsoft YaHei", monospace',
@@ -82,21 +85,24 @@ const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, Props>(function Code
             padding: '16px'
           },
           '.cm-gutters': {
-            backgroundColor: '#fafafa',
-            borderRight: '1px solid #f5dfe8',
-            color: '#a38d97'
+            backgroundColor: 'rgb(var(--surface))',
+            borderRight: '1px solid rgb(var(--border))',
+            color: 'rgb(var(--text-muted))'
           },
           '.cm-activeLine': {
-            backgroundColor: 'rgba(244,113,156,0.06)'
+            backgroundColor: 'rgb(var(--accent) / 0.06)'
+          },
+          '.cm-activeLineGutter': {
+            backgroundColor: 'rgb(var(--accent) / 0.08)'
           },
           '.cm-selectionBackground': {
-            backgroundColor: 'rgba(244,113,156,0.2) !important'
+            backgroundColor: 'rgb(var(--accent) / 0.2) !important'
           },
           '.cm-cursor': {
-            borderLeftColor: '#f4719c'
+            borderLeftColor: 'rgb(var(--accent))'
           },
           '.cm-placeholder': {
-            color: '#a38d97'
+            color: 'rgb(var(--text-muted))'
           }
         })
       ]

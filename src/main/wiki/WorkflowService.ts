@@ -7,6 +7,7 @@ import type { SearchIndex } from './SearchIndex'
 import type { ConfigStore } from '../config/ConfigStore'
 import type { WorkflowResult } from '../../shared/types'
 import { chatStream } from '../llm/OpenAIClient'
+import { readContract } from './contract'
 
 /** LINT 结果（UI 需要结构化 issues 与重新摄入列表） */
 export interface LintWorkflowResult extends WorkflowResult {
@@ -45,11 +46,13 @@ export async function runLint(vm: VaultManager): Promise<LintWorkflowResult> {
   )
   const systemPages = allFiles.filter((f) => vm.isSystemFile(f))
 
-  // 所有页面名集合（用于 wikilink 解析，含 .md 和后缀剥离两种形式）
+  // 所有页面名集合（用于 wikilink 解析：全路径带/不带 .md + basename 裸 slug）
+  // 裸 slug 是契约铁律规定的唯一合法链接形式（[[english-kebab-slug]]），INGEST 实际写入的也是它
   const pageIds = new Set<string>()
   for (const f of allFiles) {
     pageIds.add(f.replace(/\.md$/, ''))
     pageIds.add(f)
+    pageIds.add(path.basename(f).replace(/\.md$/, ''))
   }
   // 系统文件 id 集合（wikilink 禁止清单：完整路径 + 裸 slug 两种写法都覆盖）
   const systemIds = new Set<string>()
@@ -382,6 +385,10 @@ export async function runReflect(vm: VaultManager, store: ConfigStore): Promise<
     return { ok: false, reportPath: '', summary: '', error: '没有可用的 AI 模型，请先在设置中配置' }
   }
 
+  // 契约每次读盘（行级截断，保章节完整），与 INGEST/QUERY 注入一致
+  const contract = await readContract(vault)
+  const contractRule = contract ? `\n\n=== 知识库行为契约（CLAUDE.md，必须遵守）===\n${contract}` : ''
+
   const messages = [
     {
       role: 'system',
@@ -394,7 +401,7 @@ export async function runReflect(vm: VaultManager, store: ConfigStore): Promise<
   "orphans": ["孤立概念：source_count=1 或长期无更新的页面 slug"],
   "synthesis": "一段综合洞察（200 字内）"
 }
-反向检验要求：在生成结论前主动寻找与候选结论相矛盾的证据；若找不到反对声音，在 synthesis 中明确标注确认偏差风险。${echoChamberHint}${degradeHint}`
+反向检验要求：在生成结论前主动寻找与候选结论相矛盾的证据；若找不到反对声音，在 synthesis 中明确标注确认偏差风险。${echoChamberHint}${degradeHint}${contractRule}`
     },
     {
       role: 'user',
@@ -590,10 +597,8 @@ export async function runQuery(
   if (!provider) {
     return { ok: false, reportPath: '', summary: '', error: '没有可用的 AI 模型，请先在设置中配置' }
   }
-  let contract = ''
-  try {
-    contract = (await fs.readFile(path.join(vault, 'CLAUDE.md'), 'utf-8')).slice(0, 1500)
-  } catch { /* 无契约 */ }
+  // 契约每次读盘（行级截断，保章节完整），与 INGEST/REFLECT 注入一致
+  const contract = await readContract(vault)
   const contractRule = contract ? `\n\n=== 知识库行为契约（CLAUDE.md，必须遵守）===\n${contract}` : ''
 
   const messages = [

@@ -48,6 +48,18 @@ export type ThinkingMode = 'auto' | 'on' | 'off'
  */
 export type ChatMode = 'pet'
 
+/** 主题模式：light=浅色 / dark=深色 / auto=跟随 Windows 亮暗 */
+export type ThemeMode = 'light' | 'dark' | 'auto'
+
+/** 主题配置：用户自定义主色，其余色阶由 colord 自动推导 */
+export interface ThemeConfig {
+  mode: ThemeMode
+  /** 主色 accent（hex，如 #f4719c） */
+  accent: string
+  /** 辅色 accent2（hex，如 #6db7d9） */
+  accent2: string
+}
+
 export interface AppConfig {
   activeProviderId: string
   providers: ProviderConfig[]
@@ -76,6 +88,8 @@ export interface AppConfig {
   petPrompt: string
   /** Wiki 个人知识库 Vault 路径（默认相对于 dataDir） */
   vaultPath: string
+  /** 主题配置（模式 + 自定义主色，色阶自动推导） */
+  theme: ThemeConfig
 }
 
 export interface ToolParameter {
@@ -166,12 +180,20 @@ export interface NoteAnnotation {
   created: string
 }
 
+/** AI 关系发现结果：target 为可跳转的笔记 relPath（如 wiki/concepts/xxx.md），title 为显示标题 */
+export interface NoteRelation {
+  target: string
+  reason: string
+  title?: string
+}
+
 /** 笔记完整内容 */
 export interface NoteContent extends NoteMeta {
   rawBody: string        // frontmatter 之后的 markdown 正文
   links: string[]        // 解析出的 [[wiki-link]] 目标列表
   aiSummary?: string
   aiAnalyzedAt?: string
+  aiRelations?: NoteRelation[]
   annotations?: NoteAnnotation[]
   /** frontmatter graph-excluded 标记（系统文件不参与图谱） */
   graphExcluded?: boolean
@@ -184,6 +206,10 @@ export interface NoteData {
   title: string
   tags: string[]
   body: string
+  /** AI 分析结果（可选）：写入 frontmatter，未传时保留旧值 */
+  aiSummary?: string
+  aiRelations?: NoteRelation[]
+  aiAnalyzedAt?: string
 }
 
 /** 图谱节点 */
@@ -231,7 +257,9 @@ export interface TagWithCount {
 export interface AISuggestion {
   tags?: string[]
   summary?: string
-  relations?: Array<{ target: string; reason: string }>
+  relations?: NoteRelation[]
+  /** 质量审查建议：0-3 条可执行改进（stub 提示 / 缺失溯源 wikilink / 可回答的开放问题等） */
+  suggestions?: string[]
 }
 
 /** INGEST 单次 LLM 分析结果（LLM Wiki 编译模式） */

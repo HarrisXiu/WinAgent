@@ -259,13 +259,13 @@ export default function WikiWindowApp(): JSX.Element {
   // ==================== 渲染 ====================
 
   const iconBtn =
-    'flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-medium text-gray-600 transition-colors hover:bg-pink-100/70 hover:text-accent disabled:opacity-40'
+    'flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-medium text-text-secondary transition-colors hover:bg-surface-hover/70 hover:text-accent disabled:opacity-40'
 
   return (
     <div className="wiki-window flex h-full flex-col bg-bg">
       {/* ================= 顶栏工具栏 ================= */}
-      <header className="relative z-20 flex items-center gap-2 border-b border-border bg-white/80 px-3 py-1.5 backdrop-blur">
-        <span className="flex items-center gap-1.5 text-[13px] font-semibold text-gray-700">
+      <header className="relative z-20 flex items-center gap-2 border-b border-border bg-panel/80 px-3 py-1.5 backdrop-blur">
+        <span className="flex items-center gap-1.5 text-[13px] font-semibold text-text">
           <BookOpen className="h-4 w-4 text-accent" />
           知识库
         </span>
@@ -316,7 +316,7 @@ export default function WikiWindowApp(): JSX.Element {
       {batch && batch.phase === 'review' && (
         <div className="relative z-40 border-b border-purple-200 bg-gradient-to-r from-purple-50 to-pink-50 px-4 py-2">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="flex items-center gap-1.5 text-[12.5px] font-medium text-purple-700">
+            <span className="flex items-center gap-1.5 text-[12.5px] font-medium text-purple">
               <Sparkles className="h-3.5 w-3.5" />
               第 1 篇已编译（共 {batch.total} 篇）— 请对照「编译内容 | 原文」审查质量
             </span>
@@ -324,7 +324,7 @@ export default function WikiWindowApp(): JSX.Element {
               <button
                 onClick={() => { void handleBatchContinue() }}
                 disabled={busy}
-                className="flex items-center gap-1 rounded-lg bg-gradient-to-r from-purple-500 to-accent px-3 py-1 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                className="flex items-center gap-1 rounded-lg bg-gradient-to-r from-accent2 to-accent px-3 py-1 text-[12px] font-medium text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-50"
               >
                 <Check className="h-3.5 w-3.5" />
                 质量达标，继续批量 {batch.total - batch.doneCount} 篇
@@ -332,7 +332,7 @@ export default function WikiWindowApp(): JSX.Element {
               <button
                 onClick={handleEditContract}
                 disabled={busy}
-                className="flex items-center gap-1 rounded-lg border border-accent/40 bg-white px-3 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-pink-50"
+                className="flex items-center gap-1 rounded-lg border border-accent/40 bg-panel px-3 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-surface"
                 title="打开 vault 根 CLAUDE.md 编辑规则，保存后继续批量立即生效"
               >
                 <FolderOpen className="h-3.5 w-3.5" />
@@ -341,7 +341,7 @@ export default function WikiWindowApp(): JSX.Element {
               <button
                 onClick={() => { void handleBatchAbort() }}
                 disabled={busy}
-                className="flex items-center gap-1 rounded-lg border border-border bg-white px-3 py-1 text-[12px] text-gray-600 transition-colors hover:bg-red-50 hover:text-red-500"
+                className="flex items-center gap-1 rounded-lg border border-border bg-panel px-3 py-1 text-[12px] text-text-secondary transition-colors hover:bg-danger/10 hover:text-danger"
               >
                 <X className="h-3.5 w-3.5" />
                 停止
@@ -361,22 +361,22 @@ export default function WikiWindowApp(): JSX.Element {
 
       {/* SOURCE MODIFIED 重新摄入提示条 */}
       {reingestFiles.length > 0 && (
-        <div className="relative z-40 flex flex-wrap items-center gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2">
-          <span className="text-[12.5px] font-medium text-amber-700">
+        <div className="relative z-40 flex flex-wrap items-center gap-3 border-b border-warning/30 bg-warning/10 px-4 py-2">
+          <span className="text-[12.5px] font-medium text-warning">
             ⚠ 检测到 {reingestFiles.length} 个来源文件被修改（SHA-256 变化），建议重新摄入
           </span>
           <div className="ml-auto flex items-center gap-2">
             <button
               onClick={() => { void handleReingest() }}
               disabled={busy}
-              className="flex items-center gap-1 rounded-lg bg-amber-500 px-3 py-1 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="flex items-center gap-1 rounded-lg bg-warning px-3 py-1 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               <FileUp className="h-3.5 w-3.5" />
               全部重新摄入（{reingestFiles.length}）
             </button>
             <button
               onClick={() => setReingestFiles([])}
-              className="rounded-lg border border-border bg-white px-3 py-1 text-[12px] text-gray-600 transition-colors hover:bg-amber-100"
+              className="rounded-lg border border-border bg-panel px-3 py-1 text-[12px] text-text-secondary transition-colors hover:bg-warning/15"
             >
               忽略
             </button>
@@ -411,12 +411,12 @@ export default function WikiWindowApp(): JSX.Element {
             <div
               key={t.id}
               className={`rounded-xl border px-4 py-3 text-[13px] shadow-lg backdrop-blur ${
-                t.ok ? 'border-green-200 bg-green-50/95 text-green-700' : 'border-red-200 bg-red-50/95 text-red-600'
+                t.ok ? 'border-success/30 bg-success/10 text-success' : 'border-danger/30 bg-danger/10 text-danger'
               }`}
             >
               <div className="flex items-start gap-2">
                 <span className="min-w-0 flex-1 leading-relaxed">{t.text}</span>
-                <button onClick={() => setToasts((prev) => prev.filter((x) => x.id !== t.id))} className="shrink-0 text-muted hover:text-gray-700">
+                <button onClick={() => setToasts((prev) => prev.filter((x) => x.id !== t.id))} className="shrink-0 text-muted hover:text-text">
                   <X className="inline h-3 w-3" />
                 </button>
               </div>
@@ -441,19 +441,19 @@ function QueryDialog({ onClose, onQuery }: { onClose: () => void; onQuery: (q: s
   }
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-pink-900/20 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-2xl border border-border bg-white p-5 shadow-2xl">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-2xl border border-border bg-panel p-5 shadow-2xl">
         <div className="mb-3 flex items-center gap-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent/10">
             <MessageSquare className="h-5 w-5 text-accent" />
           </div>
-          <h3 className="text-[15px] font-semibold text-gray-800">AI 问答</h3>
+          <h3 className="text-[15px] font-semibold text-text">AI 问答</h3>
         </div>
-        <p className="mb-3 text-[12.5px] leading-relaxed text-gray-500">
+        <p className="mb-3 text-[12.5px] leading-relaxed text-muted">
           基于知识库检索回答。答案每条主张带 [[source]] 溯源，结尾附 Confidence Notes 与 Limitations，并落盘 wiki/outputs/。
         </p>
         <textarea
-          className="h-24 w-full resize-none rounded-xl border border-border bg-pink-50/40 px-3 py-2 text-[13px] leading-relaxed text-gray-700 outline-none focus:border-accent/50"
+          className="h-24 w-full resize-none rounded-xl border border-border bg-surface/40 px-3 py-2 text-[13px] leading-relaxed text-text outline-none focus:border-accent/50"
           placeholder="例如：根据我的知识库，注意力机制的核心思想是什么？"
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -461,13 +461,13 @@ function QueryDialog({ onClose, onQuery }: { onClose: () => void; onQuery: (q: s
           autoFocus
         />
         <div className="mt-3 flex justify-end gap-2">
-          <button onClick={onClose} disabled={loading} className="rounded-lg border border-border px-4 py-1.5 text-sm text-gray-600 transition-colors hover:bg-pink-50 disabled:opacity-50">
+          <button onClick={onClose} disabled={loading} className="rounded-lg border border-border px-4 py-1.5 text-sm text-text-secondary transition-colors hover:bg-surface disabled:opacity-50">
             取消
           </button>
           <button
             onClick={() => { void submit() }}
             disabled={!q.trim() || loading}
-            className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-accent to-purple-500 px-4 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-accent to-accent2 px-4 py-1.5 text-sm font-medium text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
             {loading ? '检索分析中…' : '提问'}
@@ -505,15 +505,15 @@ function MergeDialog({
   const slugs = Array.from(new Set(collectSlugs(notes, ''))).sort()
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-pink-900/20 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-2xl border border-border bg-white p-5 shadow-2xl">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-2xl border border-border bg-panel p-5 shadow-2xl">
         <div className="mb-3 flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-100">
-            <GitMerge className="h-5 w-5 text-purple-500" />
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple/10">
+            <GitMerge className="h-5 w-5 text-purple" />
           </div>
-          <h3 className="text-[15px] font-semibold text-gray-800">去重合并</h3>
+          <h3 className="text-[15px] font-semibold text-text">去重合并</h3>
         </div>
-        <p className="mb-3 text-[12.5px] text-gray-500">
+        <p className="mb-3 text-[12.5px] text-muted">
           保留页吸收 aliases 并集、Sources/Evolution Log 并集去重，全库 wikilink 改写，被合并页替换为 redirect。
         </p>
         <div className="mb-3 flex gap-2">
@@ -522,7 +522,7 @@ function MergeDialog({
               key={a}
               onClick={() => { setArea(a); setKeep(''); setRemove('') }}
               className={`flex-1 rounded-lg border px-3 py-1.5 text-[12.5px] font-medium transition-colors ${
-                area === a ? 'border-accent/50 bg-accent/10 text-accent' : 'border-border text-gray-600 hover:bg-pink-50'
+                area === a ? 'border-accent/50 bg-accent/10 text-accent' : 'border-border text-text-secondary hover:bg-surface'
               }`}
             >
               {a === 'concepts' ? '概念' : '实体'}
@@ -531,7 +531,7 @@ function MergeDialog({
         </div>
         <div className="space-y-3">
           <select
-            className="w-full rounded-lg border border-border bg-white px-3 py-2 text-[13px] text-gray-700"
+            className="w-full rounded-lg border border-border bg-panel px-3 py-2 text-[13px] text-text"
             value={keep}
             onChange={(e) => setKeep(e.target.value)}
           >
@@ -539,7 +539,7 @@ function MergeDialog({
             {slugs.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
           <select
-            className="w-full rounded-lg border border-border bg-white px-3 py-2 text-[13px] text-gray-700"
+            className="w-full rounded-lg border border-border bg-panel px-3 py-2 text-[13px] text-text"
             value={remove}
             onChange={(e) => setRemove(e.target.value)}
           >
@@ -548,13 +548,13 @@ function MergeDialog({
           </select>
         </div>
         <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg border border-border px-4 py-1.5 text-sm text-gray-600 transition-colors hover:bg-pink-50">
+          <button onClick={onClose} className="rounded-lg border border-border px-4 py-1.5 text-sm text-text-secondary transition-colors hover:bg-surface">
             取消
           </button>
           <button
             onClick={() => { void onMerge(keep, remove, area) }}
             disabled={!keep || !remove}
-            className="rounded-lg bg-gradient-to-br from-purple-400 to-accent px-4 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="rounded-lg bg-gradient-to-br from-purple-400 to-accent px-4 py-1.5 text-sm font-medium text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             确认合并
           </button>
@@ -577,19 +577,19 @@ function UrlImportDialog({ onClose, onImport }: { onClose: () => void; onImport:
   }
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-pink-900/20 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-2xl border border-border bg-white p-5 shadow-2xl">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-2xl border border-border bg-panel p-5 shadow-2xl">
         <div className="mb-3 flex items-center gap-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-100">
             <Link2 className="h-5 w-5 text-blue-500" />
           </div>
-          <h3 className="text-[15px] font-semibold text-gray-800">URL 导入</h3>
+          <h3 className="text-[15px] font-semibold text-text">URL 导入</h3>
         </div>
-        <p className="mb-3 text-[12.5px] text-gray-500">
+        <p className="mb-3 text-[12.5px] text-muted">
           抓取网页正文 → 保存到 raw/clippings/（含 source_url）→ 自动 AI 编译为 sources/concepts/entities 页。
         </p>
         <input
-          className="w-full rounded-xl border border-border bg-pink-50/40 px-3 py-2 text-[13px] text-gray-700 outline-none focus:border-accent/50"
+          className="w-full rounded-xl border border-border bg-surface/40 px-3 py-2 text-[13px] text-text outline-none focus:border-accent/50"
           placeholder="https://example.com/article"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
@@ -597,13 +597,13 @@ function UrlImportDialog({ onClose, onImport }: { onClose: () => void; onImport:
           autoFocus
         />
         <div className="mt-3 flex justify-end gap-2">
-          <button onClick={onClose} disabled={loading} className="rounded-lg border border-border px-4 py-1.5 text-sm text-gray-600 transition-colors hover:bg-pink-50 disabled:opacity-50">
+          <button onClick={onClose} disabled={loading} className="rounded-lg border border-border px-4 py-1.5 text-sm text-text-secondary transition-colors hover:bg-surface disabled:opacity-50">
             取消
           </button>
           <button
             onClick={() => { void submit() }}
             disabled={!url.trim() || loading}
-            className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-blue-400 to-accent px-4 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-accent2 to-accent px-4 py-1.5 text-sm font-medium text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
             {loading ? '抓取编译中…' : '导入'}

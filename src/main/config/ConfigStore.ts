@@ -153,7 +153,13 @@ export function defaultConfig(): AppConfig {
     thinkingMode: 'auto',
     chatMode: 'pet',
     petPrompt: DEFAULT_PET_PROMPT,
-    vaultPath: ''
+    vaultPath: '',
+    // 主题：默认浅色 + 品牌粉蓝（与改造前硬编码配色一致）
+    theme: {
+      mode: 'light',
+      accent: '#f4719c',
+      accent2: '#6db7d9'
+    }
   }
 }
 
@@ -189,6 +195,7 @@ export class ConfigStore {
       }
       // 嵌套对象需深合并，避免旧配置缺字段
       this.cfg.visionAssist = { ...defaultConfig().visionAssist, ...(parsed.visionAssist || {}) }
+      this.cfg.theme = { ...defaultConfig().theme, ...(parsed.theme || {}) }
       // 解密 apiKey 到内存；旧版明文自动回写升级为密文
       let migrated = false
       this.cfg.providers = this.cfg.providers.map((p) => {

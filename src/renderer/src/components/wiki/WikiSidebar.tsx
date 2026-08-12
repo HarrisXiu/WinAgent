@@ -38,12 +38,12 @@ export default function WikiSidebar({
   const displayName = vaultPath ? vaultPath.split(/[/\\]/).pop() || 'Vault' : 'Vault'
 
   return (
-    <aside className="flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-white/60 backdrop-blur">
+    <aside className="flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-panel/60 backdrop-blur">
       {/* Vault 标题 */}
       <div className="flex items-center gap-2 border-b border-border px-3 py-3">
         <FolderOpen className="h-4 w-4 text-accent" />
         <span
-          className="flex-1 truncate text-[13px] font-medium text-gray-700 cursor-pointer hover:text-accent"
+          className="flex-1 truncate text-[13px] font-medium text-text cursor-pointer hover:text-accent"
           title={vaultPath}
           onClick={onSetVaultPath}
         >
@@ -52,7 +52,7 @@ export default function WikiSidebar({
         <button
           onClick={onToggleGraph}
           className={`rounded-md p-1 transition-colors ${
-            showGraph ? 'bg-accent/15 text-accent' : 'text-muted hover:bg-pink-100/70 hover:text-accent'
+            showGraph ? 'bg-accent/15 text-accent' : 'text-muted hover:bg-surface-hover/70 hover:text-accent'
           }`}
           title="量子关系图谱"
         >
@@ -60,7 +60,7 @@ export default function WikiSidebar({
         </button>
         <button
           onClick={onToggleRightPanel}
-          className="rounded-md p-1 text-muted transition-colors hover:bg-pink-100/70 hover:text-accent"
+          className="rounded-md p-1 text-muted transition-colors hover:bg-surface-hover/70 hover:text-accent"
           title={showRightPanel ? '隐藏右侧面板' : '显示右侧面板'}
         >
           {showRightPanel ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
@@ -69,10 +69,10 @@ export default function WikiSidebar({
 
       {/* 搜索框 */}
       <div className="border-b border-border px-2 py-2">
-        <div className="flex items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 py-1.5">
+        <div className="flex items-center gap-1.5 rounded-lg border border-border bg-panel px-2.5 py-1.5">
           <Search className="h-3.5 w-3.5 text-muted" />
           <input
-            className="flex-1 bg-transparent text-[12px] text-gray-700 outline-none placeholder:text-muted"
+            className="flex-1 bg-transparent text-[12px] text-text outline-none placeholder:text-muted"
             placeholder="搜索笔记..."
             value={searchQuery}
             onChange={(e) => handleSearch(e.target.value)}
@@ -89,10 +89,10 @@ export default function WikiSidebar({
             searchResults.map((r) => (
               <button
                 key={r.path}
-                className="w-full rounded-lg px-3 py-2 text-left transition-colors hover:bg-pink-100/50"
+                className="w-full rounded-lg px-3 py-2 text-left transition-colors hover:bg-surface-hover/50"
                 onClick={() => { onSelectNote(r.path); setSearchQuery(''); onSearch('') }}
               >
-                <div className="text-[13px] font-medium text-gray-700 truncate">{r.title}</div>
+                <div className="text-[13px] font-medium text-text truncate">{r.title}</div>
                 <div className="mt-0.5 text-[11px] text-muted truncate">{r.snippet}</div>
               </button>
             ))
@@ -112,7 +112,7 @@ export default function WikiSidebar({
       <div className="border-t border-border p-2">
         <button
           onClick={() => onCreateNote()}
-          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[13px] text-accent transition-colors hover:bg-pink-100/70"
+          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[13px] text-accent transition-colors hover:bg-surface-hover/70"
         >
           <Plus className="h-4 w-4" />
           新建笔记

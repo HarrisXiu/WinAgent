@@ -4,10 +4,106 @@
  * 本文件是知识库的操作宪章：INGEST / QUERY / LINT / REFLECT / MERGE 全部内置工作流、
  * wikilink 与 confidence 规则以此为准。
  * - 契约以 vault 根目录的 CLAUDE.md 文件呈现，用户可编辑（标定闭环：改契约 → 继续批量生效）
- * - 管线每次执行 runIngest 时重新读盘，取前 MAX_CONTRACT_CHARS 字符注入 LLM system prompt
+ * - 管线每次执行工作流时经 readContract 重新读盘，行级截断（保章节完整）后注入 LLM system prompt
  */
 
-export const MAX_CONTRACT_CHARS = 3000
+import { promises as fs } from 'fs'
+import path from 'path'
+
+/** 契约注入上限：默认契约全文约 3KB，8000 可完整容纳并留出用户扩展空间 */
+export const MAX_CONTRACT_CHARS = 8000
+
+/**
+ * 行级截断契约文本：保证 `## ` 章节标题永远完整（不从中切断章节），
+ * 超长正文行按字符截断。wikilink 铁律 / confidence 规则等章节因此不会半截丢失。
+ * 返回值严格 ≤ maxChars（章节标题放不下剩余预算时停止，不产生溢出）。
+ */
+export function truncateContract(md: string, maxChars: number = MAX_CONTRACT_CHARS): string {
+  if (md.length <= maxChars) return md
+  const lines = md.split('\n')
+  const out: string[] = []
+  let used = 0
+  for (const line of lines) {
+    const len = line.length + 1
+    if (line.startsWith('## ')) {
+      // 章节标题必须完整：放得下才保留，放不下直接停止（不切半标题、不超限）
+      if (used + len > maxChars) break
+      out.push(line)
+      used += len
+      continue
+    }
+    const budget = maxChars - used
+    if (budget <= 0) break
+    if (len <= budget) {
+      out.push(line)
+      used += len
+    } else {
+      out.push(line.slice(0, budget - 1))
+      break
+    }
+  }
+  return out.join('\n')
+}
+
+/**
+ * 按优先级抽取契约小节：标题命中 prioritySections 关键词的 `## ` 章节排在最前
+ * （保持原文相对顺序），其余章节按原文顺序追加（用户自定义章节不会丢），
+ * 最后行级截断到 maxChars。默认契约全文远小于上限时，输出为全部章节（顺序重排）。
+ */
+export function extractContractSections(
+  md: string,
+  prioritySections: string[],
+  maxChars: number = MAX_CONTRACT_CHARS
+): string {
+  // 按 ## 标题切块；第一个 ## 之前的引言（标题/引用块）整体保留在最前
+  const lines = md.split('\n')
+  const head: string[] = []
+  const blocks: Array<{ title: string; lines: string[] }> = []
+  let cur: { title: string; lines: string[] } | null = null
+  for (const line of lines) {
+    const m = line.match(/^##\s+(.+)$/)
+    if (m) {
+      cur = { title: m[1].trim(), lines: [line] }
+      blocks.push(cur)
+    } else if (cur) {
+      cur.lines.push(line)
+    } else {
+      head.push(line)
+    }
+  }
+  const isPriority = (b: { title: string }): boolean =>
+    prioritySections.some((k) => b.title.toLowerCase().includes(k.toLowerCase()))
+  // 稳定排序：优先章节在前，其余在后（同类保持原文顺序）
+  blocks.sort((a, b) => Number(isPriority(b)) - Number(isPriority(a)))
+
+  const all: string[] = [...head]
+  for (const b of blocks) all.push(...b.lines)
+  return truncateContract(all.join('\n'), maxChars)
+}
+
+/** 读取 vault 根目录 CLAUDE.md 契约（每次读盘，标定闭环生效）；无契约文件返回空字符串 */
+export async function readContract(vaultPath: string, maxChars: number = MAX_CONTRACT_CHARS): Promise<string> {
+  try {
+    const raw = await fs.readFile(path.join(vaultPath, 'CLAUDE.md'), 'utf-8')
+    return truncateContract(raw, maxChars)
+  } catch {
+    return ''
+  }
+}
+
+/** 读取 vault 契约并按优先级抽取小节（供 analyze 等按需注入）；无契约文件返回空字符串 */
+export async function readContractSections(
+  vaultPath: string,
+  prioritySections: string[],
+  maxChars: number = MAX_CONTRACT_CHARS
+): Promise<string> {
+  try {
+    const raw = await fs.readFile(path.join(vaultPath, 'CLAUDE.md'), 'utf-8')
+    return extractContractSections(raw, prioritySections, maxChars)
+  } catch {
+    return ''
+  }
+}
 
 export const WINAGENT_CONTRACT_MD = `# WinAgent 知识库契约（CLAUDE.md）
 

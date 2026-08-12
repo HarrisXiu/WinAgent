@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   X,
   Plus,
@@ -12,9 +12,14 @@ import {
   SlidersHorizontal,
   MessageSquareText,
   Cpu,
-  Wrench
+  Wrench,
+  Palette,
+  RotateCcw
 } from 'lucide-react'
-import type { AppConfig, ChatMode, ProviderConfig, ToolInfo } from '../../../shared/types'
+import type { AppConfig, ChatMode, ProviderConfig, ThemeConfig, ToolInfo } from '../../../shared/types'
+
+/** 默认主题（品牌粉蓝，与改造前硬编码配色一致），恢复默认配色用 */
+const DEFAULT_THEME: ThemeConfig = { mode: 'light', accent: '#f4719c', accent2: '#6db7d9' }
 
 interface Props {
   onClose: () => void
@@ -39,13 +44,14 @@ const TABS = [
   { key: 'models', label: '模型', icon: Server },
   { key: 'vision', label: '视觉辅助', icon: Eye },
   { key: 'generation', label: '生成参数', icon: SlidersHorizontal },
+  { key: 'theme', label: '外观', icon: Palette },
   { key: 'system', label: '系统提示词', icon: MessageSquareText },
   { key: 'advanced', label: '高级', icon: Cpu },
   { key: 'tools', label: '工具', icon: Wrench }
 ] as const
 export type TabKey = (typeof TABS)[number]['key']
 
-const inputCls = 'w-full rounded-lg border border-border bg-white px-2.5 py-1.5 text-sm text-gray-700'
+const inputCls = 'w-full rounded-lg border border-border bg-panel px-2.5 py-1.5 text-sm text-text'
 
 export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMount }: Props): JSX.Element {
   const [cfg, setCfg] = useState<AppConfig | null>(null)
@@ -54,6 +60,8 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, string[]>>({})
   const [saving, setSaving] = useState(false)
   const [tab, setTab] = useState<TabKey>(initialTab ?? 'models')
+  // 主题修改防抖计时器（必须声明在所有条件 return 之前）
+  const themeDebounceRef = useRef<ReturnType<typeof setTimeout>>()
 
   useEffect(() => {
     window.winagent.getConfig().then(setCfg)
@@ -110,6 +118,16 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
     onSaved(saved)
   }
 
+  // 主题修改：防抖 300ms 自动保存（拾色器拖拽不写盘，释放后生效；双窗口实时同步）
+  const updateTheme = (patch: Partial<ThemeConfig>): void => {
+    const next = { ...cfg, theme: { ...cfg.theme, ...patch } }
+    setCfg(next)
+    clearTimeout(themeDebounceRef.current)
+    themeDebounceRef.current = setTimeout(() => {
+      void window.winagent.saveConfig(next).then(onSaved)
+    }, 300)
+  }
+
   // 视觉辅助实际生效的接口与模型
   const activeProvider = cfg.providers.find((p) => p.id === cfg.activeProviderId)
   const visionBase = cfg.visionAssist.providerId
@@ -140,15 +158,15 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
   const checkboxCls = 'h-4 w-4 accent-accent'
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-pink-900/20 p-4 backdrop-blur-sm">
-      <div className="flex h-[86vh] w-full max-w-4xl overflow-hidden rounded-2xl border border-border bg-white shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+      <div className="flex h-[86vh] w-full max-w-4xl overflow-hidden rounded-2xl border border-border bg-panel shadow-2xl">
         {/* ============ 左侧导航 ============ */}
-        <aside className="flex w-48 shrink-0 flex-col border-r border-border bg-pink-50/50">
+        <aside className="flex w-48 shrink-0 flex-col border-r border-border bg-surface/50">
           <div className="flex items-center gap-2.5 px-4 pb-4 pt-4">
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-accent to-accent2 shadow-glow">
-              <SettingsIcon className="h-4 w-4 text-white" />
+              <SettingsIcon className="h-4 w-4 text-accent-fg" />
             </div>
-            <span className="text-sm font-semibold tracking-tight text-gray-700">设置</span>
+            <span className="text-sm font-semibold tracking-tight text-text">设置</span>
           </div>
           <nav className="flex-1 space-y-0.5 px-2.5">
             {TABS.map((t) => (
@@ -158,7 +176,7 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                 className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] transition-colors ${
                   tab === t.key
                     ? 'bg-accent/10 font-medium text-accent'
-                    : 'text-muted hover:bg-pink-100/60 hover:text-accent'
+                    : 'text-muted hover:bg-surface-hover/60 hover:text-accent'
                 }`}
               >
                 <t.icon className="h-4 w-4" />
@@ -171,7 +189,7 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
               <FolderOpen className="h-3 w-3" />
               数据目录
             </div>
-            <div className="truncate rounded-lg bg-white px-2 py-1 font-mono text-[10.5px] text-muted" title={dataDir}>
+            <div className="truncate rounded-lg bg-panel px-2 py-1 font-mono text-[10.5px] text-muted" title={dataDir}>
               {dataDir}
             </div>
           </div>
@@ -184,7 +202,7 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
             {tab === 'models' && (
               <section>
                 <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-[15px] font-medium text-gray-800">模型 Providers</h3>
+                  <h3 className="text-[15px] font-medium text-text">模型 Providers</h3>
                   <button
                     onClick={() => update({ providers: [...cfg.providers, newProvider()] })}
                     className="flex items-center gap-1 rounded-lg bg-accent/15 px-2.5 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/25"
@@ -194,7 +212,7 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                 </div>
                 <div className="space-y-3">
                   {cfg.providers.map((p, i) => (
-                    <div key={p.id} className="rounded-xl border border-border/70 bg-pink-50/40 p-3.5">
+                    <div key={p.id} className="rounded-xl border border-border/70 bg-surface/40 p-3.5">
                       <div className="mb-2.5 flex gap-2">
                         <input
                           className={inputCls}
@@ -203,7 +221,7 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                           onChange={(e) => updateProvider(i, { label: e.target.value })}
                         />
                         <select
-                          className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-sm text-gray-700"
+                          className="rounded-lg border border-border bg-panel px-2.5 py-1.5 text-sm text-text"
                           value={p.type}
                           onChange={(e) => updateProvider(i, { type: e.target.value as 'openai' | 'ollama' })}
                         >
@@ -212,7 +230,7 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                         </select>
                         <button
                           onClick={() => update({ providers: cfg.providers.filter((_, j) => j !== i) })}
-                          className="rounded-lg p-2 text-muted transition-colors hover:bg-red-500/15 hover:text-red-400"
+                          className="rounded-lg p-2 text-muted transition-colors hover:bg-danger/90/15 hover:text-danger"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -235,7 +253,7 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                       <div className="mb-2.5 flex items-center gap-2 text-xs text-muted">
                         <span>图片识别:</span>
                         <select
-                          className="rounded-lg border border-border bg-white px-2 py-1 text-xs text-gray-600"
+                          className="rounded-lg border border-border bg-panel px-2 py-1 text-xs text-text-secondary"
                           value={p.supportsVision === undefined ? 'auto' : p.supportsVision ? 'yes' : 'no'}
                           onChange={(e) => {
                             const v = e.target.value
@@ -280,8 +298,8 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
 
             {/* ---------- 视觉辅助 ---------- */}
             {tab === 'vision' && (
-              <section className="rounded-xl border border-border/70 bg-pink-50/40 p-4">
-                <label className="flex cursor-pointer items-center gap-2.5 text-sm font-medium text-gray-700">
+              <section className="rounded-xl border border-border/70 bg-surface/40 p-4">
+                <label className="flex cursor-pointer items-center gap-2.5 text-sm font-medium text-text">
                   <input
                     type="checkbox"
                     className={checkboxCls}
@@ -330,7 +348,7 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                       </label>
                     </div>
                     {visionWarning ? (
-                      <p className="text-[11.5px] text-red-400">{visionWarning}</p>
+                      <p className="text-[11.5px] text-danger">{visionWarning}</p>
                     ) : (
                       <p className="text-[11.5px] text-muted">
                         实际调用：{visionSourceLabel} · 模型 {visionEffectiveModel}
@@ -339,7 +357,7 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                     <label className="block text-sm">
                       <span className="mb-1.5 block text-xs text-muted">识别指令（留空用默认）</span>
                       <textarea
-                        className="h-20 w-full rounded-lg border border-border bg-white px-2.5 py-2 text-sm leading-relaxed text-gray-700"
+                        className="h-20 w-full rounded-lg border border-border bg-panel px-2.5 py-2 text-sm leading-relaxed text-text"
                         placeholder="默认：完整客观描述图片，文字原文转写，公式用 LaTeX，表格用 Markdown"
                         value={cfg.visionAssist.prompt}
                         onChange={(e) =>
@@ -389,10 +407,10 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                   <span>流式输出（关闭后等模型生成完毕再一次性显示）</span>
                 </label>
 
-                <label className="flex items-center gap-3 text-sm text-gray-700">
+                <label className="flex items-center gap-3 text-sm text-text">
                   <span className="text-xs text-muted">深度思考</span>
                   <select
-                    className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-sm text-gray-700"
+                    className="rounded-lg border border-border bg-panel px-2.5 py-1.5 text-sm text-text"
                     value={cfg.thinkingMode}
                     onChange={(e) => update({ thinkingMode: e.target.value as AppConfig['thinkingMode'] })}
                   >
@@ -408,7 +426,7 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                   参数；若接口不认识会自动去掉参数重试，不会报错。
                 </p>
 
-                <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-border/70 bg-pink-50/40 p-3.5 text-sm text-gray-700">
+                <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-border/70 bg-surface/40 p-3.5 text-sm text-text">
                   <input
                     type="checkbox"
                     className={checkboxCls}
@@ -420,16 +438,134 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
               </section>
             )}
 
+            {/* ---------- 外观（主题） ---------- */}
+            {tab === 'theme' && (
+              <section className="space-y-4">
+                <div>
+                  <span className="mb-1.5 block text-xs text-muted">主题模式</span>
+                  <div className="flex gap-2">
+                    {(
+                      [
+                        ['light', '☀️ 浅色'],
+                        ['dark', '🌙 深色'],
+                        ['auto', '🖥️ 跟随系统']
+                      ] as Array<[ThemeConfig['mode'], string]>
+                    ).map(([m, label]) => (
+                      <button
+                        key={m}
+                        onClick={() => updateTheme({ mode: m })}
+                        className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                          cfg.theme.mode === m
+                            ? 'border-accent bg-accent/10 text-accent'
+                            : 'border-border bg-panel text-text-secondary hover:bg-surface'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-muted/70">
+                    「跟随系统」随 Windows 亮暗自动切换，两个窗口实时同步；其余色阶由主色经 colord 自动推导。
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block text-sm">
+                    <span className="mb-1.5 block text-xs text-muted">主色 accent（按钮/高亮/链接）</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        className="h-9 w-12 cursor-pointer rounded-lg border border-border bg-panel p-1"
+                        value={cfg.theme.accent}
+                        onChange={(e) => updateTheme({ accent: e.target.value })}
+                      />
+                      <input
+                        className="flex-1 rounded-lg border border-border bg-panel px-2.5 py-1.5 font-mono text-xs text-text"
+                        value={cfg.theme.accent}
+                        spellCheck={false}
+                        onChange={(e) => {
+                          const v = e.target.value.trim()
+                          if (/^#[0-9a-fA-F]{6}$/.test(v)) updateTheme({ accent: v })
+                        }}
+                      />
+                    </div>
+                  </label>
+                  <label className="block text-sm">
+                    <span className="mb-1.5 block text-xs text-muted">辅色 accent2（渐变/图谱/次要高亮）</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        className="h-9 w-12 cursor-pointer rounded-lg border border-border bg-panel p-1"
+                        value={cfg.theme.accent2}
+                        onChange={(e) => updateTheme({ accent2: e.target.value })}
+                      />
+                      <input
+                        className="flex-1 rounded-lg border border-border bg-panel px-2.5 py-1.5 font-mono text-xs text-text"
+                        value={cfg.theme.accent2}
+                        spellCheck={false}
+                        onChange={(e) => {
+                          const v = e.target.value.trim()
+                          if (/^#[0-9a-fA-F]{6}$/.test(v)) updateTheme({ accent2: v })
+                        }}
+                      />
+                    </div>
+                  </label>
+                </div>
+
+                {/* 实时预览卡片（内联 style 即时反馈，不等防抖） */}
+                <div className="rounded-xl border border-border bg-panel p-4">
+                  <span className="mb-2 block text-xs text-muted">实时预览</span>
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <button
+                      className="rounded-lg px-3 py-1.5 text-xs font-medium text-white"
+                      style={{ background: cfg.theme.accent }}
+                    >
+                      主色按钮
+                    </button>
+                    <button
+                      className="rounded-lg px-3 py-1.5 text-xs font-medium text-white"
+                      style={{ background: cfg.theme.accent2 }}
+                    >
+                      辅色按钮
+                    </button>
+                    <span
+                      className="rounded-full px-2.5 py-1 text-[10.5px]"
+                      style={{ background: `${cfg.theme.accent}22`, color: cfg.theme.accent }}
+                    >
+                      标签（浅色底）
+                    </span>
+                    <span
+                      className="rounded border px-2.5 py-1 text-[10.5px]"
+                      style={{ borderColor: `${cfg.theme.accent}66`, color: cfg.theme.accent }}
+                    >
+                      描边
+                    </span>
+                  </div>
+                  <p className="mt-2 text-[11px] text-muted/70">
+                    accent/accent2 决定全应用的主色调：hover 态、边框、浅色面板、光晕、图谱节点均由它们推导。
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => updateTheme({ ...DEFAULT_THEME })}
+                  className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-surface hover:text-accent"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  恢复默认配色（浅色 + 品牌粉蓝）
+                </button>
+              </section>
+            )}
+
             {/* ---------- 系统提示词 ---------- */}
             {tab === 'system' && (
               <section>
-                <h3 className="mb-3 text-[15px] font-medium text-gray-800">提示词</h3>
+                <h3 className="mb-3 text-[15px] font-medium text-text">提示词</h3>
                 <p className="mb-3 text-[11.5px] text-muted">
                   模式已合并：AI 以安洁莉娜的人设陪伴聊天，同时保留完整工具能力为你「跑腿」。此提示词可自由修改或扩写；工具清单与执行规则会在运行时自动附加。
                 </p>
-                <h3 className="mb-1.5 text-[15px] font-medium text-gray-800">桌宠人设（安洁莉娜）</h3>
+                <h3 className="mb-1.5 text-[15px] font-medium text-text">桌宠人设（安洁莉娜）</h3>
                 <textarea
-                  className="h-52 w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm leading-relaxed text-gray-700"
+                  className="h-52 w-full rounded-xl border border-border bg-panel px-3 py-2.5 text-sm leading-relaxed text-text"
                   value={cfg.petPrompt}
                   onChange={(e) => update({ petPrompt: e.target.value })}
                 />
@@ -465,10 +601,10 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                   />
                   <p className="mt-1 text-[11px] text-muted/70">修改后需重启应用生效。知识库使用 Obsidian 兼容的 Markdown 格式。</p>
                 </label>
-                <div className="flex items-center gap-2 rounded-xl border border-border/70 bg-pink-50/40 p-3.5 text-[11.5px] text-muted">
+                <div className="flex items-center gap-2 rounded-xl border border-border/70 bg-surface/40 p-3.5 text-[11.5px] text-muted">
                   <FolderOpen className="h-4 w-4 shrink-0 text-accent" />
                   <span className="truncate" title={dataDir}>
-                    数据目录: <span className="font-mono text-gray-600">{dataDir}</span>
+                    数据目录: <span className="font-mono text-text-secondary">{dataDir}</span>
                   </span>
                 </div>
               </section>
@@ -477,7 +613,7 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
             {/* ---------- 工具 ---------- */}
             {tab === 'tools' && (
               <section>
-                <h3 className="mb-3 text-[15px] font-medium text-gray-800">已加载工具（{tools.length}）</h3>
+                <h3 className="mb-3 text-[15px] font-medium text-text">已加载工具（{tools.length}）</h3>
                 {(['builtin', 'skill', 'mcp'] as const).map((src) =>
                   toolsBySource[src].length ? (
                     <div key={src} className="mb-3.5">
@@ -487,8 +623,8 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                             src === 'builtin'
                               ? 'bg-accent/10 text-accent'
                               : src === 'skill'
-                                ? 'bg-purple-500/15 text-purple-400'
-                                : 'bg-cyan-500/15 text-cyan-400'
+                                ? 'bg-purple/15 text-purple'
+                                : 'bg-info/15 text-info'
                           }`}
                         >
                           {src === 'builtin' ? '内置' : src === 'skill' ? 'Skills' : 'MCP'}
@@ -502,8 +638,8 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                             title={t.description}
                             className={`rounded-lg px-2 py-1 text-[11px] ${
                               t.dangerous
-                                ? 'bg-red-100 text-red-500 ring-1 ring-red-200'
-                                : 'bg-pink-50 text-gray-600'
+                                ? 'bg-danger/10 text-danger ring-1 ring-danger/20'
+                                : 'bg-surface text-text-secondary'
                             }`}
                           >
                             {t.name}
@@ -520,14 +656,14 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
           <div className="flex justify-end gap-2 border-t border-border/70 px-6 py-3.5">
             <button
               onClick={onClose}
-              className="rounded-lg border border-border px-4 py-2 text-sm text-gray-600 transition-colors hover:bg-pink-50"
+              className="rounded-lg border border-border px-4 py-2 text-sm text-text-secondary transition-colors hover:bg-surface"
             >
               取消
             </button>
             <button
               onClick={save}
               disabled={saving}
-              className="flex items-center gap-1.5 rounded-lg bg-gradient-to-br from-accent to-accent2 px-4 py-2 text-sm font-medium text-white shadow-glow transition-opacity hover:opacity-90 disabled:opacity-50 disabled:shadow-none"
+              className="flex items-center gap-1.5 rounded-lg bg-gradient-to-br from-accent to-accent2 px-4 py-2 text-sm font-medium text-accent-fg shadow-glow transition-opacity hover:opacity-90 disabled:opacity-50 disabled:shadow-none"
             >
               <Save className="h-4 w-4" />
               {saving ? '保存中…' : '保存'}

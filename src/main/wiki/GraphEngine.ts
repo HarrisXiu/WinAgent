@@ -23,8 +23,13 @@ export class GraphEngine {
     const nodes: GraphNode[] = []
     const edges: GraphEdge[] = []
 
-    // 收集所有已知节点 id
-    const knownIds = new Set(inputs.map((n) => n.path.replace(/\.md$/, '')))
+    // 收集所有已知节点 id（全路径 + basename 裸 slug，兼容契约铁律 [[slug]] 链接格式）
+    const knownIds = new Set<string>()
+    for (const n of inputs) {
+      const id = n.path.replace(/\.md$/, '')
+      knownIds.add(id)
+      knownIds.add(n.path.split('/').pop()?.replace(/\.md$/, '') || '')
+    }
     // 按标签分组（用于生成 tag 型边）
     const tagToNodes = new Map<string, string[]>()
 

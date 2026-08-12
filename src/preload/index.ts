@@ -20,6 +20,13 @@ const api = {
   saveConfig: (cfg: AppConfig): Promise<AppConfig> => ipcRenderer.invoke('config:save', cfg),
   getDataDir: (): Promise<string> => ipcRenderer.invoke('config:dataDir'),
 
+  /** 配置变更广播（另一窗口保存设置后实时同步，主题双窗口联动） */
+  onConfigChanged: (cb: (cfg: AppConfig) => void): (() => void) => {
+    const listener = (_e: unknown, cfg: AppConfig): void => cb(cfg)
+    ipcRenderer.on('config:changed', listener)
+    return () => ipcRenderer.removeListener('config:changed', listener)
+  },
+
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke('dialog:pickDirectory'),
 
   listTools: (): Promise<ToolInfo[]> => ipcRenderer.invoke('tools:list'),

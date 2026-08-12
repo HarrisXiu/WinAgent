@@ -43,7 +43,7 @@ export default function BacklinksPanel({
                 ) : (
                   <FileText className="h-3.5 w-3.5 shrink-0 text-muted/50" />
                 )}
-                <span className={`flex-1 truncate ${isCurrent ? 'font-medium text-accent' : 'text-gray-700'}`}>
+                <span className={`flex-1 truncate ${isCurrent ? 'font-medium text-accent' : 'text-text'}`}>
                   {title}
                 </span>
                 {isCurrent && (

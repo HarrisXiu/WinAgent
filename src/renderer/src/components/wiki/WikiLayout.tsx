@@ -113,6 +113,29 @@ export default function WikiLayout({ onSwitchVaultPath, compact, onDropFiles }: 
     setAiAnalyzing(false)
   }, [])
 
+  // 一键应用：AI 摘要插入正文顶部（> [!summary] 引用块）
+  const handleApplySummary = useCallback(async () => {
+    const n = wiki.currentNote
+    if (!n || !aiSuggestion?.summary) return
+    const block = `> [!summary] AI 摘要\n> ${aiSuggestion.summary}`
+    await wiki.saveNote({ title: n.title, tags: n.tags, body: `${block}\n\n${n.rawBody}` })
+  }, [wiki, aiSuggestion?.summary])
+
+  // 一键应用：关联笔记以 wikilink 追加正文底部
+  // 遵循契约 ## 6. wikilink 铁律：[[english-kebab-slug]] 裸 slug，不带 .md、不带路径
+  const handleApplyRelations = useCallback(async () => {
+    const n = wiki.currentNote
+    if (!n || !aiSuggestion?.relations?.length) return
+    const links = aiSuggestion.relations
+      .map((r) => {
+        const slug = r.target.split('/').pop()?.replace(/\.md$/, '') || r.target
+        return `- [[${slug}]] — ${r.reason}`
+      })
+      .join('\n')
+    const body = `${n.rawBody.trimEnd()}\n\n## 相关笔记\n\n${links}\n`
+    await wiki.saveNote({ title: n.title, tags: n.tags, body })
+  }, [wiki, aiSuggestion?.relations])
+
   // 注释管理
   const handleAddAnnotation = useCallback(async (text: string, range: string) => {
     if (!wiki.currentNote) return
@@ -125,10 +148,14 @@ export default function WikiLayout({ onSwitchVaultPath, compact, onDropFiles }: 
     await wiki.removeAnnotation(id)
   }, [wiki])
 
-  // 当打开新的笔记时清空 AI 结果
+  // 当打开新的笔记时清空 AI 结果；若该笔记已有持久化的 AI 摘要/关联（刷新后不丢失），回填展示
   useEffect(() => {
     setAiSuggestion(null)
     setAiError(null)
+    const n = wiki.currentNote
+    if (n && (n.aiSummary || (n.aiRelations && n.aiRelations.length > 0))) {
+      setAiSuggestion({ summary: n.aiSummary, relations: n.aiRelations })
+    }
   }, [wiki.currentNote?.path])
 
   // 全局拖拽处理
@@ -272,7 +299,7 @@ export default function WikiLayout({ onSwitchVaultPath, compact, onDropFiles }: 
             {readonly && (
               <>
                 <span>·</span>
-                <span className="text-amber-500">📥 原始来源（只读）</span>
+                <span className="text-warning">📥 原始来源（只读）</span>
               </>
             )}
             {wiki.currentNote.tags.length > 0 && (
@@ -320,6 +347,9 @@ export default function WikiLayout({ onSwitchVaultPath, compact, onDropFiles }: 
           aiSuggestion={aiSuggestion}
           aiAnalyzing={aiAnalyzing}
           aiError={aiError}
+          readonly={readonly}
+          onApplySummary={handleApplySummary}
+          onApplyRelations={handleApplyRelations}
           annotations={wiki.currentNote?.annotations || []}
           onRemoveAnnotation={handleRemoveAnnotation}
         />
@@ -355,15 +385,15 @@ export default function WikiLayout({ onSwitchVaultPath, compact, onDropFiles }: 
         <div
           className={`absolute right-3 top-3 z-50 w-64 rounded-xl border px-4 py-3 text-sm shadow-lg backdrop-blur ${
             ingestMsg.ok
-              ? 'border-green-200 bg-green-50/95 text-green-700'
-              : 'border-red-200 bg-red-50/95 text-red-600'
+              ? 'border-success/30 bg-success/10 text-success'
+              : 'border-danger/30 bg-danger/10 text-danger'
           }`}
         >
           <div className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate">{ingestMsg.text}</span>
             <button
               onClick={() => setIngestMsg(null)}
-              className="ml-1 shrink-0 text-muted hover:text-gray-700"
+              className="ml-1 shrink-0 text-muted hover:text-text"
             >
               <X className="inline h-3 w-3" />
             </button>

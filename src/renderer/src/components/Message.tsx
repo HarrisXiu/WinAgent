@@ -19,7 +19,7 @@ export default function Message({ turn, aiState = 'idle' }: { turn: ChatTurn; ai
   const attachments = turn.attachments && turn.attachments.length > 0 && (
     <div className="mb-1.5 flex flex-wrap justify-end gap-1.5">
       {turn.attachments.map((att, i) => (
-        <div key={i} className="flex items-center gap-2 rounded-xl border border-border bg-white/80 px-1.5 py-1 shadow-card">
+        <div key={i} className="flex items-center gap-2 rounded-xl border border-border bg-panel/80 px-1.5 py-1 shadow-card">
           {att.isImage && att.dataUrl ? (
             <img src={att.dataUrl} alt={att.name} className="h-9 w-9 rounded-lg object-cover" />
           ) : (
@@ -27,7 +27,7 @@ export default function Message({ turn, aiState = 'idle' }: { turn: ChatTurn; ai
               <FileText className="h-4 w-4 text-accent" />
             </div>
           )}
-          <span className="max-w-36 truncate text-xs text-gray-600">{att.name}</span>
+          <span className="max-w-36 truncate text-xs text-text-secondary">{att.name}</span>
         </div>
       ))}
     </div>
@@ -37,7 +37,7 @@ export default function Message({ turn, aiState = 'idle' }: { turn: ChatTurn; ai
     return (
       <div className="flex flex-col items-end px-2 py-2">
         {attachments}
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-gradient-to-br from-accent to-accent2/90 px-4 py-2.5 text-[14px] leading-relaxed text-white shadow-lg shadow-accent/20">
+        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-gradient-to-br from-accent to-accent2/90 px-4 py-2.5 text-[14px] leading-relaxed text-accent-fg shadow-lg shadow-accent/20">
           <div className="whitespace-pre-wrap">{turn.content}</div>
           {turn.streaming && !turn.content && <span className="text-sm">▍</span>}
         </div>
@@ -58,7 +58,7 @@ export default function Message({ turn, aiState = 'idle' }: { turn: ChatTurn; ai
         {turn.reasoning && (
           <div className="mb-1.5">
             <button
-              className="flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-muted transition-colors hover:bg-pink-100/60 hover:text-accent"
+              className="flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-muted transition-colors hover:bg-surface-hover/60 hover:text-accent"
               onClick={() => setShowReason((s) => !s)}
             >
               <ChevronRight className={`h-3 w-3 transition-transform ${showReason ? 'rotate-90' : ''}`} />
@@ -66,7 +66,7 @@ export default function Message({ turn, aiState = 'idle' }: { turn: ChatTurn; ai
               思考过程
             </button>
             {showReason && (
-              <div className="mt-1.5 whitespace-pre-wrap rounded-xl border border-border bg-white/80 p-3 text-[13px] leading-relaxed text-muted">
+              <div className="mt-1.5 whitespace-pre-wrap rounded-xl border border-border bg-panel/80 p-3 text-[13px] leading-relaxed text-muted">
                 {turn.reasoning}
               </div>
             )}

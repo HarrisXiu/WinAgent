@@ -30,7 +30,7 @@ export default function AnnotationPanel({ annotations, onRemove }: Props): JSX.E
       {annotations.map((ann) => (
         <div
           key={ann.id}
-          className="group rounded-lg border border-border bg-white/70 p-2.5 transition-colors hover:border-accent/20 hover:bg-accent/[0.02]"
+          className="group rounded-lg border border-border bg-panel/70 p-2.5 transition-colors hover:border-accent/20 hover:bg-accent/[0.02]"
         >
           {/* 引用范围 */}
           <div className="mb-1.5 flex items-center gap-1.5">
@@ -41,7 +41,7 @@ export default function AnnotationPanel({ annotations, onRemove }: Props): JSX.E
             <div className="ml-auto flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
               <button
                 onClick={() => onRemove(ann.id)}
-                className="rounded p-0.5 text-muted/50 hover:bg-red-50 hover:text-red-400 transition-colors"
+                className="rounded p-0.5 text-muted/50 hover:bg-danger/10 hover:text-danger transition-colors"
                 title="删除此注释"
               >
                 <Trash2 className="h-3 w-3" />
@@ -50,7 +50,7 @@ export default function AnnotationPanel({ annotations, onRemove }: Props): JSX.E
           </div>
 
           {/* 注释文本 */}
-          <p className="text-[12px] text-gray-600 leading-relaxed whitespace-pre-wrap">
+          <p className="text-[12px] text-text-secondary leading-relaxed whitespace-pre-wrap">
             {ann.text}
           </p>
 

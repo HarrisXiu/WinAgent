@@ -1,7 +1,7 @@
 import { promises as fs, watch, type Dirent } from 'fs'
 import path from 'path'
 import matter from 'gray-matter'
-import type { NoteMeta, NoteContent, NoteData, NoteAnnotation, TagWithCount } from '../../shared/types'
+import type { NoteMeta, NoteContent, NoteData, NoteAnnotation, NoteRelation, TagWithCount } from '../../shared/types'
 import { WINAGENT_CONTRACT_MD } from './contract'
 
 export interface VaultChangeEvent {
@@ -638,6 +638,7 @@ export class VaultManager {
       links,
       aiSummary: fm.aiSummary,
       aiAnalyzedAt: fm.aiAnalyzedAt,
+      aiRelations: Array.isArray(fm.aiRelations) ? fm.aiRelations : undefined,
       annotations: Array.isArray(fm.annotations) ? fm.annotations : [],
       graphExcluded: fm['graph-excluded'] === true || fm['graph-excluded'] === 'true',
       rawFile: typeof fm.raw_file === 'string' && fm.raw_file ? fm.raw_file : undefined
@@ -649,27 +650,29 @@ export class VaultManager {
     const fullPath = path.join(this.notesDir, relPath)
     await fs.mkdir(path.dirname(fullPath), { recursive: true })
 
-    const frontmatter: Record<string, any> = {
-      title: data.title,
-      tags: data.tags,
-      created: new Date().toISOString(),
-      updated: new Date().toISOString()
-    }
-
-    // 尝试保留原始 created 时间
+    // 读取旧文件：保留 created 时间与未传值的 AI/注释字段
+    let oldFm: Record<string, any> = {}
     try {
       const oldRaw = await fs.readFile(fullPath, 'utf-8')
-      const oldParsed = matter(oldRaw)
-      if (oldParsed.data.created) {
-        frontmatter.created = oldParsed.data.created
-      }
-      // 保留 AI 相关字段
-      if (oldParsed.data.aiSummary) frontmatter.aiSummary = oldParsed.data.aiSummary
-      if (oldParsed.data.aiAnalyzedAt) frontmatter.aiAnalyzedAt = oldParsed.data.aiAnalyzedAt
-      if (oldParsed.data.annotations) frontmatter.annotations = oldParsed.data.annotations
+      oldFm = matter(oldRaw).data as Record<string, any>
     } catch {
       // 新文件，使用默认值
     }
+
+    const frontmatter: Record<string, any> = {
+      title: data.title,
+      tags: data.tags,
+      created: oldFm.created || new Date().toISOString(),
+      updated: new Date().toISOString()
+    }
+    // AI 分析字段：调用方传了新值则覆盖，未传则保留旧值（undefined 不写入 frontmatter）
+    if (data.aiSummary !== undefined) frontmatter.aiSummary = data.aiSummary
+    else if (oldFm.aiSummary !== undefined) frontmatter.aiSummary = oldFm.aiSummary
+    if (data.aiAnalyzedAt !== undefined) frontmatter.aiAnalyzedAt = data.aiAnalyzedAt
+    else if (oldFm.aiAnalyzedAt !== undefined) frontmatter.aiAnalyzedAt = oldFm.aiAnalyzedAt
+    if (data.aiRelations !== undefined) frontmatter.aiRelations = data.aiRelations
+    else if (oldFm.aiRelations !== undefined) frontmatter.aiRelations = oldFm.aiRelations
+    if (oldFm.annotations !== undefined) frontmatter.annotations = oldFm.annotations
 
     const content = matter.stringify(data.body, frontmatter)
     await fs.writeFile(fullPath, content, 'utf-8')
@@ -884,27 +887,24 @@ export class VaultManager {
     }
   }
 
-  /** 更新笔记的 AI 分析结果（直接修改 frontmatter） */
-  async updateAiResults(relPath: string, aiSummary?: string, aiTags?: string[]): Promise<void> {
+  /** 更新笔记的 AI 分析结果（tags 合并；摘要/关系/分析时间写入 frontmatter，刷新后保留） */
+  async updateAiResults(
+    relPath: string,
+    aiSummary?: string,
+    aiTags?: string[],
+    aiRelations?: NoteRelation[]
+  ): Promise<void> {
     const note = await this.readNote(relPath)
     const updatedTags = aiTags ? [...new Set([...note.tags, ...aiTags])] : note.tags
 
     await this.writeNote(relPath, {
       title: note.title,
       tags: updatedTags,
-      body: note.rawBody
+      body: note.rawBody,
+      aiSummary,
+      aiRelations,
+      aiAnalyzedAt: new Date().toISOString()
     })
-
-    // 重新读取并单独更新 AI 字段（writeNote 不保留这些）
-    const fullPath = path.join(this.notesDir, relPath)
-    const raw = await fs.readFile(fullPath, 'utf-8')
-    const parsed = matter(raw)
-    const fm = parsed.data as Record<string, any>
-    if (aiSummary) fm.aiSummary = aiSummary
-    fm.aiAnalyzedAt = new Date().toISOString()
-    fm.tags = updatedTags
-    const updated = matter.stringify(parsed.content, fm)
-    await fs.writeFile(fullPath, updated, 'utf-8')
   }
 
   /** 添加注释到笔记 */

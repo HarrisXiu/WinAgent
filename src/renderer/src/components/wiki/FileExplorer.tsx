@@ -82,9 +82,9 @@ function FileTreeNode({ note, depth, selectedPath, onSelect, onCreate, onDelete 
             ) : isWikiArea ? (
               <span className="text-sm">📚</span>
             ) : expanded ? (
-              <FolderOpen className="h-4 w-4 shrink-0 text-amber-400" />
+              <FolderOpen className="h-4 w-4 shrink-0 text-warning" />
             ) : (
-              <Folder className="h-4 w-4 shrink-0 text-amber-400" />
+              <Folder className="h-4 w-4 shrink-0 text-warning" />
             )}
           </>
         ) : (
@@ -109,7 +109,7 @@ function FileTreeNode({ note, depth, selectedPath, onSelect, onCreate, onDelete 
               <button
                 title="在此文件夹中新建笔记"
                 onClick={(e) => { e.stopPropagation(); onCreate(note.path) }}
-                className="rounded p-0.5 hover:bg-pink-100/70"
+                className="rounded p-0.5 hover:bg-surface-hover/70"
               >
                 <Plus className="h-3 w-3 text-muted" />
               </button>
@@ -117,9 +117,9 @@ function FileTreeNode({ note, depth, selectedPath, onSelect, onCreate, onDelete 
             <button
               title="删除"
               onClick={(e) => { e.stopPropagation(); onDelete(note.path) }}
-              className="rounded p-0.5 hover:bg-red-100"
+              className="rounded p-0.5 hover:bg-danger/10"
             >
-              <Trash2 className="h-3 w-3 text-muted hover:text-red-400" />
+              <Trash2 className="h-3 w-3 text-muted hover:text-danger" />
             </button>
           </div>
         )}

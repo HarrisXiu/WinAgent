@@ -276,6 +276,33 @@ Electron + TypeScript + React + Vite + TailwindCSS。Windows 系统能力通过 
 
 ## 更新日志
 
+### v0.2.2（2026-08-11）
+
+**主题系统（CSS 变量驱动）**
+- 全部硬编码配色重构为 CSS 变量令牌（RGB 通道格式），Tailwind 语义色经 `rgb(var(--x) / <alpha-value>)` 接线，133 处透明度修饰符（`bg-accent/10` 等）正常
+- 支持三种模式：浅色 / 深色 / **跟随系统**（auto 模式随 Windows 亮暗自动切换，matchMedia 实时响应）
+- 自定义主色：设置 → 外观 → accent / accent2 两个拾色器（含 hex 手输），其余色阶（hover 态、边框、浅色面板、光晕、按钮文字）由 **colord** 自动推导
+- 对比度兜底：深色模式主色与背景自动提亮至 WCAG AA（≥3:1）；主色上的文字色按对比度自动选黑/白；纯黑/纯白/荧光色等极端输入不产生不可读组合
+- 跨窗口实时同步：`config:save` 广播 `config:changed`，主窗口与知识库窗口任一修改主题，另一窗口即时生效
+- 图谱（canvas）与 CodeMirror 编辑器跟随主题：canvas 从 CSS 变量读取调色板并订阅主题变更重绘，节点渐变由用户主色推导（自定义主色贯穿图谱）；编辑器主题引用 CSS 变量，无需重建实例
+- 代码高亮深色适配：`[data-theme='dark']` 下 github-dark 色板覆盖
+- 修复启动闪色：`BrowserWindow.backgroundColor` 按解析后主题取值（原主窗口深色首帧与浅色 body 不一致）
+- 默认主题 = 原品牌配色（浅色 + 粉蓝 #f4719c / #6db7d9），「恢复默认配色」一键还原
+
+**AI 分析管线增强**
+- `analyze()` 注入知识库契约（CLAUDE.md 相关小节：总则 / wikilink / confidence / 个人写作 / 质量红线）——改契约 → AI 分析行为随之变化
+- 按页面类型定制审查规则（source / concept / entity / raw / 普通笔记）
+- 新增质量建议输出（stub 提示、缺溯源 wikilink、可回答开放问题、矛盾检测）
+- AIPanel 一键应用：插入摘要到正文顶部、插入关联笔记 wikilink（遵循契约铁律 `[[slug]]` 裸 slug）
+- 修复 LINT 检查 2 把裸 slug 合规链接误判为断链（`pageIds` 补 basename）；图谱链接解析同根因修复
+- 契约截断改为行级（章节标题完整不切半），`extractContractSections` 按优先级抽取小节
+
+**文档读取 Skills 扩展**
+- 新增 `read_docx`、`read_pptx`、`read_xlsx` 三个 skill，分别读取 Word / PowerPoint / Excel 文档文本（纯 JS 提取，无需 Office/LibreOffice）
+- 共享提取核心 `skills/pdf/extract.js`：支持 pdf/pptx/docx/xlsx/xlsm/doc/xls/ppt 全格式，各 skill 复用同一核心
+- `read_pdf.js` 重构为瘦入口（-175 行），消除与新增 skills 的重复代码
+- GraphEngine 链接解析修复：`knownIds` 补 basename 裸 slug（`GraphEngine.ts`），与 LINT 检查 2 同根因——契约铁律 `[[slug]]` 裸 slug 链接在图谱中现在也能正确解析
+
 ### v0.2.1（2026-08-08）
 
 **知识库独立窗口（第二窗口）**

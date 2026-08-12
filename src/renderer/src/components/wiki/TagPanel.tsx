@@ -50,7 +50,7 @@ export default function TagPanel({
                 {tag}
                 <button
                   onClick={() => onRemoveTag(tag)}
-                  className="ml-0.5 rounded-full p-0.5 opacity-0 transition-opacity hover:bg-white/20 group-hover:opacity-100"
+                  className="ml-0.5 rounded-full p-0.5 opacity-0 transition-opacity hover:bg-panel/20 group-hover:opacity-100"
                   title={`移除标签 "${tag}"`}
                 >
                   <X className="h-2.5 w-2.5" />
@@ -68,12 +68,12 @@ export default function TagPanel({
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="输入新标签..."
-          className="flex-1 rounded-md border border-border bg-white/70 px-2.5 py-1.5 text-[13px] placeholder:text-muted/50 focus:border-accent/50 focus:outline-none focus:ring-1 focus:ring-accent/20"
+          className="flex-1 rounded-md border border-border bg-panel/70 px-2.5 py-1.5 text-[13px] placeholder:text-muted/50 focus:border-accent/50 focus:outline-none focus:ring-1 focus:ring-accent/20"
         />
         <button
           onClick={handleAdd}
           disabled={!input.trim()}
-          className="rounded-md bg-accent px-2.5 py-1.5 text-white transition-colors hover:bg-accent/85 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-md bg-accent px-2.5 py-1.5 text-accent-fg transition-colors hover:bg-accent/85 disabled:cursor-not-allowed disabled:opacity-40"
         >
           <Plus className="h-4 w-4" />
         </button>
@@ -120,7 +120,7 @@ export default function TagPanel({
                 className={`rounded-full px-2.5 py-0.5 text-[11px] transition-colors ${
                   currentTags.includes(tag)
                     ? 'bg-accent/15 text-accent font-medium'
-                    : 'bg-gray-100/70 text-muted hover:bg-accent/10 hover:text-accent'
+                    : 'bg-surface-hover/50 text-muted hover:bg-accent/10 hover:text-accent'
                 }`}
                 title={`${count} 篇笔记`}
               >

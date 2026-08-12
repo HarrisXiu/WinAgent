@@ -1,10 +1,12 @@
-import type { ProviderConfig, ChatMessage, IngestAnalysis } from '../../shared/types'
+import type { ProviderConfig, ChatMessage, IngestAnalysis, NoteRelation } from '../../shared/types'
 import { chatStream } from '../llm/OpenAIClient'
 
 export interface AiAnalysisResult {
   tags: string[]
   summary: string
-  relations: Array<{ target: string; reason: string }>
+  relations: NoteRelation[]
+  /** 质量审查建议（0-3 条可执行改进，不落盘，随分析即时返回） */
+  suggestions: string[]
 }
 
 /** 已有概念页的轻量信息（用于概念名称对齐） */
@@ -14,79 +16,167 @@ export interface ExistingConceptInfo {
   aliases: string[]
 }
 
-interface StreamFalseOpts {
-  temperature: number
-  maxTokens: number
-  stream: false
-  signal?: AbortSignal
+/** 知识库候选笔记（关系发现用）：path 为可跳转的 relPath，title 为显示标题 */
+export interface CandidateNote {
+  path: string
+  title: string
+}
+
+/** 笔记类型：按类型注入定制审查规则 */
+export type NoteType = 'source' | 'concept' | 'entity' | 'raw' | 'note'
+
+export interface AnalyzeOptions {
+  /** 页面类型（由调用方按 relPath 判断），决定 prompt 中的定制规则 */
+  noteType?: NoteType
+  /** 知识库行为契约（vault CLAUDE.md 的相关小节）：注入后「改契约 → AI 分析行为随之变化」闭环成立 */
+  contract?: string
+  /** 开放问题列表（QUESTIONS.md）：判断本笔记能否回答，能回答的原样复制进 suggestions */
+  openQuestions?: string[]
+}
+
+/** 各类型笔记的定制审查规则 */
+const TYPE_RULES: Record<NoteType, string> = {
+  source: `【本页类型：来源页（wiki/sources/）】
+- 检查 Key Points 是否完整（3-8 条）、正文是否标注来源（[[source-slug]] 溯源）
+- 与知识库其他笔记矛盾时，在 suggestions 中明确指出分歧`,
+  concept: `【本页类型：概念页（wiki/concepts/）】
+- 检查 definition 是否为一句话定义、是否引用 [[source-slug]] 溯源
+- 概念页缺少溯源链接时在 suggestions 中提示「应引用来源页」`,
+  entity: `【本页类型：实体页（wiki/entities/）】
+- 检查描述是否为一句话、type（person/tool/institution/paper）是否合适`,
+  raw: `【本页类型：原始文件（raw/ 只读层）】
+- 内容为人类原始输入，AI 永不修改；建议聚焦「可编译为哪些概念/来源页」`,
+  note: ''
 }
 
 /**
  * AI 分析管道
- * 复用现有 LLM 客户端，对笔记内容进行标签、摘要、关系发现
+ * 复用现有 LLM 客户端，对笔记进行标签、摘要、关系发现与质量审查
  */
 export class AiPipeline {
-  private abortController: AbortController | null = null
+  /**
+   * 进行中的操作 → 独立 AbortController。
+   * analyze 与 ingestSource 各占一个 key，并发互不覆盖；cancel() 只取消 analyze，不会误杀 ingest。
+   */
+  private controllers = new Map<string, AbortController>()
 
-  /** 取消正在进行的分析 */
+  /** 取消正在进行的 AI 分析（不影响 INGEST） */
   cancel(): void {
-    this.abortController?.abort()
-    this.abortController = null
+    this.controllers.get('analyze')?.abort()
+    this.controllers.delete('analyze')
+  }
+
+  /** 注册一个新操作并返回其 signal；同 key 已有进行中的请求先取消（防连点） */
+  private track(key: string): AbortSignal {
+    this.controllers.get(key)?.abort()
+    const ac = new AbortController()
+    this.controllers.set(key, ac)
+    return ac.signal
+  }
+
+  private untrack(key: string): void {
+    this.controllers.delete(key)
   }
 
   /**
-   * 对单篇笔记执行完整分析（标签 + 摘要 + 关系发现）
+   * 对单篇笔记执行完整分析（标签 + 摘要 + 关系发现 + 质量审查建议）。
+   * 单次 LLM 调用同时产出全部内容（共享上下文，省 2/3 token 与延迟）。
    * @param provider LLM 提供者配置
    * @param title 笔记标题
    * @param body 笔记正文（markdown）
-   * @param allTitles 知识库中所有笔记的标题列表（用于关系发现）
+   * @param candidates 知识库中其他笔记（path + title），关系发现的 target 直接映射为可跳转路径
+   * @param opts 可选：契约注入 / 页面类型定制 / 开放问题列表
    */
   async analyze(
     provider: ProviderConfig,
     title: string,
     body: string,
-    allTitles: string[]
+    candidates: CandidateNote[],
+    opts: AnalyzeOptions = {}
   ): Promise<AiAnalysisResult> {
-    this.abortController = new AbortController()
-    const signal = this.abortController.signal
+    const signal = this.track('analyze')
+    const { noteType = 'note', contract = '', openQuestions = [] } = opts
 
-    const baseOpts: StreamFalseOpts = {
-      temperature: 0.3,
-      maxTokens: 800,
-      stream: false,
-      signal
-    }
+    // 候选去重 + 过滤空路径（当前笔记自身由调用方排除）
+    const seen = new Set<string>()
+    const others = candidates.filter((c) => c.path && !seen.has(c.path) && !!seen.add(c.path))
+    const candidateMap = new Map(others.map((c) => [c.path.toLowerCase(), c]))
+
+    // 契约注入：改 CLAUDE.md → 分析行为随之变化
+    const contractRule = contract
+      ? `\n\n=== 知识库行为契约（CLAUDE.md，必须遵守）===\n${contract}`
+      : ''
+    // 页面类型定制规则
+    const typeRule = TYPE_RULES[noteType]
+      ? `\n\n${TYPE_RULES[noteType]}`
+      : ''
+    // 开放问题列表：能回答的原样复制问题文本进 suggestions
+    const questionRule = openQuestions.length
+      ? `\n\n=== 开放问题列表（若本笔记能回答其中问题，将问题原文放入 suggestions） ===\n${openQuestions.map((q) => `- ${q}`).join('\n')}`
+      : ''
+
+    const messages: ChatMessage[] = [
+      {
+        role: 'system',
+        content: `你是一个知识管理助手。分析给定笔记，输出严格合法的 JSON 对象（不要 markdown 代码块、不要多余文字）：
+{
+  "tags": ["3-8 个标签，中英文混合、每个 2-8 个字，涵盖主题/领域/类型"],
+  "summary": "2-4 句中文摘要，概括核心内容与关键观点，不要以「本文」「这篇文章」等开头",
+  "relations": [{"target": "最相关候选笔记的精确路径", "reason": "一句话相关原因"}],
+  "suggestions": ["0-3 条具体可执行的改进建议；没有问题返回空数组"]
+}
+要求：
+- relations 取 0-5 条；没有明显相关的候选时返回空数组
+- relations 的 target 必须逐字取自下方候选列表中的「路径」列，禁止编造或改写
+- suggestions 类型示例：正文过短（stub，<100 字）建议补充内容、缺少 [[source-slug]] 溯源、正文可回答开放问题（写问题原文）、与某笔记存在矛盾（写原因）
+- tags 示例：["机器学习", "神经网络", "AI", "教程"]${typeRule}${questionRule}${contractRule}`
+      },
+      {
+        role: 'user',
+        content: `当前笔记标题：${title}
+当前笔记内容：${truncate(body, 4000)}
+
+知识库中其他笔记（路径（标题））：
+${others.map((c) => `- ${c.path}（${c.title}）`).join('\n') || '（暂无其他笔记）'}`
+      }
+    ]
 
     try {
-      // 并行执行三个分析
-      const [tags, summary, relations] = await Promise.all([
-        this.generateTags(provider, title, body, baseOpts),
-        this.generateSummary(provider, title, body, baseOpts),
-        this.discoverRelations(provider, title, body, allTitles, baseOpts)
-      ])
+      const result = await chatStream(provider, messages, {
+        temperature: 0.3,
+        maxTokens: 1000,
+        stream: false,
+        signal
+      })
+      const parsed = parseJsonObject(result.content)
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error(`AI 分析结果无法解析为 JSON。前 200 字符: ${result.content.slice(0, 200)}`)
+      }
 
-      return { tags, summary, relations }
+      const tags = strArr((parsed as any).tags)
+      const summary = typeof (parsed as any).summary === 'string' ? String((parsed as any).summary).trim() : ''
+      const suggestions = strArr((parsed as any).suggestions).slice(0, 3)
+
+      // relations 校验：target 必须命中候选列表中的真实路径（映射回可跳转 relPath + 回填显示标题）
+      const relations: NoteRelation[] = Array.isArray((parsed as any).relations)
+        ? ((parsed as any).relations as Array<{ target?: unknown; reason?: unknown }>)
+            .filter((r) => r && typeof r.target === 'string' && r.target.trim())
+            .map((r) => ({
+              target: (r.target as string).trim(),
+              reason: typeof r.reason === 'string' ? r.reason.trim() : ''
+            }))
+            .filter((r) => candidateMap.has(r.target.toLowerCase()))
+            .map((r) => ({ ...r, title: candidateMap.get(r.target.toLowerCase())!.title }))
+            .slice(0, 5)
+        : []
+
+      return { tags, summary, relations, suggestions }
+    } catch (e) {
+      // 如实报错（由调用方传播给前端 aiError），AbortError 由调用方静默处理
+      throw e instanceof Error ? e : new Error(`AI 分析失败: ${String(e)}`)
     } finally {
-      this.abortController = null
+      this.untrack('analyze')
     }
-  }
-
-  /** 仅生成标签建议 */
-  async suggestTags(provider: ProviderConfig, title: string, body: string): Promise<string[]> {
-    return this.generateTags(provider, title, body, {
-      temperature: 0.3,
-      maxTokens: 400,
-      stream: false
-    })
-  }
-
-  /** 仅生成摘要 */
-  async summarize(provider: ProviderConfig, title: string, body: string): Promise<string> {
-    return this.generateSummary(provider, title, body, {
-      temperature: 0.3,
-      maxTokens: 600,
-      stream: false
-    })
   }
 
   // === 私有方法 ===
@@ -108,8 +198,7 @@ export class AiPipeline {
     isPersonal = false,
     contract = ''
   ): Promise<IngestAnalysis> {
-    this.abortController = new AbortController()
-    const signal = this.abortController.signal
+    const signal = this.track('ingest')
 
     const conceptList = existingConcepts.length
       ? existingConcepts
@@ -192,117 +281,7 @@ ${questionList}
     } catch (e) {
       throw new Error(`INGEST 分析失败: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
-      this.abortController = null
-    }
-  }
-
-  private async generateTags(
-    provider: ProviderConfig,
-    title: string,
-    body: string,
-    opts: StreamFalseOpts
-  ): Promise<string[]> {
-    const messages: ChatMessage[] = [
-      {
-        role: 'system',
-        content: `你是一个知识管理助手。分析给定的笔记内容，生成 3-8 个标签。
-标签要求：
-- 中英文混合，优先使用中文
-- 涵盖主题、领域、类型
-- 每个标签 2-8 个字
-- 只返回 JSON 字符串数组，不要其他内容
-示例输出：["机器学习", "神经网络", "深度学习", "AI", "教程"]`
-      },
-      {
-        role: 'user',
-        content: `标题：${title}\n\n内容：${truncate(body, 3000)}`
-      }
-    ]
-
-    try {
-      const result = await chatStream(provider, messages, opts)
-      return parseJsonArray(result.content) ?? []
-    } catch {
-      return []
-    }
-  }
-
-  private async generateSummary(
-    provider: ProviderConfig,
-    title: string,
-    body: string,
-    opts: StreamFalseOpts
-  ): Promise<string> {
-    const messages: ChatMessage[] = [
-      {
-        role: 'system',
-        content: `你是一个知识管理助手。为给定的笔记生成简洁摘要。
-要求：
-- 2-4 句中文
-- 概括核心内容和关键观点
-- 不要包含"本文"、"这篇文章"等冗余开头
-- 直接返回摘要文本，不要 JSON 包装`
-      },
-      {
-        role: 'user',
-        content: `标题：${title}\n\n内容：${truncate(body, 4000)}`
-      }
-    ]
-
-    try {
-      const result = await chatStream(provider, messages, opts)
-      return result.content.trim()
-    } catch {
-      return ''
-    }
-  }
-
-  private async discoverRelations(
-    provider: ProviderConfig,
-    title: string,
-    body: string,
-    allTitles: string[],
-    opts: StreamFalseOpts
-  ): Promise<Array<{ target: string; reason: string }>> {
-    // 过滤掉当前笔记自身
-    const otherTitles = allTitles.filter((t) => t !== title)
-    if (otherTitles.length === 0) return []
-
-    const titleList = otherTitles.slice(0, 50).join('\n- ')
-
-    const messages: ChatMessage[] = [
-      {
-        role: 'system',
-        content: `你是一个知识管理助手。分析给定笔记，找出知识库中与它语义相关的其他笔记。
-要求：
-- 从提供的标题列表中找出 0-5 个最相关的笔记
-- 对每个相关笔记说明原因（一句话）
-- 如果没有明显相关的，返回空数组
-- 严格返回 JSON 数组格式：\`[{"target": "笔记标题", "reason": "相关原因"}]\`
-- 不要返回不存在的标题`
-      },
-      {
-        role: 'user',
-        content: `当前笔记标题：${title}
-当前笔记内容：${truncate(body, 2000)}
-
-知识库中其他笔记标题：
-- ${titleList}`
-      }
-    ]
-
-    try {
-      const result = await chatStream(provider, messages, opts)
-      const parsed = parseJsonArray(result.content)
-      if (!parsed) return []
-      // 过滤只保留标题列表中实际存在的
-      return parsed.filter(
-        (r: any) => r && typeof r.target === 'string' && otherTitles.some(
-          (t) => t.toLowerCase() === r.target.toLowerCase()
-        )
-      ).slice(0, 5)
-    } catch {
-      return []
+      this.untrack('ingest')
     }
   }
 }
@@ -340,11 +319,14 @@ function parseJsonObject(text: string): any | null {
   return null
 }
 
+/** 字符串数组清洗（过滤空串） */
+function strArr(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim()) : []
+}
+
 /** 清洗并校验 INGEST 分析结果（字段兜底） */
 function sanitizeIngest(raw: any): IngestAnalysis {
   const str = (v: any, fallback = ''): string => (typeof v === 'string' && v.trim() ? v.trim() : fallback)
-  const strArr = (v: any): string[] =>
-    Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim()) : []
   const concepts = Array.isArray(raw.concepts) ? raw.concepts : []
   const entities = Array.isArray(raw.entities) ? raw.entities : []
   return {
@@ -380,34 +362,4 @@ function sanitizeIngest(raw: any): IngestAnalysis {
     language: str(raw.language, undefined as any) || undefined,
     canonicalSource: str(raw.canonicalSource, undefined as any) || undefined
   }
-}
-
-/** 从 LLM 返回中解析 JSON 数组 */
-function parseJsonArray(text: string): any[] | null {
-  if (!text) return null
-  // 尝试直接解析
-  try {
-    const parsed = JSON.parse(text.trim())
-    if (Array.isArray(parsed)) return parsed
-  } catch { /* continue */ }
-
-  // 提取 ```json ... ``` 代码块
-  const codeBlock = text.match(/```(?:json)?\s*([\s\S]*?)```/)
-  if (codeBlock) {
-    try {
-      const parsed = JSON.parse(codeBlock[1].trim())
-      if (Array.isArray(parsed)) return parsed
-    } catch { /* continue */ }
-  }
-
-  // 提取第一个 [...] 数组
-  const arrayMatch = text.match(/\[[\s\S]*\]/)
-  if (arrayMatch) {
-    try {
-      const parsed = JSON.parse(arrayMatch[0])
-      if (Array.isArray(parsed)) return parsed
-    } catch { /* fail */ }
-  }
-
-  return null
 }

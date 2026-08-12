@@ -8,6 +8,79 @@ interface Props {
   onClose: () => void
 }
 
+// === Canvas 主题调色板（读 CSS 变量，随用户主色/主题模式变化） ===
+type RGB = [number, number, number]
+
+interface CanvasPalette {
+  bg: string
+  grid: string
+  edgeLink: string          // 三元组 "r, g, b"（供 rgba() 模板拼接）
+  edgeAi: string
+  edgeTag: string
+  glowHover: string[]       // 光晕渐变 stops
+  glowNeighbor: string[]
+  glowDefault: string[]
+  ballHover: string[]       // 主球渐变 stops
+  ballNeighbor: string[]
+  ballDefault: string[]
+  ringHover: string
+  ringNeighbor: string
+  tooltipBg: string
+  tooltipBorder: string
+  tooltipTitle: string
+  tooltipTag: string
+  tooltipLine: string
+  particle: string
+}
+
+function readVar(name: string): RGB {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  const parts = v.split(/\s+/).map(Number)
+  if (parts.length === 3 && parts.every((n) => !Number.isNaN(n))) {
+    return [parts[0], parts[1], parts[2]]
+  }
+  return [10, 10, 20]
+}
+
+const rgba = (c: RGB, a: number): string => `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${a})`
+const mixC = (a: RGB, b: RGB, t: number): RGB => [
+  Math.round(a[0] + (b[0] - a[0]) * t),
+  Math.round(a[1] + (b[1] - a[1]) * t),
+  Math.round(a[2] + (b[2] - a[2]) * t)
+]
+
+/** 从 CSS 变量构建完整调色板（用户自定义主色贯穿图谱） */
+function readPalette(): CanvasPalette {
+  const canvas = readVar('--wiki-canvas')
+  const accent = readVar('--wiki-accent')
+  const accent2 = readVar('--wiki-accent2')
+  const glow = readVar('--wiki-glow')
+  const white: RGB = [255, 255, 255]
+  const black: RGB = [0, 0, 0]
+
+  return {
+    bg: `rgb(${canvas.join(' ')})`,
+    grid: rgba(mixC(accent, black, 0.55), 0.05),
+    edgeLink: accent.join(', '),
+    edgeAi: accent2.join(', '),
+    edgeTag: '100, 100, 150',
+    glowHover: [rgba(mixC(white, accent, 0.15), 0.9), rgba(accent, 0.5), rgba(mixC(accent, black, 0.6), 0)],
+    glowNeighbor: [rgba(mixC(white, accent, 0.25), 0.6), rgba(mixC(accent, black, 0.2), 0.25), rgba(mixC(accent, black, 0.55), 0)],
+    glowDefault: [rgba(mixC(white, accent, 0.4), 0.5), rgba(mixC(accent, black, 0.15), 0.15), rgba(mixC(accent, black, 0.6), 0)],
+    ballHover: ['#ffffff', rgba(mixC(white, accent, 0.2), 1), rgba(mixC(white, accent, 0.55), 1), rgba(mixC(accent, black, 0.35), 1)],
+    ballNeighbor: [rgba(mixC(white, accent, 0.08), 1), rgba(accent, 1), rgba(mixC(accent, black, 0.25), 1), rgba(mixC(accent, black, 0.5), 1)],
+    ballDefault: [rgba(mixC(white, accent, 0.15), 1), rgba(mixC(white, accent, 0.4), 1), rgba(mixC(accent, black, 0.4), 1), rgba(mixC(accent, black, 0.65), 1)],
+    ringHover: rgba(mixC(white, accent, 0.2), 0.8),
+    ringNeighbor: rgba(accent, 0.4),
+    tooltipBg: rgba(mixC(canvas, black, 0.5), 0.88),
+    tooltipBorder: rgba(accent, 0.5),
+    tooltipTitle: rgba(mixC(white, accent, 0.08), 1),
+    tooltipTag: rgba(mixC(white, accent, 0.3), 0.8),
+    tooltipLine: rgba(accent, 0.3),
+    particle: mixC(accent2, white, 0.35).join(', ')
+  }
+}
+
 // === 力导向布局参数 ===
 const REPULSION = 800
 const ATTRACTION = 0.005
@@ -42,11 +115,22 @@ export default function GraphView({ data, onNodeClick, onClose }: Props): JSX.El
   const [dragging, setDragging] = useState(false)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
 
+  // Canvas 主题调色板：初始读 CSS 变量；主题变更（winagent:theme-changed）时重读
+  const [palette, setPalette] = useState<CanvasPalette>(() => readPalette())
+
   // 持久引用（避免 rAF 闭包陈旧）
   const panRef = useRef(pan); panRef.current = pan
   const zoomRef = useRef(zoom); zoomRef.current = zoom
   const hoveredRef = useRef(hoveredId); hoveredRef.current = hoveredId
   const dataRef = useRef(data); dataRef.current = data
+  const paletteRef = useRef(palette); paletteRef.current = palette
+
+  // 订阅主题变更：重读调色板（rAF 循环下一帧自动生效）
+  useEffect(() => {
+    const onTheme = (): void => setPalette(readPalette())
+    document.addEventListener('winagent:theme-changed', onTheme)
+    return () => document.removeEventListener('winagent:theme-changed', onTheme)
+  }, [])
 
   // 力布局节点
   const nodesRef = useRef<Map<string, VisNode>>(new Map())
@@ -151,16 +235,17 @@ export default function GraphView({ data, onNodeClick, onClose }: Props): JSX.El
       const currentZoom = zoomRef.current
       const nodes = nodesRef.current
       const particles = particlesRef.current
+      const p = paletteRef.current
 
       // 清屏
       ctx.clearRect(0, 0, w, h)
 
-      // 深空背景
-      ctx.fillStyle = '#0a0a14'
+      // 深空背景（CSS 变量：跟随用户主色/主题）
+      ctx.fillStyle = p.bg
       ctx.fillRect(0, 0, w, h)
 
       // 网格（微弱的量子空间网格）
-      ctx.strokeStyle = 'rgba(120, 80, 200, 0.03)'
+      ctx.strokeStyle = p.grid
       ctx.lineWidth = 0.5
       const gridSize = 40
       for (let x = currentPan.x % gridSize; x < w; x += gridSize) {
@@ -182,12 +267,12 @@ export default function GraphView({ data, onNodeClick, onClose }: Props): JSX.El
           const t = nodes.get(edge.target)
           if (!s) continue
 
-          // 边颜色
+          // 边颜色（link=主色 / ai=辅色 / tag=中性灰）
           let color: string
           let alpha = 0.3
-          if (edge.type === 'link') { color = '140, 100, 255'; alpha = 0.45 }
-          else if (edge.type === 'ai') { color = '100, 180, 255'; alpha = 0.55 }
-          else { color = '100, 100, 150'; alpha = 0.15 }
+          if (edge.type === 'link') { color = p.edgeLink; alpha = 0.45 }
+          else if (edge.type === 'ai') { color = p.edgeAi; alpha = 0.55 }
+          else { color = p.edgeTag; alpha = 0.15 }
 
           // 对 tag 边大量弱化
           if (edge.type === 'tag' && s.degree > 8) alpha *= 0.5
@@ -237,43 +322,43 @@ export default function GraphView({ data, onNodeClick, onClose }: Props): JSX.El
         const highlight = isHovered || isNeighbor
         const r = 4 + node.strength * 12
 
-        // 光晕
+        // 光晕（由用户主色推导的渐变档位）
         const glowGrad = ctx.createRadialGradient(node.x, node.y, r * 0.3, node.x, node.y, r * 2.2)
         if (isHovered) {
-          glowGrad.addColorStop(0, 'rgba(255, 180, 255, 0.9)')
-          glowGrad.addColorStop(0.4, 'rgba(180, 80, 255, 0.5)')
-          glowGrad.addColorStop(1, 'rgba(100, 20, 200, 0)')
+          glowGrad.addColorStop(0, p.glowHover[0])
+          glowGrad.addColorStop(0.4, p.glowHover[1])
+          glowGrad.addColorStop(1, p.glowHover[2])
         } else if (isNeighbor) {
-          glowGrad.addColorStop(0, 'rgba(200, 150, 255, 0.6)')
-          glowGrad.addColorStop(0.6, 'rgba(120, 60, 220, 0.25)')
-          glowGrad.addColorStop(1, 'rgba(80, 20, 150, 0)')
+          glowGrad.addColorStop(0, p.glowNeighbor[0])
+          glowGrad.addColorStop(0.6, p.glowNeighbor[1])
+          glowGrad.addColorStop(1, p.glowNeighbor[2])
         } else {
-          glowGrad.addColorStop(0, 'rgba(180, 130, 255, 0.5)')
-          glowGrad.addColorStop(0.6, 'rgba(100, 50, 200, 0.15)')
-          glowGrad.addColorStop(1, 'rgba(60, 20, 120, 0)')
+          glowGrad.addColorStop(0, p.glowDefault[0])
+          glowGrad.addColorStop(0.6, p.glowDefault[1])
+          glowGrad.addColorStop(1, p.glowDefault[2])
         }
         ctx.beginPath()
         ctx.arc(node.x, node.y, r * 2.2, 0, Math.PI * 2)
         ctx.fillStyle = glowGrad
         ctx.fill()
 
-        // 主球体（径向渐变）
+        // 主球体（径向渐变：由用户主色推导的高光→主色→暗色档位）
         const grad = ctx.createRadialGradient(node.x - r * 0.25, node.y - r * 0.25, r * 0.05, node.x, node.y, r)
         if (isHovered) {
-          grad.addColorStop(0, '#ffffff')
-          grad.addColorStop(0.35, '#f5d0ff')
-          grad.addColorStop(0.75, '#b04dff')
-          grad.addColorStop(1, '#6a1b9a')
+          grad.addColorStop(0, p.ballHover[0])
+          grad.addColorStop(0.35, p.ballHover[1])
+          grad.addColorStop(0.75, p.ballHover[2])
+          grad.addColorStop(1, p.ballHover[3])
         } else if (isNeighbor) {
-          grad.addColorStop(0, '#f0e0ff')
-          grad.addColorStop(0.4, '#c084fc')
-          grad.addColorStop(0.8, '#7c3aed')
-          grad.addColorStop(1, '#4c1d95')
+          grad.addColorStop(0, p.ballNeighbor[0])
+          grad.addColorStop(0.4, p.ballNeighbor[1])
+          grad.addColorStop(0.8, p.ballNeighbor[2])
+          grad.addColorStop(1, p.ballNeighbor[3])
         } else {
-          grad.addColorStop(0, '#d4b8ff')
-          grad.addColorStop(0.45, '#9b6dff')
-          grad.addColorStop(0.85, '#5b21b6')
-          grad.addColorStop(1, '#3b0764')
+          grad.addColorStop(0, p.ballDefault[0])
+          grad.addColorStop(0.45, p.ballDefault[1])
+          grad.addColorStop(0.85, p.ballDefault[2])
+          grad.addColorStop(1, p.ballDefault[3])
         }
         ctx.beginPath()
         ctx.arc(node.x, node.y, r, 0, Math.PI * 2)
@@ -284,9 +369,7 @@ export default function GraphView({ data, onNodeClick, onClose }: Props): JSX.El
         if (highlight) {
           ctx.beginPath()
           ctx.arc(node.x, node.y, r + 2, 0, Math.PI * 2)
-          ctx.strokeStyle = isHovered
-            ? 'rgba(255, 200, 255, 0.8)'
-            : 'rgba(180, 130, 255, 0.4)'
+          ctx.strokeStyle = isHovered ? p.ringHover : p.ringNeighbor
           ctx.lineWidth = isHovered ? 2 : 1.2
           ctx.stroke()
         }
@@ -302,9 +385,9 @@ export default function GraphView({ data, onNodeClick, onClose }: Props): JSX.El
           const boxW = Math.max(textW, tagW) + 20
           const boxH = tagStr ? 52 : 32
 
-          // 标签背景
-          ctx.fillStyle = 'rgba(10, 10, 25, 0.88)'
-          ctx.strokeStyle = 'rgba(180, 120, 255, 0.5)'
+          // 标签背景（深色浮动层，主色描边）
+          ctx.fillStyle = p.tooltipBg
+          ctx.strokeStyle = p.tooltipBorder
           ctx.lineWidth = 1
           const bx = node.x - boxW / 2
           const by = node.y - r - boxH - 10
@@ -314,13 +397,13 @@ export default function GraphView({ data, onNodeClick, onClose }: Props): JSX.El
           ctx.stroke()
 
           // 文字
-          ctx.fillStyle = '#f0e0ff'
+          ctx.fillStyle = p.tooltipTitle
           ctx.font = `600 ${fontSize}px "Microsoft YaHei", sans-serif`
           ctx.textAlign = 'center'
           ctx.fillText(node.label, node.x, by + 20)
 
           if (tagStr) {
-            ctx.fillStyle = 'rgba(200, 170, 240, 0.8)'
+            ctx.fillStyle = p.tooltipTag
             ctx.font = `400 ${fontSize * 0.75}px "Microsoft YaHei", sans-serif`
             ctx.fillText(tagStr, node.x, by + 38)
           }
@@ -331,7 +414,7 @@ export default function GraphView({ data, onNodeClick, onClose }: Props): JSX.El
           // simplified: just a line from node to box
           ctx.moveTo(node.x, node.y - r)
           ctx.lineTo(node.x, by + boxH)
-          ctx.strokeStyle = 'rgba(180, 120, 255, 0.3)'
+          ctx.strokeStyle = p.tooltipLine
           ctx.lineWidth = 1
           ctx.stroke()
         }
@@ -353,7 +436,7 @@ export default function GraphView({ data, onNodeClick, onClose }: Props): JSX.El
         const alpha = p.alpha * flicker
         ctx.beginPath()
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
-        ctx.fillStyle = `rgba(160, 120, 255, ${alpha})`
+        ctx.fillStyle = `rgba(${paletteRef.current.particle}, ${alpha})`
         ctx.fill()
       }
 
@@ -553,7 +636,7 @@ export default function GraphView({ data, onNodeClick, onClose }: Props): JSX.El
   if (minimized) {
     return (
       <div
-        className="fixed z-50 rounded-lg border border-accent/30 bg-[#0a0a14]/95 shadow-lg shadow-accent/10 backdrop-blur"
+        className="fixed z-50 rounded-lg border border-accent/30 bg-wiki-dark/95 shadow-lg shadow-accent/10 backdrop-blur"
         style={{ bottom: 16, right: 16 }}
       >
         <button
@@ -582,7 +665,7 @@ export default function GraphView({ data, onNodeClick, onClose }: Props): JSX.El
       >
         <div className="flex items-center gap-2">
           <Move className={`h-3.5 w-3.5 ${dragging ? 'text-accent' : 'text-muted/60'}`} />
-          <span className="text-[12px] font-medium text-purple-200/80">量子关系图谱</span>
+          <span className="text-[12px] font-medium text-purple/80">量子关系图谱</span>
           <span className="rounded-full bg-accent/10 px-2 py-0 text-[10px] text-accent/70">
             {data ? `${data.nodes.length} 节点` : '加载中'}
           </span>
@@ -604,7 +687,7 @@ export default function GraphView({ data, onNodeClick, onClose }: Props): JSX.El
           </button>
           <button
             onClick={onClose}
-            className="rounded p-1 text-muted/60 hover:text-red-400 transition-colors"
+            className="rounded p-1 text-muted/60 hover:text-danger transition-colors"
             title="关闭"
           >
             <X className="h-3.5 w-3.5" />
@@ -629,7 +712,7 @@ export default function GraphView({ data, onNodeClick, onClose }: Props): JSX.El
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="text-center">
               <div className="text-4xl mb-2 opacity-40">✦</div>
-              <p className="text-[13px] text-purple-200/40">
+              <p className="text-[13px] text-purple/40">
                 {data ? '图谱为空，创建笔记并添加 [[链接]]' : '加载图谱数据...'}
               </p>
             </div>

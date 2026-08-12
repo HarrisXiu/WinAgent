@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, nativeTheme } from 'electron'
 import { promises as fs } from 'fs'
 import { createHash } from 'crypto'
 import { spawn } from 'child_process'
@@ -12,9 +12,9 @@ import { VaultManager } from './wiki/VaultManager'
 import { SearchIndex } from './wiki/SearchIndex'
 import { GraphEngine } from './wiki/GraphEngine'
 import type { GraphInput } from './wiki/GraphEngine'
-import { AiPipeline } from './wiki/AiPipeline'
+import { AiPipeline, type NoteType } from './wiki/AiPipeline'
 import { createWikiTools } from './tools/wikiTools'
-import { MAX_CONTRACT_CHARS } from './wiki/contract'
+import { readContract, readContractSections } from './wiki/contract'
 import { runLint, runMerge, runReflect, runQuery } from './wiki/WorkflowService'
 import type { AgentEvent, AppConfig, ChatMessage, NoteData, GraphData, AISuggestion, IngestResult, IngestProgress, BatchIngestStartResult, BatchIngestDoneResult, WorkflowResult } from '../shared/types'
 import matter from 'gray-matter'
@@ -47,13 +47,28 @@ async function reloadTools(cfg: AppConfig): Promise<void> {
   await registry.loadExternal(skillsDir, mcpPath)
 }
 
+/** 解析当前主题模式：auto 时跟随系统亮暗（nativeTheme） */
+function resolveThemeMode(cfg: AppConfig): 'light' | 'dark' {
+  if (cfg.theme.mode === 'auto') return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+  return cfg.theme.mode
+}
+
+/** 窗口启动背景色（与 body 首帧一致，避免启动闪色） */
+function windowBackground(): string {
+  try {
+    return resolveThemeMode(store.get()) === 'dark' ? '#181824' : '#fff8f4'
+  } catch {
+    return '#fff8f4'
+  }
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 820,
     minWidth: 820,
     minHeight: 560,
-    backgroundColor: '#0d1117',
+    backgroundColor: windowBackground(),
     title: 'WinAgent',
     autoHideMenuBar: true,
     webPreferences: {
@@ -92,7 +107,7 @@ function createWikiWindow(): void {
     height: 900,
     minWidth: 960,
     minHeight: 600,
-    backgroundColor: '#fff8f4',
+    backgroundColor: windowBackground(),
     title: '知识库',
     autoHideMenuBar: true,
     webPreferences: {
@@ -155,7 +170,10 @@ function registerIpc(): void {
   ipcMain.handle('config:save', async (_e, cfg: AppConfig) => {
     await store.save(cfg)
     await reloadTools(cfg)
-    return store.get()
+    const saved = store.get()
+    // 广播到所有窗口（主题切换双窗口实时同步）
+    sendToWindows('config:changed', saved)
+    return saved
   })
 
   ipcMain.handle('config:dataDir', () => getDataDir())
@@ -339,31 +357,44 @@ function registerWikiIpc(): void {
     await rebuildGraph()
   })
 
-  // === AI (stub for Phase 4) ===
+  // === AI 分析 ===
   ipcMain.handle('wiki:ai:analyze', async (_e, relPath: string): Promise<AISuggestion> => {
     if (!vaultManager || !aiPipeline) return {}
     try {
       const note = await vaultManager.readNote(relPath)
       const allNotes = await vaultManager.listNotes()
-      const flatNotes = flattenWikiNotes(allNotes).filter((n) => n.kind === 'file')
-      const allTitles = flatNotes.map((n) => n.title)
+      // 候选笔记：wiki/ 层全部文件（排除当前笔记），path+title 供关系发现映射回可跳转路径
+      const candidates = flattenWikiNotes(allNotes)
+        .filter((n) => n.kind === 'file' && n.path.startsWith('wiki/') && n.path !== relPath)
+        .map((n) => ({ path: n.path, title: n.title }))
+
+      // 页面类型：按 relPath 判断，AI 分析按类型注入定制审查规则
+      const noteType: NoteType = relPath.startsWith('wiki/sources/') ? 'source'
+        : relPath.startsWith('wiki/concepts/') ? 'concept'
+        : relPath.startsWith('wiki/entities/') ? 'entity'
+        : relPath.startsWith('raw/') ? 'raw'
+        : 'note'
+
+      // 契约注入（按小节抽取）：改 CLAUDE.md → AI 分析行为随之变化（标定闭环）
+      const contract = await readContractSections(
+        vaultManager.getVaultPath(),
+        ['总则', 'wikilink', 'confidence', '个人写作', '质量红线']
+      )
+      // 开放问题列表：判断本笔记能否回答
+      const openQuestions = await vaultManager.getOpenQuestions()
 
       const cfg = await store.load()
       const provider = cfg.providers.find((p) => p.id === cfg.activeProviderId) || cfg.providers[0]
       if (!provider) throw new Error('没有可用的 AI 模型，请先在设置中配置')
 
-      const result = await aiPipeline.analyze(provider, note.title, note.rawBody, allTitles)
-
-      // 将分析结果写入 frontmatter
-      const updated = await vaultManager.readNote(relPath)
-      const newTags = [...new Set([...updated.tags, ...result.tags])]
-      await vaultManager.writeNote(relPath, {
-        title: updated.title,
-        body: updated.rawBody,
-        tags: newTags
+      const result = await aiPipeline.analyze(provider, note.title, note.rawBody, candidates, {
+        noteType,
+        contract,
+        openQuestions
       })
-      // 同时保存 AI 摘要到 frontmatter（通过追加 tags 触发 write）
-      // 注意：目前 NoteData 不支持 aiSummary，后续可扩展
+
+      // 持久化：tags 合并 + summary / relations 写入 frontmatter（刷新后保留，不丢失）
+      await vaultManager.updateAiResults(relPath, result.summary, result.tags, result.relations)
 
       // 更新搜索索引和图谱
       const refreshedNote = await vaultManager.readNote(relPath)
@@ -809,10 +840,8 @@ async function runIngest(rawRelPath: string): Promise<IngestResult> {
   const existingConcepts = await listConceptSlugs()
   const openQuestions = await vaultManager.getOpenQuestions()
   const isPersonal = rawRelPath.startsWith('raw/personal/')
-  let contract = ''
-  try {
-    contract = (await fs.readFile(path.join(vaultManager.getVaultPath(), 'CLAUDE.md'), 'utf-8')).slice(0, MAX_CONTRACT_CHARS)
-  } catch { /* 无契约文件，使用内置默认规则 */ }
+  // 契约每次读盘（行级截断，保章节完整；无契约文件时使用内置默认规则）
+  const contract = await readContract(vaultManager.getVaultPath())
 
   // 4. LLM 分析（无文本内容的文件跳过分析，直接生成基础来源页）
   emitIngestProgress({ file: fileName, stage: 'AI 分析内容…', percent: 25 })

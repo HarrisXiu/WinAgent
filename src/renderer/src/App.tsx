@@ -194,7 +194,7 @@ export default function App(): JSX.Element {
   }
 
   const iconBtn =
-    'flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-pink-100/70 hover:text-accent'
+    'flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-hover/70 hover:text-accent'
 
   const openSettings = (tab: TabKey = 'models', autoPickSkills = false): void => {
     setSettingsTab(tab)
@@ -274,17 +274,17 @@ export default function App(): JSX.Element {
       onDrop={handleDrop}
     >
       {/* ================= 顶栏 ================= */}
-      <header className="relative z-10 flex items-center gap-2.5 border-b border-border bg-white/70 px-4 py-2 backdrop-blur">
+      <header className="relative z-10 flex items-center gap-2.5 border-b border-border bg-panel/70 px-4 py-2 backdrop-blur">
         <div className="mr-1.5 flex items-center gap-2.5">
           <img src={avatarImg} alt="Angelina" className="h-8 w-8 rounded-full object-cover shadow-glow" />
-          <span className="text-[15px] font-semibold tracking-tight text-gray-700">
+          <span className="text-[15px] font-semibold tracking-tight text-text">
             Win
             <span className="bg-gradient-to-r from-accent to-accent2 bg-clip-text text-transparent">Agent</span>
           </span>
         </div>
 
         <select
-          className="rounded-lg border border-border bg-white px-2.5 py-1.5 text-[13px] text-gray-700"
+          className="rounded-lg border border-border bg-panel px-2.5 py-1.5 text-[13px] text-text"
           value={cfg?.activeProviderId || ''}
           onChange={(e) => switchProvider(e.target.value)}
         >
@@ -297,7 +297,7 @@ export default function App(): JSX.Element {
 
         <div className="flex items-center gap-1">
           <input
-            className="w-52 rounded-lg border border-border bg-white px-2.5 py-1.5 text-[13px] text-gray-700"
+            className="w-52 rounded-lg border border-border bg-panel px-2.5 py-1.5 text-[13px] text-text"
             value={activeProvider?.model || ''}
             list="topbar-models"
             placeholder="模型"
@@ -318,7 +318,7 @@ export default function App(): JSX.Element {
           <button
             title="知识库浏览器（弹出独立窗口）"
             onClick={() => window.winagent.wiki.openWindow()}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-pink-100/70 hover:text-accent"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-hover/70 hover:text-accent"
           >
             <BookOpen className="h-4 w-4" />
           </button>
@@ -350,7 +350,7 @@ export default function App(): JSX.Element {
         <div className="flex min-h-0 flex-1">
         {/* 左侧：Angelina 大立绘，实时随对话状态切换 */}
         {turns.length > 0 && (
-          <aside className="flex w-52 shrink-0 flex-col items-center border-r border-border/60 bg-white/40 py-6 backdrop-blur">
+          <aside className="flex w-52 shrink-0 flex-col items-center border-r border-border/60 bg-panel/40 py-6 backdrop-blur">
             <div className="relative">
               <div className="absolute inset-8 rounded-full bg-gradient-to-br from-accent/25 to-accent2/25 blur-2xl" />
               <img
@@ -365,13 +365,13 @@ export default function App(): JSX.Element {
 
             <div className="mt-4 flex items-center gap-2">
               <span className="relative flex h-2.5 w-2.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-60" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-green-400" />
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-success" />
               </span>
-              <span className="text-sm font-semibold text-gray-700">Angelina</span>
+              <span className="text-sm font-semibold text-text">Angelina</span>
             </div>
 
-            <div className="mt-2.5 flex items-center gap-2 rounded-full border border-border bg-white/80 px-3.5 py-1.5 shadow-card">
+            <div className="mt-2.5 flex items-center gap-2 rounded-full border border-border bg-panel/80 px-3.5 py-1.5 shadow-card">
               {aiState === 'idle' ? (
                 <span className="text-xs text-muted">待命中</span>
               ) : (
@@ -417,10 +417,10 @@ export default function App(): JSX.Element {
                   key={f.title}
                   onClick={() => openSettings(f.tab, f.pickSkills)}
                   title={`点击前往「${f.title}」设置`}
-                  className="group w-44 cursor-pointer rounded-2xl border border-border bg-white/80 p-4 text-left shadow-card transition-all hover:border-accent/40 hover:shadow-glow"
+                  className="group w-44 cursor-pointer rounded-2xl border border-border bg-panel/80 p-4 text-left shadow-card transition-all hover:border-accent/40 hover:shadow-glow"
                 >
                   <f.icon className="mb-2.5 h-5 w-5 text-accent transition-transform group-hover:scale-110" />
-                  <div className="mb-1 text-[13px] font-medium text-gray-700">{f.title}</div>
+                  <div className="mb-1 text-[13px] font-medium text-text">{f.title}</div>
                   <div className="text-[11px] leading-relaxed text-muted">{f.desc}</div>
                 </button>
               ))}
@@ -447,7 +447,7 @@ export default function App(): JSX.Element {
             {attachments.map((att, i) => (
               <div
                 key={i}
-                className="group flex items-center gap-2.5 rounded-xl border border-border bg-white/80 py-1.5 pl-1.5 pr-2 shadow-card backdrop-blur"
+                className="group flex items-center gap-2.5 rounded-xl border border-border bg-panel/80 py-1.5 pl-1.5 pr-2 shadow-card backdrop-blur"
               >
                 {att.isImage && att.dataUrl ? (
                   <img src={att.dataUrl} alt={att.name} className="h-8 w-8 rounded-lg object-cover" />
@@ -456,10 +456,10 @@ export default function App(): JSX.Element {
                     {att.isImage ? <ImageIcon className="h-4 w-4 text-accent" /> : <FileText className="h-4 w-4 text-accent" />}
                   </div>
                 )}
-                <span className="max-w-36 truncate text-xs text-gray-600">{att.name}</span>
+                <span className="max-w-36 truncate text-xs text-text-secondary">{att.name}</span>
                 <button
                   onClick={() => removeAttachment(i)}
-                  className="rounded-md p-0.5 text-muted transition-colors hover:bg-red-100 hover:text-red-400"
+                  className="rounded-md p-0.5 text-muted transition-colors hover:bg-danger/10 hover:text-danger"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -468,10 +468,10 @@ export default function App(): JSX.Element {
           </div>
         )}
 
-        <div className="rounded-2xl border border-border bg-white/90 shadow-card backdrop-blur transition-all focus-within:border-accent/50 focus-within:shadow-[0_0_0_3px_rgba(244,113,156,0.12),0_8px_30px_rgba(244,113,156,0.15)]">
+        <div className="rounded-2xl border border-border bg-panel/90 shadow-card backdrop-blur transition-all focus-within:border-accent/50 focus-within:shadow-[0_0_0_3px_rgba(244,113,156,0.12),0_8px_30px_rgba(244,113,156,0.15)]">
           <textarea
             ref={taRef}
-            className="max-h-40 w-full resize-none bg-transparent px-4 pt-3.5 text-sm leading-relaxed text-gray-700 outline-none placeholder:text-muted"
+            className="max-h-40 w-full resize-none bg-transparent px-4 pt-3.5 text-sm leading-relaxed text-text outline-none placeholder:text-muted"
             rows={1}
             placeholder="和安洁莉娜聊聊天，或者让她帮你跑跑腿…"
             value={input}
@@ -494,7 +494,7 @@ export default function App(): JSX.Element {
             <button
               title="添加文件或图片"
               onClick={() => fileInputRef.current?.click()}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-pink-100/70 hover:text-accent"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-hover/70 hover:text-accent"
             >
               <Plus className="h-4 w-4" />
             </button>
@@ -504,7 +504,7 @@ export default function App(): JSX.Element {
                 <button
                   onClick={stop}
                   title="停止生成"
-                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-400 text-white shadow-lg shadow-red-300/40 transition-all hover:bg-red-500"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-danger text-white shadow-lg shadow-danger/40 transition-all hover:bg-danger/90"
                 >
                   <Square className="h-3.5 w-3.5" />
                 </button>
@@ -512,7 +512,7 @@ export default function App(): JSX.Element {
                 <button
                   onClick={submit}
                   disabled={!input.trim() && attachments.length === 0}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-accent to-accent2 text-white shadow-glow transition-all hover:opacity-90 disabled:opacity-30 disabled:shadow-none"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-accent to-accent2 text-accent-fg shadow-glow transition-all hover:opacity-90 disabled:opacity-30 disabled:shadow-none"
                 >
                   <Send className="h-4 w-4" />
                 </button>
@@ -549,10 +549,10 @@ export default function App(): JSX.Element {
             key={i}
             className={`rounded-xl border px-4 py-3 text-sm shadow-lg backdrop-blur ${
               p.status === 'done'
-                ? 'border-green-200 bg-green-50/95 text-green-700'
+                ? 'border-success/30 bg-success/10 text-success'
                 : p.status === 'error'
-                  ? 'border-red-200 bg-red-50/95 text-red-600'
-                  : 'border-accent/20 bg-white/95 text-gray-700'
+                  ? 'border-danger/30 bg-danger/10 text-danger'
+                  : 'border-accent/20 bg-panel/95 text-text'
             }`}
           >
             <div className="flex items-center gap-2">
@@ -568,7 +568,7 @@ export default function App(): JSX.Element {
               </span>
               <button
                 onClick={() => setWikiProcessing((prev) => prev.filter((_, j) => j !== i))}
-                className="shrink-0 text-muted hover:text-gray-700"
+                className="shrink-0 text-muted hover:text-text"
               >
                 <X className="inline h-3 w-3" />
               </button>
@@ -617,19 +617,19 @@ export default function App(): JSX.Element {
 
       {/* ================= 危险操作确认 ================= */}
       {confirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-pink-900/20 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-border bg-white p-5 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-border bg-panel p-5 shadow-2xl">
             <div className="mb-3 flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-100">
-                <AlertTriangle className="h-5 w-5 text-amber-500" />
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-warning/15">
+                <AlertTriangle className="h-5 w-5 text-warning" />
               </div>
-              <h3 className="text-[15px] font-semibold text-gray-800">确认执行危险操作</h3>
+              <h3 className="text-[15px] font-semibold text-text">确认执行危险操作</h3>
             </div>
-            <p className="mb-2 text-sm text-gray-600">
+            <p className="mb-2 text-sm text-text-secondary">
               工具 <span className="rounded-md bg-accent/10 px-1.5 py-0.5 font-mono text-[13px] text-accent">{confirm.name}</span>{' '}
               即将执行：
             </p>
-            <pre className="mb-4 max-h-48 overflow-auto rounded-xl border border-border bg-pink-50/50 p-3 font-mono text-xs leading-relaxed text-gray-600">
+            <pre className="mb-4 max-h-48 overflow-auto rounded-xl border border-border bg-surface/50 p-3 font-mono text-xs leading-relaxed text-text-secondary">
               {(() => {
                 try {
                   return JSON.stringify(JSON.parse(confirm.args), null, 2)
@@ -641,13 +641,13 @@ export default function App(): JSX.Element {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => respondConfirm(false)}
-                className="rounded-lg border border-border px-4 py-1.5 text-sm text-gray-600 transition-colors hover:bg-pink-50"
+                className="rounded-lg border border-border px-4 py-1.5 text-sm text-text-secondary transition-colors hover:bg-surface"
               >
                 拒绝
               </button>
               <button
                 onClick={() => respondConfirm(true)}
-                className="rounded-lg bg-gradient-to-br from-amber-400 to-orange-400 px-4 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90"
+                className="rounded-lg bg-gradient-to-br from-warning to-accent2 px-4 py-1.5 text-sm font-medium text-accent-fg transition-opacity hover:opacity-90"
               >
                 允许执行
               </button>

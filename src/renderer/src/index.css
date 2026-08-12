@@ -4,6 +4,72 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   主题令牌（RGB 通道格式：Tailwind 的 <alpha-value> 需要空格分隔通道）
+   静态层：data-theme 决定的中性色（bg/text/muted/功能色）
+   动态层：由用户 accent/accent2 经 colord 推导，ThemeProvider 以内联 style 覆盖
+   ============================================================ */
+:root {
+  /* ---- 静态：背景与文字 ---- */
+  --bg: 255 248 244;          /* #fff8f4 暖白 */
+  --panel: 255 255 255;       /* #ffffff */
+  --text: 63 52 64;           /* #3f3440 正文 */
+  --text-secondary: 74 61 76; /* #4a3d4c 次级正文 */
+  --text-muted: 163 141 151;  /* #a38d97 弱化文字 */
+  /* ---- 动态：由 accent/accent2 推导（此处为默认粉蓝的推导结果） ---- */
+  --accent: 244 113 156;      /* #f4719c 主色 */
+  --accent-fg: 255 255 255;   /* 主色上的文字色（自动黑白） */
+  --accent2: 109 183 217;     /* #6db7d9 辅色 */
+  --accent2-fg: 255 255 255;
+  --surface: 255 242 246;     /* #fff2f6 浅粉面板（accent 混白 90%） */
+  --surface-hover: 252 231 240; /* #fce7f0 hover 态（accent 混白 82%） */
+  --border: 245 223 232;      /* #f5dfe8 边框 */
+  --border-strong: 240 205 218; /* #f0cdda 强边框/滚动条 */
+  --glow: 244 113 156;        /* 主色光晕（accent） */
+  /* ---- 功能色 ---- */
+  --danger: 239 68 68;        /* red-500 */
+  --warning: 217 119 6;       /* amber-600 */
+  --info: 34 211 238;         /* cyan-400 */
+  --success: 34 197 94;       /* green-500 */
+  --purple: 168 85 247;       /* purple-500 */
+  /* ---- Markdown 正文专用 ---- */
+  --md-pre-bg: 253 248 249;   /* #fdf8f9 代码块底 */
+  --md-inline-code: 209 79 131; /* #d14f83 行内代码文字 */
+  --md-link: 74 159 199;      /* #4a9fc7 链接 */
+  --md-quote-text: 138 117 132; /* #8a7584 引用文字 */
+  --md-lang-tag: 196 160 178; /* #c4a0b2 代码块语言标签 */
+  /* ---- Wiki 图谱浮动层（固定深色色板） ---- */
+  --wiki-canvas: 10 10 20;    /* #0a0a14 */
+  --wiki-panel: 18 18 31;     /* #12121f */
+  --wiki-border: 30 30 50;    /* #1e1e32 */
+  --wiki-accent: 192 132 252; /* #c084fc */
+  --wiki-accent2: 96 165 250; /* #60a5fa */
+  --wiki-glow: 168 85 247;    /* #a855f7 */
+
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --bg: 24 24 36;             /* #181824 深蓝黑 */
+  --panel: 30 30 46;          /* #1e1e2e 面板 */
+  --text: 226 220 232;        /* #e2dce8 正文 */
+  --text-secondary: 203 194 212; /* #cbc2d4 次级正文 */
+  --text-muted: 148 138 160;  /* #948aa0 弱化文字 */
+  /* 功能色在深色模式取较深档位：警示文字在深底可见，同时白字按钮对比度达标 */
+  --danger: 220 38 38;        /* red-600（白字按钮 ≥5:1） */
+  --warning: 180 83 9;        /* amber-700（白字按钮 ≥4.5:1） */
+  --info: 34 211 238;         /* cyan-400 */
+  --success: 74 222 128;      /* green-400 */
+  --purple: 168 85 247;       /* purple-500 */
+  --md-pre-bg: 30 30 46;
+  --md-inline-code: 244 159 191;
+  --md-link: 96 165 250;
+  --md-quote-text: 173 160 178;
+  --md-lang-tag: 148 138 160;
+
+  color-scheme: dark;
+}
+
 html,
 body,
 #root {
@@ -12,35 +78,35 @@ body,
 }
 
 body {
-  color-scheme: light;
   background:
-    radial-gradient(900px 520px at 12% -8%, rgba(244, 113, 156, 0.12), transparent 60%),
-    radial-gradient(700px 460px at 105% 5%, rgba(109, 183, 217, 0.12), transparent 60%),
-    #fff8f4;
-  color: #3f3440;
+    radial-gradient(900px 520px at 12% -8%, rgb(var(--accent) / 0.12), transparent 60%),
+    radial-gradient(700px 460px at 105% 5%, rgb(var(--accent2) / 0.12), transparent 60%),
+    rgb(var(--bg));
+  color: rgb(var(--text));
   font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
   overflow: hidden;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 ::selection {
-  background: rgba(244, 113, 156, 0.25);
+  background: rgb(var(--accent) / 0.25);
 }
 
 /* ---------- 滚动条 ---------- */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #f0cdda transparent;
+  scrollbar-color: rgb(var(--border-strong)) transparent;
 }
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 *::-webkit-scrollbar-thumb {
-  background: #f0cdda;
+  background: rgb(var(--border-strong));
   border-radius: 8px;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: #e5b2c4;
+  background: rgb(var(--accent) / 0.6);
 }
 *::-webkit-scrollbar-track {
   background: transparent;
@@ -52,19 +118,19 @@ body {
   height: 12px;
 }
 .wiki-window *::-webkit-scrollbar-track {
-  background: rgba(240, 205, 218, 0.18);
+  background: rgb(var(--border-strong) / 0.18);
   border-radius: 8px;
 }
 .wiki-window *::-webkit-scrollbar-thumb {
-  background: #f0cdda;
+  background: rgb(var(--border-strong));
   border-radius: 8px;
-  border: 2px solid #fff8f4;
+  border: 2px solid rgb(var(--bg));
 }
 .wiki-window *::-webkit-scrollbar-thumb:hover {
-  background: #e5b2c4;
+  background: rgb(var(--accent) / 0.6);
 }
 .wiki-window *::-webkit-scrollbar-corner {
-  background: rgba(240, 205, 218, 0.18);
+  background: rgb(var(--border-strong) / 0.18);
 }
 
 /* ---------- 表单控件：统一 focus ring ---------- */
@@ -77,25 +143,25 @@ input:focus,
 select:focus,
 textarea:focus {
   outline: none;
-  border-color: rgba(244, 113, 156, 0.7) !important;
-  box-shadow: 0 0 0 3px rgba(244, 113, 156, 0.15);
+  border-color: rgb(var(--accent) / 0.7) !important;
+  box-shadow: 0 0 0 3px rgb(var(--accent) / 0.15);
 }
 input[type='checkbox'] {
-  accent-color: #f4719c;
+  accent-color: rgb(var(--accent));
 }
 
-/* ---------- Markdown 正文（浅色） ---------- */
+/* ---------- Markdown 正文 ---------- */
 .md-body {
   line-height: 1.7;
-  color: #4a3d4c;
+  color: rgb(var(--text-secondary));
 }
 .md-body p {
   margin: 0.4em 0;
 }
 .md-body pre {
   position: relative;
-  background: #fdf8f9;
-  border: 1px solid #f5dfe8;
+  background: rgb(var(--md-pre-bg));
+  border: 1px solid rgb(var(--border));
   border-radius: 10px;
   padding: 26px 14px 12px;
   overflow-x: auto;
@@ -109,15 +175,15 @@ input[type='checkbox'] {
   font-size: 10.5px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #c4a0b2;
+  color: rgb(var(--md-lang-tag));
 }
 .md-body code {
   font-family: 'Cascadia Code', 'Consolas', monospace;
   font-size: 13px;
 }
 .md-body :not(pre) > code {
-  background: rgba(244, 113, 156, 0.12);
-  color: #d14f83;
+  background: rgb(var(--accent) / 0.12);
+  color: rgb(var(--md-inline-code));
   padding: 1px 6px;
   border-radius: 5px;
 }
@@ -127,20 +193,20 @@ input[type='checkbox'] {
   margin: 0.4em 0;
 }
 .md-body a {
-  color: #4a9fc7;
+  color: rgb(var(--md-link));
   text-decoration: none;
-  border-bottom: 1px solid rgba(74, 159, 199, 0.35);
+  border-bottom: 1px solid rgb(var(--md-link) / 0.35);
 }
 .md-body a:hover {
-  border-bottom-color: #4a9fc7;
+  border-bottom-color: rgb(var(--md-link));
 }
 .md-body blockquote {
-  border-left: 3px solid #f4719c;
-  background: rgba(244, 113, 156, 0.07);
+  border-left: 3px solid rgb(var(--accent));
+  background: rgb(var(--accent) / 0.07);
   border-radius: 0 8px 8px 0;
   padding: 2px 12px;
   margin: 0.6em 0;
-  color: #8a7584;
+  color: rgb(var(--md-quote-text));
 }
 .md-body table {
   border-collapse: collapse;
@@ -148,31 +214,83 @@ input[type='checkbox'] {
 }
 .md-body th,
 .md-body td {
-  border: 1px solid #f0cdda;
+  border: 1px solid rgb(var(--border-strong));
   padding: 6px 10px;
 }
 .md-body th {
-  background: #fff2f6;
+  background: rgb(var(--surface));
 }
 .md-body hr {
-  border-color: #f5dfe8;
+  border-color: rgb(var(--border));
   margin: 1em 0;
+}
+
+/* ---------- 代码高亮：深色模式覆盖（github.css 为浅色默认） ---------- */
+[data-theme='dark'] .hljs {
+  color: #c9d1d9;
+  background: transparent;
+}
+[data-theme='dark'] .hljs-keyword,
+[data-theme='dark'] .hljs-selector-tag,
+[data-theme='dark'] .hljs-meta {
+  color: #ff7b72;
+}
+[data-theme='dark'] .hljs-string,
+[data-theme='dark'] .hljs-title,
+[data-theme='dark'] .hljs-section,
+[data-theme='dark'] .hljs-attribute,
+[data-theme='dark'] .hljs-template-variable,
+[data-theme='dark'] .hljs-variable,
+[data-theme='dark'] .hljs-literal {
+  color: #a5d6ff;
+}
+[data-theme='dark'] .hljs-comment,
+[data-theme='dark'] .hljs-quote {
+  color: #8b949e;
+  font-style: italic;
+}
+[data-theme='dark'] .hljs-number,
+[data-theme='dark'] .hljs-symbol,
+[data-theme='dark'] .hljs-bullet {
+  color: #79c0ff;
+}
+[data-theme='dark'] .hljs-built_in,
+[data-theme='dark'] .hljs-type,
+[data-theme='dark'] .hljs-class .hljs-title,
+[data-theme='dark'] .hljs-params,
+[data-theme='dark'] .hljs-attr {
+  color: #ffa657;
+}
+[data-theme='dark'] .hljs-function .hljs-title,
+[data-theme='dark'] .hljs-title.function_ {
+  color: #d2a8ff;
+}
+[data-theme='dark'] .hljs-doctag,
+[data-theme='dark'] .hljs-regexp,
+[data-theme='dark'] .hljs-link {
+  color: #a5d6ff;
+}
+[data-theme='dark'] .hljs-emphasis {
+  font-style: italic;
+}
+[data-theme='dark'] .hljs-strong {
+  font-weight: 600;
 }
 
 /* ==================== Wiki 知识库样式 ==================== */
 
 /* Wiki 侧边栏文件树 */
 .wiki-tree-item {
-  @apply flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-gray-600 transition-colors;
+  @apply flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-text-secondary transition-colors;
 }
 .wiki-tree-item:hover {
-  @apply bg-pink-100/50 text-accent;
+  @apply bg-surface-hover/50 text-accent;
 }
 .wiki-tree-item.active {
   @apply bg-accent/10 text-accent font-medium;
 }
 
-/* Wiki 编辑器 CodeMirror 暗色覆盖 */
+/* Wiki 编辑器 CodeMirror 覆盖 */
 .wiki-editor .cm-editor {
   @apply h-full;
 }
@@ -186,8 +304,8 @@ input[type='checkbox'] {
   animation: wikiDropPulse 1.5s ease-in-out infinite;
 }
 @keyframes wikiDropPulse {
-  0%, 100% { background-color: rgba(10, 10, 20, 0.7); }
-  50% { background-color: rgba(168, 85, 247, 0.15); }
+  0%, 100% { background-color: rgb(var(--wiki-canvas) / 0.7); }
+  50% { background-color: rgb(var(--wiki-glow) / 0.15); }
 }
 
 /* Wiki 标签样式 */
@@ -201,12 +319,12 @@ input[type='checkbox'] {
 /* Wiki 图谱面板 — 浮动窗口 */
 .wiki-graph-panel {
   @apply absolute inset-4 z-50 flex flex-col rounded-2xl border border-wiki-border bg-wiki-dark shadow-2xl overflow-hidden;
-  box-shadow: 0 0 60px rgba(168, 85, 247, 0.2), 0 8px 40px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 60px rgb(var(--wiki-glow) / 0.2), 0 8px 40px rgb(0 0 0 / 0.5);
 }
 
 /* Wiki 状态栏 */
 .wiki-statusbar {
-  @apply flex items-center gap-4 border-t border-border/60 bg-white/80 px-4 py-1 text-[11px] text-muted;
+  @apply flex items-center gap-4 border-t border-border/60 bg-panel/80 px-4 py-1 text-[11px] text-muted;
 }
 
 /* CodeMirror Wiki 链接语法高亮 */
