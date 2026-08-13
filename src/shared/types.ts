@@ -245,6 +245,8 @@ export interface SearchResult {
   title: string
   snippet: string
   score: number
+  /** AI 摘要（索引时传入，检索时随结果返回，便于直接回答） */
+  summary?: string
 }
 
 /** 标签及计数 */
@@ -319,6 +321,43 @@ export interface BatchIngestStartResult {
 export interface BatchIngestDoneResult {
   results: IngestResult[]
   errors: Array<{ path: string; error: string }>
+  /** 聚合的待确认 high 概念（按 slug 去重） */
+  confirmHigh: Array<{ slug: string; title: string; sourceCount: number }>
+}
+
+/** 分析要求 Tag（用户拖入文件时选择/输入的分析要求，AI 归纳后持久化复用） */
+export interface AnalysisTag {
+  /** 短标签（chip 展示，2-8 字） */
+  tag: string
+  /** 一句话可复用分析要求（选中后填入弹窗输入框） */
+  template: string
+}
+
+/** 定制分析输出（AiPipeline.customAnalyze） */
+export interface CustomAnalysisOutput {
+  /** 弹窗摘要展示（1-2 句） */
+  summary: string
+  /** 完整 markdown 报告，追加到 source 页正文 */
+  report: string
+  /** AI 归纳的分析要求 tag（1-3 个） */
+  analysisTags: AnalysisTag[]
+}
+
+/** 拖入分析流程：单文件结果 */
+export interface ImportAnalyzeFileResult {
+  name: string
+  relPath?: string
+  sourcePath?: string
+  ingestError?: string
+  analysisError?: string
+  analysis?: CustomAnalysisOutput
+}
+
+/** 拖入分析流程：汇总结果（返回前端弹窗展示） */
+export interface ImportAnalyzeResult {
+  files: ImportAnalyzeFileResult[]
+  /** 本次真正新增的分析 tag（弹窗展示用） */
+  newTags: AnalysisTag[]
   /** 聚合的待确认 high 概念（按 slug 去重） */
   confirmHigh: Array<{ slug: string; title: string; sourceCount: number }>
 }

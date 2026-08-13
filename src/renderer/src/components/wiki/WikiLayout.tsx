@@ -31,7 +31,7 @@ export default function WikiLayout({ onSwitchVaultPath, compact, onDropFiles }: 
   const [aiAnalyzing, setAiAnalyzing] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
   // INGEST 处理状态（拖拽编译）
-  const [ingestMsg, setIngestMsg] = useState<{ text: string; ok: boolean; percent?: number } | null>(null)
+  const [ingestMsg, setIngestMsg] = useState<{ text: string; ok: boolean; percent?: number; leaving?: boolean } | null>(null)
 
   // 订阅 INGEST 进度
   useEffect(() => {
@@ -43,6 +43,20 @@ export default function WikiLayout({ onSwitchVaultPath, compact, onDropFiles }: 
       )
     })
   }, [])
+
+  // 成功提示（✓ 编译完成态）5 秒后渐隐；错误常驻手动关闭
+  useEffect(() => {
+    if (!ingestMsg || !ingestMsg.ok || ingestMsg.leaving || !ingestMsg.text.startsWith('✓')) return
+    const t = setTimeout(() => setIngestMsg((m) => (m ? { ...m, leaving: true } : m)), 5000)
+    return () => clearTimeout(t)
+  }, [ingestMsg])
+
+  // 渐隐过渡结束后移除
+  useEffect(() => {
+    if (!ingestMsg?.leaving) return
+    const t = setTimeout(() => setIngestMsg(null), 300)
+    return () => clearTimeout(t)
+  }, [ingestMsg])
 
   // 获取所有笔记标题（用于 [[wiki link]] 自动补全）
   const allNoteTitles = getAllTitles(wiki.notes)
@@ -383,7 +397,9 @@ export default function WikiLayout({ onSwitchVaultPath, compact, onDropFiles }: 
       {/* INGEST 处理结果 toast（含进度条） */}
       {ingestMsg && (
         <div
-          className={`absolute right-3 top-3 z-50 w-64 rounded-xl border px-4 py-3 text-sm shadow-lg backdrop-blur ${
+          className={`absolute right-3 top-3 z-50 w-64 rounded-xl border px-4 py-3 text-sm shadow-lg backdrop-blur transition-all duration-300 ${
+            ingestMsg.leaving ? 'translate-y-2 opacity-0' : 'opacity-100'
+          } ${
             ingestMsg.ok
               ? 'border-success/30 bg-success/10 text-success'
               : 'border-danger/30 bg-danger/10 text-danger'

@@ -16,11 +16,12 @@ import {
   Server,
   BookOpen
 } from 'lucide-react'
-import type { AppConfig, ChatMode } from '../../shared/types'
+import type { AppConfig, ChatMode, AnalysisTag } from '../../shared/types'
 import { useAgent } from './lib/useAgent'
 import Message from './components/Message'
 import Settings, { type TabKey } from './components/Settings'
 import ConfirmHighDialog, { type ConfirmHighItem } from './components/wiki/ConfirmHighDialog'
+import ImportAnalyzeDialog, { type ImportAnalyzeFile } from './components/wiki/ImportAnalyzeDialog'
 import avatarImg from './assets/angelina/avatar.png'
 import zuozuoGif from './assets/angelina/zuozuo.gif'
 import kanshuGif from './assets/angelina/kanshu.gif'
@@ -67,9 +68,11 @@ export default function App(): JSX.Element {
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   // 知识库独立窗口 + 拖拽处理
   const [dragOver, setDragOver] = useState(false)
-  const [wikiProcessing, setWikiProcessing] = useState<Array<{ file: string; status: 'processing' | 'done' | 'error'; message?: string; progress?: number; stage?: string }>>([])
+  const [wikiProcessing, setWikiProcessing] = useState<Array<{ file: string; status: 'processing' | 'done' | 'error'; message?: string; progress?: number; stage?: string; leaving?: boolean }>>([])
   // confidence high 用户确认（概念 5+ 来源，独立窗口与主窗口共用组件）
   const [confirmHigh, setConfirmHigh] = useState<ConfirmHighItem[] | null>(null)
+  // 拖入文件后的分析要求弹窗（files + 历史分析 tag）
+  const [importDialog, setImportDialog] = useState<{ files: ImportAnalyzeFile[]; tags: AnalysisTag[] } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -91,6 +94,27 @@ export default function App(): JSX.Element {
       )
     })
   }, [])
+
+  // done 卡片 5 秒后渐隐（error 常驻手动关闭）
+  useEffect(() => {
+    const target = wikiProcessing.find((p) => p.status === 'done' && !p.leaving)
+    if (!target) return
+    const t = setTimeout(() => {
+      setWikiProcessing((prev) =>
+        prev.map((p) => (p.file === target.file && p.status === 'done' ? { ...p, leaving: true } : p))
+      )
+    }, 5000)
+    return () => clearTimeout(t)
+  }, [wikiProcessing])
+
+  // 渐隐过渡结束后移除
+  useEffect(() => {
+    if (!wikiProcessing.some((p) => p.leaving)) return
+    const t = setTimeout(() => {
+      setWikiProcessing((prev) => prev.filter((p) => !p.leaving))
+    }, 300)
+    return () => clearTimeout(t)
+  }, [wikiProcessing])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
@@ -218,51 +242,25 @@ export default function App(): JSX.Element {
     { icon: Server, title: 'OpenAI / Ollama', desc: '云端 API 与本地模型无缝切换', tab: 'models' as TabKey }
   ]
 
-  // 全局拖拽导入到知识库（AI 自动处理）
+  // 全局拖拽 → 弹出分析要求弹窗（用户决定分析方式；取消则不导入）
   const handleDrop = async (e: React.DragEvent): Promise<void> => {
     e.preventDefault()
     e.stopPropagation()
     setDragOver(false)
     const files = e.dataTransfer.files
     if (!files || files.length === 0) return
+    const dropped: ImportAnalyzeFile[] = []
     for (const file of Array.from(files)) {
       const filePath = (file as any).path
       if (!filePath) continue
-      setWikiProcessing((prev) => [...prev, { file: file.name, status: 'processing', progress: 0 }])
-      try {
-        const relPath = await window.winagent.wiki.importFile(filePath)
-        // 所有源文件立即触发 INGEST（md/txt/pdf 分析内容，图片创建基础来源页）
-        const result = await window.winagent.wiki.ingest(relPath)
-        const total = result.created.length + result.updated.length
-        setWikiProcessing((prev) =>
-          prev.map((p) =>
-            p.file === file.name
-              ? { ...p, status: 'done', progress: 100, message: `已编译: ${total} 个页面 (${result.sourcePath})` }
-              : p
-          )
-        )
-        // 开放问题匹配提示
-        if (result.answeredQuestions && result.answeredQuestions.length > 0) {
-          setWikiProcessing((prev) => [
-            ...prev,
-            {
-              file: '📌 问题匹配',
-              status: 'done',
-              message: `此来源回答了开放问题: ${result.answeredQuestions!.join('；')}`
-            }
-          ])
-        }
-        // confidence high 确认请求（5+ 来源概念）
-        if (result.confirmHigh?.length) {
-          setConfirmHigh(
-            result.confirmHigh.map((c) => ({ slug: c.slug, title: c.title, sourceCount: c.sourceCount }))
-          )
-        }
-      } catch (err: any) {
-        setWikiProcessing((prev) =>
-          prev.map((p) => (p.file === file.name ? { ...p, status: 'error', message: err.message || '导入失败' } : p))
-        )
-      }
+      dropped.push({ name: file.name, path: filePath })
+    }
+    if (dropped.length === 0) return
+    try {
+      const tags = await window.winagent.wiki.listAnalysisTags()
+      setImportDialog({ files: dropped, tags })
+    } catch {
+      setImportDialog({ files: dropped, tags: [] })
     }
   }
 
@@ -536,7 +534,7 @@ export default function App(): JSX.Element {
         <div className="text-center">
           <div className="mb-3 text-5xl">📥</div>
           <div className="text-xl font-semibold text-white">释放文件以导入到知识库</div>
-          <div className="mt-2 text-sm text-white/60">AI 将自动分析、标记并索引文件内容</div>
+          <div className="mt-2 text-sm text-white/60">将弹出分析要求确认，AI 编译并定制分析</div>
         </div>
       </div>
     )}
@@ -547,7 +545,9 @@ export default function App(): JSX.Element {
         {wikiProcessing.map((p, i) => (
           <div
             key={i}
-            className={`rounded-xl border px-4 py-3 text-sm shadow-lg backdrop-blur ${
+            className={`rounded-xl border px-4 py-3 text-sm shadow-lg backdrop-blur transition-all duration-300 ${
+              p.leaving ? 'translate-y-2 opacity-0' : 'opacity-100'
+            } ${
               p.status === 'done'
                 ? 'border-success/30 bg-success/10 text-success'
                 : p.status === 'error'
@@ -611,6 +611,19 @@ export default function App(): JSX.Element {
               { file: 'confidence', status: 'done', message: 'high 确认已处理' }
             ])
             setConfirmHigh(null)
+          }}
+        />
+      )}
+
+      {/* ================= 拖入文件 → 分析要求弹窗 ================= */}
+      {importDialog && (
+        <ImportAnalyzeDialog
+          files={importDialog.files}
+          tags={importDialog.tags}
+          onClose={() => setImportDialog(null)}
+          onDone={(r) => {
+            setImportDialog(null)
+            if (r.confirmHigh?.length) setConfirmHigh(r.confirmHigh)
           }}
         />
       )}

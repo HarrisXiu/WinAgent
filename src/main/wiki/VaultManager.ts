@@ -1,7 +1,7 @@
 import { promises as fs, watch, type Dirent } from 'fs'
 import path from 'path'
 import matter from 'gray-matter'
-import type { NoteMeta, NoteContent, NoteData, NoteAnnotation, NoteRelation, TagWithCount } from '../../shared/types'
+import type { NoteMeta, NoteContent, NoteData, NoteAnnotation, NoteRelation, TagWithCount, AnalysisTag } from '../../shared/types'
 import { WINAGENT_CONTRACT_MD } from './contract'
 
 export interface VaultChangeEvent {
@@ -14,7 +14,7 @@ type ChangeCallback = (event: VaultChangeEvent) => void
 /** LLM Wiki 分层目录结构（raw 人类所有 / wiki LLM 编译层 / outputs 输出） */
 export const RAW_SUBDIRS = ['articles', 'clippings', 'images', 'pdfs', 'notes', 'personal']
 export const WIKI_SUBDIRS = ['sources', 'concepts', 'entities', 'synthesis', 'templates', 'outputs']
-export const SYSTEM_FILES = ['index.md', 'log.md', 'overview.md', 'QUESTIONS.md']
+export const SYSTEM_FILES = ['index.md', 'log.md', 'overview.md', 'QUESTIONS.md', 'ANALYSIS_TAGS.md']
 
 /** INGEST 管线可处理的文件扩展名（与 runIngest 中的分类一致） */
 export const INGESTIBLE_EXTS = [
@@ -140,6 +140,61 @@ export class VaultManager {
       body = body.replace(target, target.replace('- [ ]', '- [x]').replace('（opened', '（answered ' + new Date().toISOString().slice(0, 10) + ', opened'))
       await fs.writeFile(qPath, matter.stringify(body, parsed.data as Record<string, any>), 'utf-8')
     } catch { /* ignore */ }
+  }
+
+  /** 读取分析要求 Tag 列表（wiki/ANALYSIS_TAGS.md 的 Tags 段，逐行 `- 标签 | 模板`） */
+  async getAnalysisTags(): Promise<AnalysisTag[]> {
+    const tPath = path.join(this.wikiDir, 'ANALYSIS_TAGS.md')
+    try {
+      const raw = await fs.readFile(tPath, 'utf-8')
+      const parsed = matter(raw)
+      return parsed.content
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.startsWith('- '))
+        .map((l) => {
+          const body = l.slice(2)
+          const sep = body.indexOf('|')
+          if (sep < 0) return null
+          const tag = body.slice(0, sep).trim()
+          const template = body.slice(sep + 1).trim()
+          return tag && template ? { tag, template } : null
+        })
+        .filter((t): t is AnalysisTag => t !== null)
+    } catch {
+      return []
+    }
+  }
+
+  /** 合并写入分析要求 Tag（按 tag 字符串去重），返回合并后全量 */
+  async addAnalysisTags(tags: AnalysisTag[]): Promise<AnalysisTag[]> {
+    const tPath = path.join(this.wikiDir, 'ANALYSIS_TAGS.md')
+    const existing = await this.getAnalysisTags()
+    const seen = new Set(existing.map((t) => t.tag))
+    for (const t of tags) {
+      if (!t?.tag || !t?.template || seen.has(t.tag)) continue
+      seen.add(t.tag)
+      existing.push(t)
+    }
+    const lines = existing.map((t) => `- ${t.tag} | ${t.template}`).join('\n')
+    const body = `# 分析要求 Tag 模板\n\n> 系统维护：AI 归纳用户的分析要求形成可复用 tag，拖拽导入弹窗中可选。用户可自由编辑/删除。\n\n## Tags\n\n${lines || '（暂无）'}\n`
+    await fs.writeFile(tPath, matter.stringify(body, { type: 'system-analysis-tags', 'graph-excluded': true, updated: new Date().toISOString() }), 'utf-8')
+    return existing
+  }
+
+  /** 把定制分析报告追加到 source 页正文末尾（## Custom Analysis 区块），frontmatter 记录要求与时间 */
+  async appendCustomAnalysis(sourceRelPath: string, requirement: string, report: string): Promise<void> {
+    const sPath = path.join(this.vaultPath, sourceRelPath)
+    const raw = await fs.readFile(sPath, 'utf-8')
+    const parsed = matter(raw)
+    const section = `\n\n## Custom Analysis\n\n> 分析要求: ${requirement}\n\n${report.trim()}\n`
+    const body = parsed.content.trimEnd() + section
+    const fm = {
+      ...(parsed.data as Record<string, any>),
+      custom_analyzed_at: new Date().toISOString(),
+      custom_requirement: requirement
+    }
+    await fs.writeFile(sPath, matter.stringify(body, fm), 'utf-8')
   }
 
   /** 更新 wiki/overview.md 的 Health Dashboard */
@@ -295,6 +350,20 @@ export class VaultManager {
 - CLAUDE.md 每次修订时，本文件底部会自动追加变更记录。
 `,
           { type: 'system-guide', 'graph-excluded': true, updated: new Date().toISOString() }
+        ),
+        'utf-8'
+      )
+    }
+    // 分析要求 Tag 模板（拖入文件弹窗的可选项，AI 归纳维护）
+    const tagsPath = path.join(this.wikiDir, 'ANALYSIS_TAGS.md')
+    try {
+      await fs.access(tagsPath)
+    } catch {
+      await fs.writeFile(
+        tagsPath,
+        matter.stringify(
+          `# 分析要求 Tag 模板\n\n> 系统维护：AI 归纳用户的分析要求形成可复用 tag，拖拽导入弹窗中可选。用户可自由编辑/删除。\n\n## Tags\n\n（暂无）`,
+          { type: 'system-analysis-tags', 'graph-excluded': true, updated: new Date().toISOString() }
         ),
         'utf-8'
       )

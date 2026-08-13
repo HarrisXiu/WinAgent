@@ -18,7 +18,7 @@ export function createWikiTools(
       schema: {
         name: 'search_knowledge_base',
         description:
-          '在个人知识库中全文搜索笔记。支持中英文搜索，返回匹配的笔记路径、标题、摘录和相关性评分。当用户询问某主题是否在知识库中有相关资料时优先使用此工具。',
+          '在个人知识库中全文搜索笔记。支持中英文搜索，返回标题、AI 摘要与正文片段，通常可直接据此回答；信息不足时用 read_note 读全文。当用户询问某主题是否在知识库中有相关资料时优先使用此工具。',
         parameters: {
           type: 'object',
           properties: {
@@ -30,11 +30,11 @@ export function createWikiTools(
       },
       async run(a) {
         const results = searchIndex.search(str(a.query), num(a.limit, 10))
-        if (results.length === 0) return '未找到匹配的笔记。'
+        if (results.length === 0) return '未找到匹配的笔记。可尝试换关键词（同义词/英文/缩写）重试。'
         return results
           .map(
             (r, i) =>
-              `${i + 1}. **${r.title}** (路径: \`${r.path}\`, 相关度: ${r.score.toFixed(2)})\n   > ${r.snippet}`
+              `${i + 1}. **${r.title}** (路径: \`${r.path}\`, 相关度: ${r.score.toFixed(2)})${r.summary ? `\n   AI 摘要: ${r.summary}` : ''}\n   > ${r.snippet}`
           )
           .join('\n\n')
       }
@@ -43,7 +43,7 @@ export function createWikiTools(
       schema: {
         name: 'read_note',
         description:
-          '读取知识库中某篇笔记的完整内容（含元数据：标签、创建时间、AI 摘要等）。建议先用 search_knowledge_base 找到相关笔记路径，再用此工具获取全文。',
+          '读取知识库中某篇笔记的完整内容（含元数据：标签、创建时间、AI 摘要等）。建议先用 search_knowledge_base 找到相关笔记路径，需要细节时再用此工具获取全文。',
         parameters: {
           type: 'object',
           properties: {

@@ -5,6 +5,7 @@ interface IndexedDoc {
   title: string
   content: string
   tags: string
+  summary: string
 }
 
 export class SearchIndex {
@@ -34,8 +35,8 @@ export class SearchIndex {
     return [...new Set(tokens)]
   }
 
-  /** 索引一条笔记 */
-  indexNote(note: NoteMeta, content: string): void {
+  /** 索引一条笔记（summary 为 AI 摘要，检索时随结果返回便于直接回答） */
+  indexNote(note: NoteMeta, content: string, summary?: string): void {
     // 移除旧条目
     this.removeNote(note.path)
 
@@ -43,11 +44,12 @@ export class SearchIndex {
       path: note.path,
       title: note.title,
       content: content.slice(0, 50000),
-      tags: note.tags.join(' ')
+      tags: note.tags.join(' '),
+      summary: (summary || '').slice(0, 500)
     }
     this.docs.set(note.path, doc)
 
-    const tokens = this.tokenize(`${doc.title} ${doc.tags} ${doc.content}`)
+    const tokens = this.tokenize(`${doc.title} ${doc.tags} ${doc.summary} ${doc.content}`)
     for (const token of tokens) {
       let set = this.invertedIndex.get(token)
       if (!set) {
@@ -62,7 +64,7 @@ export class SearchIndex {
   removeNote(notePath: string): void {
     const doc = this.docs.get(notePath)
     if (doc) {
-      const tokens = this.tokenize(`${doc.title} ${doc.tags} ${doc.content}`)
+      const tokens = this.tokenize(`${doc.title} ${doc.tags} ${doc.summary} ${doc.content}`)
       for (const token of tokens) {
         const set = this.invertedIndex.get(token)
         if (set) {
@@ -98,16 +100,17 @@ export class SearchIndex {
       const doc = this.docs.get(path)
       const title = doc?.title || path
       const snippet = doc ? this.generateSnippet(doc.content, query) : ''
-      return { path, title, snippet, score }
+      const summary = doc?.summary || undefined
+      return { path, title, snippet, score, summary }
     })
   }
 
   /** 重建索引 */
-  async rebuild(notes: Array<{ meta: NoteMeta; content: string }>): Promise<void> {
+  async rebuild(notes: Array<{ meta: NoteMeta; content: string; summary?: string }>): Promise<void> {
     this.docs.clear()
     this.invertedIndex.clear()
     for (const note of notes) {
-      this.indexNote(note.meta, note.content)
+      this.indexNote(note.meta, note.content, note.summary)
     }
   }
 

@@ -37,7 +37,7 @@
 - **便携**：数据（`config.json`、`Logs/`）保存在 exe 同级目录
 - **Angelina 可爱主题**：《明日方舟》安洁莉娜主题界面——奶油色系 UI、动态角色立绘（左侧常驻，随对话状态切换「思考/执行工具/识别图片/回答」动作动画）、空状态 GIF 动图
 - **单一桌宠模式（Agent 能力合并）**：AI 以安洁莉娜的角色人设陪伴聊天（人设提示词可编辑），同时拥有专业 Agent 的**完整工具能力**——读文件、操作 Windows、检索知识库，系统提示词运行时自动附加工具清单，不会"拒绝访问本地文件"
-- **LLM Wiki 个人知识库（Karpathy 模式）**：基于 Andrej Karpathy `llm-wiki` 思路——**你只负责剪藏，LLM 负责理解和沉淀**。三层架构（raw 原始文件只读 / wiki 编译层 / outputs 输出），拖拽文件自动编译为 sources/concepts/entities 页面，支持概念对齐、confidence 体系、QUESTIONS 队列、LINT/REFLECT/MERGE
+- **LLM Wiki 个人知识库（Karpathy 模式）**：基于 Andrej Karpathy `llm-wiki` 思路——**你只负责剪藏，LLM 负责理解和沉淀**。三层架构（raw 原始文件只读 / wiki 编译层 / outputs 输出），拖拽文件弹出分析要求弹窗（AI 编译 + 按你的要求定制分析，要求自动归纳为可复用 tag），支持概念对齐、confidence 体系、QUESTIONS 队列、LINT/REFLECT/MERGE
 - **文档自动解析**：拖入 PDF / PPTX / DOCX / XLSX / PPT / DOC / XLS / Markdown / 文本，自动提取文本 → AI 分析 → 生成知识库页面（带进度条）；PPT 通过 Office COM 转换，旧版格式全覆盖
 - **知识库面板**：侧边滑出，文件树分层展示（📥 raw 只读 / 📚 wiki 可编辑），中缝可拖拽调整宽度，量子粒子关系图谱
 - **SKILL.md 格式支持**：除原生 `manifest.json` 外，支持 Anthropic 官方 `SKILL.md` 格式 skill，GitHub 上的 skill 可直接放入 `skills/` 目录使用
@@ -197,7 +197,7 @@ npm run build:icon # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO 图�
 ├── raw/          📥 原始文件（你拥有，AI 只读）—— 拖拽/复制文件进来自动处理
 │   ├── articles/ clippings/ images/ pdfs/ notes/ personal/
 ├── wiki/         📚 编译层（AI 维护，你可浏览/修正）
-│   ├── index.md  log.md  overview.md  QUESTIONS.md   （系统文件，自动维护）
+│   ├── index.md  log.md  overview.md  QUESTIONS.md  ANALYSIS_TAGS.md（系统文件，自动维护）
 │   ├── sources/   每篇来源的摘要页（Summary/Key Points/Concepts/Contradictions）
 │   ├── concepts/  概念页（中文 title + aliases + Evolution Log + confidence）
 │   ├── entities/  实体页（人物/工具/机构/论文）
@@ -207,9 +207,10 @@ npm run build:icon # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO 图�
 
 ### 使用方式
 
-- **剪藏**：把任何文档（PDF / PPTX / DOCX / XLSX / PPT / DOC / XLS / Markdown / 文本）拖进窗口 → 自动导入 raw/ → AI 提取文本、分析内容、生成 sources/concepts/entities 页面（带进度条）。手动复制文件到 raw/ 目录也会被自动监视编译
+- **剪藏**：把任何文档（PDF / PPTX / DOCX / XLSX / PPT / DOC / XLS / Markdown / 文本）拖进窗口 → 弹出分析要求弹窗 → AI 编译生成 sources/concepts/entities 页面（带进度条），并按你的要求定制分析（报告追加到来源页 `## Custom Analysis` 区块）。手动复制文件到 raw/ 目录也会被自动监视编译
+- **分析要求 Tag**：弹窗中可勾选历史分析 tag 快速复用常用分析方式——tag 由 AI 自动归纳（短标签 + 一句话模板），多选填入输入框后可继续编辑；也可点「直接编译入库」跳过定制分析、点「取消」放弃导入。Tag 存于 `wiki/ANALYSIS_TAGS.md`，可手动编辑/删除
 - **浏览**：点顶栏 📚 打开知识库面板——raw 层只读预览（不可变原则），wiki 层可编辑修正；文件树分层展示，中缝可拖拽调整宽度；量子粒子关系图谱可视化
-- **对话检索**：直接问"我的知识库里有什么？"/"搜索知识库中关于 X 的内容"，AI 自动调用 `search_knowledge_base` / `read_note` / `read_raw_file` 检索并溯源回答
+- **对话检索**：对话中提及知识库/笔记/wiki 内容时，AI 主动调用 `search_knowledge_base` 检索（返回标题 + AI 摘要 + 正文片段，通常可直接回答），命中不理想自动换关键词重试；需要细节时 `read_note` / `read_raw_file` 读全文，回答注明来源标题并溯源到 wiki/sources/ 具体来源页
 - **记录问题**：说"我想搞清楚 X" → 加入 QUESTIONS.md 队列，之后摄入的新来源能回答时自动提示
 - **健康检查**：说"检查知识库" → LINT 9 项检查（broken links / stub / SHA-256 完整性 / stale 等）
 - **综合分析**：说"综合分析知识库" → REFLECT 四阶段（反向检验 / 模式扫描 / 深度合成 / Gap Analysis）
@@ -218,6 +219,8 @@ npm run build:icon # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO 图�
 ### 机制亮点
 
 - **概念对齐**：新来源提取的概念与已有概念页做 slug/aliases/语义匹配，命中则更新（Evolution Log 追加"强化/修正"），不重复建页
+- **定制分析**：拖入弹窗中输入的个性化分析要求注入 AI prompt（与契约 CLAUDE.md 同轨），报告逐条回应要求、不编造、引用原文注明位置
+- **分析要求 Tag 模板**：AI 把用户的要求归纳为「短标签 + 一句话模板」持久化到 ANALYSIS_TAGS.md，下次拖入弹窗直接勾选复用
 - **confidence 体系**：1 来源 low → 3+ medium → 5+ 弹窗由你确认后晋升 high（你的主动背书，非计数器输出）
 - **possibly_outdated**：来源超过 2 年自动标注
 - **SHA-256 完整性**：每篇来源记录哈希，LINT 检测 raw 文件是否被篡改
@@ -275,6 +278,24 @@ WinAgent 拥有较高系统权限（删文件、改注册表、执行命令、�
 Electron + TypeScript + React + Vite + TailwindCSS。Windows 系统能力通过 Node `fs` 与 PowerShell 实现，**不依赖原生模块**，便于便携打包。
 
 ## 更新日志
+
+### v0.2.3（2026-08-13）
+
+**拖入分析弹窗（重构剪藏流程）**
+- 主窗口拖入文件不再无条件编译，改为弹出「分析要求」弹窗：文件列表 + 历史分析 tag 多选 + 可编辑输入框
+- 三个入口：**开始分析**（编译 + 定制分析）/ **直接编译入库**（降级，跳过定制分析）/ **取消**（放弃导入）
+- 弹窗内实时展示进度：导入 → AI 编译（sources/concepts/entities）→ 定制分析 → 归纳 tag；结果绿色卡片 5 秒渐隐消失
+- 定制分析：用户要求注入 AI prompt（与契约 CLAUDE.md 同轨），报告逐条回应要求、不编造、原文引用注明位置，追加到来源页 `## Custom Analysis` 区块（正文，可被检索）
+- 分析 Tag：AI 把每次要求归纳为「短标签 + 一句话模板」，多选填入输入框后可继续编辑；持久化于 `wiki/ANALYSIS_TAGS.md`（系统文件，可手动编辑/删除）
+
+**对话检索强化**
+- 对话中提及知识库/笔记/wiki 内容时，AI 主动调用 `search_knowledge_base` 检索（返回标题 + AI 摘要 + 正文片段，通常可直接回答）
+- 命中不理想自动换关键词（同义词/英文/缩写）重试；需要细节时 `read_note` 读全文
+- 回答注明来源笔记标题，核心结论溯源到 wiki/sources/ 具体来源页，来源矛盾时显式标注分歧
+- 检索结果随附 AI 摘要（SearchIndex 索引与检索链路扩展 summary 字段）
+
+**绿色成功提示 5 秒渐隐**
+- wiki 编译成功 toast / 主窗口处理卡片 / 独立窗口摄入提示：成功态 5 秒后淡出（300ms transition），错误提示保持常驻手动关闭
 
 ### v0.2.2（2026-08-11）
 

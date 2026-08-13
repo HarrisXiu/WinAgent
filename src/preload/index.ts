@@ -3,7 +3,8 @@ import type {
   AgentEvent, AppConfig, ToolInfo,
   NoteMeta, NoteContent, NoteData, NoteAnnotation,
   GraphData, SearchResult, TagWithCount, AISuggestion, VaultChangeEvent, IngestResult, IngestProgress,
-  BatchIngestStartResult, BatchIngestDoneResult, WorkflowResult, LintWorkflowResult
+  BatchIngestStartResult, BatchIngestDoneResult, WorkflowResult, LintWorkflowResult,
+  AnalysisTag, ImportAnalyzeResult
 } from '../shared/types'
 
 export interface AttachmentData {
@@ -122,6 +123,20 @@ const api = {
 
     importFile: (srcPath: string, targetDir?: string): Promise<string> =>
       ipcRenderer.invoke('wiki:import:file', srcPath, targetDir),
+
+    // 拖入分析流程：导入 → 编译 → 定制分析（requirement 为空 = 仅编译入库）
+    importAnalyze: (filePaths: string[], requirement: string): Promise<ImportAnalyzeResult> =>
+      ipcRenderer.invoke('wiki:import:analyze', filePaths, requirement),
+    onCustomProgress: (cb: (p: IngestProgress) => void): (() => void) => {
+      const listener = (_e: unknown, p: IngestProgress): void => cb(p)
+      ipcRenderer.on('wiki:custom:progress', listener)
+      return () => ipcRenderer.removeListener('wiki:custom:progress', listener)
+    },
+
+    // 分析要求 Tag（拖入弹窗可选项）
+    listAnalysisTags: (): Promise<AnalysisTag[]> => ipcRenderer.invoke('wiki:analysisTags:list'),
+    addAnalysisTags: (tags: AnalysisTag[]): Promise<AnalysisTag[]> =>
+      ipcRenderer.invoke('wiki:analysisTags:add', tags),
 
     listAttachments: (subDir?: string): Promise<string[]> =>
       ipcRenderer.invoke('wiki:attachments:list', subDir),

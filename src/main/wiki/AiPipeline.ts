@@ -1,4 +1,4 @@
-import type { ProviderConfig, ChatMessage, IngestAnalysis, NoteRelation } from '../../shared/types'
+import type { ProviderConfig, ChatMessage, IngestAnalysis, NoteRelation, CustomAnalysisOutput } from '../../shared/types'
 import { chatStream } from '../llm/OpenAIClient'
 
 export interface AiAnalysisResult {
@@ -176,6 +176,85 @@ ${others.map((c) => `- ${c.path}（${c.title}）`).join('\n') || '（暂无其�
       throw e instanceof Error ? e : new Error(`AI 分析失败: ${String(e)}`)
     } finally {
       this.untrack('analyze')
+    }
+  }
+
+  /**
+   * 定制分析：按用户输入的分析要求（拖入文件弹窗中填写）分析一篇已编译的 source 页。
+   * 产出弹窗摘要 + 完整报告 + 归纳的分析要求 tag（下次拖入时作为可选项复用）。
+   * @param provider LLM 提供者配置
+   * @param sourceTitle source 页标题
+   * @param sourceBody source 页正文（含 ## Summary / Key Points）
+   * @param requirement 用户分析要求原文
+   * @param contract 知识库行为契约（vault CLAUDE.md），注入后报告行为随之变化
+   */
+  async customAnalyze(
+    provider: ProviderConfig,
+    sourceTitle: string,
+    sourceBody: string,
+    requirement: string,
+    contract: string
+  ): Promise<CustomAnalysisOutput> {
+    const signal = this.track('custom')
+
+    // 契约注入：与 analyze/ingestSource 同一模板，改 CLAUDE.md → 报告行为随之变化
+    const contractRule = contract
+      ? `\n\n=== 知识库行为契约（CLAUDE.md，必须遵守）===\n${contract}`
+      : ''
+
+    const messages: ChatMessage[] = [
+      {
+        role: 'system',
+        content: `你是知识管理助手。根据用户的分析要求分析给定的来源页，输出严格合法的 JSON 对象（不要 markdown 代码块、不要多余文字）：
+{
+  "summary": "1-2 句中文，概括本次分析的结论（弹窗摘要展示）",
+  "report": "完整的 markdown 分析报告（中文，逐条满足用户要求，结构清晰）",
+  "analysisTags": [{"tag": "2-8 字短标签", "template": "一句话可复用的分析要求"}]
+}
+要求：
+- report 不编造内容，所有结论必须来自来源页；引用原文时注明所在章节
+- report 若指出该来源与其他知识内容的矛盾，明确标注分歧
+- analysisTags 归纳 1-3 个「用户本次分析要求」的短标签与一句话模板，便于下次复用同样的分析方式${contractRule}`
+      },
+      {
+        role: 'user',
+        content: `分析要求：${requirement}
+
+来源页标题：${sourceTitle}
+
+来源页内容：${truncate(sourceBody, 6000)}`
+      }
+    ]
+
+    try {
+      const result = await chatStream(provider, messages, {
+        temperature: 0.3,
+        maxTokens: 2000,
+        stream: false,
+        signal
+      })
+      const parsed = parseJsonObject(result.content)
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error(`定制分析结果无法解析为 JSON。前 200 字符: ${result.content.slice(0, 200)}`)
+      }
+      const summary = typeof (parsed as any).summary === 'string' ? String((parsed as any).summary).trim() : ''
+      const report = typeof (parsed as any).report === 'string' ? String((parsed as any).report).trim() : ''
+      if (!summary || !report) {
+        throw new Error('定制分析结果缺少 summary/report 字段')
+      }
+      const analysisTags = Array.isArray((parsed as any).analysisTags)
+        ? ((parsed as any).analysisTags as Array<{ tag?: unknown; template?: unknown }>)
+            .filter((t) => t && typeof t.tag === 'string' && typeof t.template === 'string')
+            .map((t) => ({ tag: (t.tag as string).trim().slice(0, 24), template: (t.template as string).trim() }))
+            .filter((t) => t.tag && t.template)
+            .slice(0, 3)
+        : []
+      return { summary, report, analysisTags }
+    } catch (e) {
+      // 如实报错（调用方记 analysisError，编译仍算成功）
+      throw e instanceof Error ? e : new Error(`定制分析失败: ${String(e)}`)
+    } finally {
+      this.untrack('custom')
     }
   }
 

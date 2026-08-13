@@ -20,6 +20,7 @@ interface Toast {
   id: number
   text: string
   ok: boolean
+  leaving?: boolean
 }
 
 let toastSeq = 0
@@ -45,7 +46,13 @@ export default function WikiWindowApp(): JSX.Element {
   const toast = useCallback((text: string, ok: boolean): void => {
     const id = ++toastSeq
     setToasts((prev) => [...prev, { id, text, ok }])
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 8000)
+    // 成功提示 5 秒后渐隐；失败提示 8 秒后同样渐隐（延长留驻便于看清错误）
+    const hold = ok ? 5000 : 8000
+    setTimeout(
+      () => setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, leaving: true } : t))),
+      hold
+    )
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), hold + 300)
   }, [])
 
   // ==================== 批量摄入（交互式标定） ====================
@@ -410,7 +417,9 @@ export default function WikiWindowApp(): JSX.Element {
           {toasts.map((t) => (
             <div
               key={t.id}
-              className={`rounded-xl border px-4 py-3 text-[13px] shadow-lg backdrop-blur ${
+              className={`rounded-xl border px-4 py-3 text-[13px] shadow-lg backdrop-blur transition-all duration-300 ${
+                t.leaving ? 'translate-y-2 opacity-0' : 'opacity-100'
+              } ${
                 t.ok ? 'border-success/30 bg-success/10 text-success' : 'border-danger/30 bg-danger/10 text-danger'
               }`}
             >

@@ -16,7 +16,7 @@ import { AiPipeline, type NoteType } from './wiki/AiPipeline'
 import { createWikiTools } from './tools/wikiTools'
 import { readContract, readContractSections } from './wiki/contract'
 import { runLint, runMerge, runReflect, runQuery } from './wiki/WorkflowService'
-import type { AgentEvent, AppConfig, ChatMessage, NoteData, GraphData, AISuggestion, IngestResult, IngestProgress, BatchIngestStartResult, BatchIngestDoneResult, WorkflowResult } from '../shared/types'
+import type { AgentEvent, AppConfig, ChatMessage, NoteData, GraphData, AISuggestion, IngestResult, IngestProgress, BatchIngestStartResult, BatchIngestDoneResult, WorkflowResult, AnalysisTag, CustomAnalysisOutput, ImportAnalyzeResult } from '../shared/types'
 import matter from 'gray-matter'
 
 let mainWindow: BrowserWindow | null = null
@@ -263,12 +263,12 @@ function registerWikiIpc(): void {
     if (searchIndex) {
       const notes = await vaultManager.listNotes()
       const flatNotes = flattenWikiNotes(notes)
-      const indexData: Array<{ meta: any; content: string }> = []
+      const indexData: Array<{ meta: any; content: string; summary?: string }> = []
       for (const n of flatNotes) {
         if (n.kind !== 'file' || !n.path.startsWith('wiki/')) continue
         try {
           const content = await vaultManager.readNote(n.path)
-          indexData.push({ meta: n, content: content.rawBody })
+          indexData.push({ meta: n, content: content.rawBody, summary: content.aiSummary })
         } catch { /* skip */ }
       }
       await searchIndex.rebuild(indexData)
@@ -295,7 +295,7 @@ function registerWikiIpc(): void {
       searchIndex.indexNote({
         path: note.path, title: note.title, tags: note.tags,
         created: note.created, updated: note.updated, kind: 'file'
-      }, note.rawBody)
+      }, note.rawBody, note.aiSummary)
     }
     // 异步重建图谱
     rebuildGraph().catch(() => {})
@@ -405,7 +405,7 @@ function registerWikiIpc(): void {
         created: refreshedNote.created,
         updated: refreshedNote.updated,
         kind: 'file'
-      }, refreshedNote.rawBody)
+      }, refreshedNote.rawBody, refreshedNote.aiSummary)
       rebuildGraph().catch(() => {})
 
       // 通知渲染进程（广播到所有窗口）
@@ -556,7 +556,7 @@ function registerWikiIpc(): void {
       searchIndex?.indexNote({
         path: note.path, title: note.title, tags: note.tags,
         created: note.created, updated: note.updated, kind: 'file'
-      }, note.rawBody)
+      }, note.rawBody, note.aiSummary)
       return { ok: true }
     } catch {
       return { ok: false, error: `页面不存在: wiki/${area}/${slug}.md` }
@@ -567,6 +567,27 @@ function registerWikiIpc(): void {
   ipcMain.handle('wiki:import:file', async (_e, srcPath: string, targetDir?: string) => {
     if (!vaultManager) throw new Error('Vault not initialized')
     return vaultManager.importFile(srcPath, targetDir)
+  })
+
+  // 拖入分析流程：导入 → 编译 →（有要求时）定制分析 → 归纳分析 tag
+  ipcMain.handle('wiki:import:analyze', async (_e, filePaths: string[], requirement: string): Promise<ImportAnalyzeResult> => {
+    if (!vaultManager || !aiPipeline || !searchIndex) throw new Error('Wiki 未初始化')
+    return runImportAnalyze(filePaths, requirement || '')
+  })
+
+  // === 分析要求 Tag ===
+  ipcMain.handle('wiki:analysisTags:list', async (): Promise<AnalysisTag[]> => {
+    if (!vaultManager) return []
+    return vaultManager.getAnalysisTags()
+  })
+
+  ipcMain.handle('wiki:analysisTags:add', async (_e, tags: AnalysisTag[]): Promise<AnalysisTag[]> => {
+    if (!vaultManager) throw new Error('Vault not initialized')
+    const merged = await vaultManager.addAnalysisTags(tags)
+    if (tags.length > 0) {
+      await vaultManager.appendLog(`analysis-tags | 新增 ${tags.length} 个分析要求 tag`)
+    }
+    return merged
   })
 
   // === Attachments ===
@@ -670,6 +691,11 @@ async function rebuildGraph(): Promise<void> {
 /** 推送 INGEST 进度事件到渲染进程（广播所有窗口） */
 function emitIngestProgress(p: IngestProgress): void {
   sendToWindows('wiki:ingest:progress', p)
+}
+
+/** 推送定制分析进度事件到渲染进程（广播所有窗口，复用 IngestProgress 形状） */
+function emitCustomProgress(p: IngestProgress): void {
+  sendToWindows('wiki:custom:progress', p)
 }
 
 /**
@@ -1112,7 +1138,7 @@ async function runIngest(rawRelPath: string): Promise<IngestResult> {
       searchIndex.indexNote({
         path: note.path, title: note.title, tags: note.tags,
         created: note.created, updated: note.updated, kind: 'file'
-      }, note.rawBody)
+      }, note.rawBody, note.aiSummary)
     } catch { /* skip */ }
   }
   rebuildGraph().catch(() => {})
@@ -1120,6 +1146,93 @@ async function runIngest(rawRelPath: string): Promise<IngestResult> {
 
   emitIngestProgress({ file: fileName, stage: '完成', percent: 100, done: true })
   return result
+}
+
+/**
+ * 拖入分析流程（主窗口拖拽弹窗提交后调用）：
+ * 逐文件 导入 → INGEST 编译 →（requirement 非空时）定制分析落盘，最后聚合 AI 归纳的分析 tag 持久化。
+ * 单个文件失败不影响其余文件；ingest 失败的文件保留在 raw/ 可重试。
+ */
+async function runImportAnalyze(filePaths: string[], requirement: string): Promise<ImportAnalyzeResult> {
+  if (!vaultManager || !aiPipeline || !searchIndex) throw new Error('Wiki 未初始化')
+
+  const cfg = await store.load()
+  const provider = cfg.providers.find((p) => p.id === cfg.activeProviderId) || cfg.providers[0]
+  if (!provider) throw new Error('没有可用的 AI 模型，请先在设置中配置')
+  const contract = await readContract(vaultManager.getVaultPath())
+
+  const results: ImportAnalyzeResult['files'] = []
+  const newTags: AnalysisTag[] = []
+  const confirmHighMap = new Map<string, { slug: string; title: string; sourceCount: number }>()
+
+  // Stage 1：导入（单个失败记 ingestError 继续；导入成功立即预写去重标记，抑制 fs.watch 触发的 autoIngest 双重编译）
+  const imports: Array<{ name: string; path: string; relPath: string }> = []
+  for (const p of filePaths) {
+    const name = p.split(/[\\/]/).pop() || p
+    try {
+      const relPath = await vaultManager.importFile(p)
+      recentIngests.set(relPath, Date.now())
+      imports.push({ name, path: p, relPath })
+    } catch (e) {
+      results.push({ name, ingestError: e instanceof Error ? e.message : String(e) })
+    }
+  }
+
+  // Stage 2：串行 编译 → 定制分析
+  for (const item of imports) {
+    const { name, relPath } = item
+    try {
+      const ingestResult = await runIngest(relPath)
+      // 聚合待确认 high 概念（与 batchContinue 480-486 同逻辑）
+      for (const c of ingestResult.confirmHigh ?? []) {
+        const prev = confirmHighMap.get(c.slug)
+        if (!prev || c.sourceCount > prev.sourceCount) confirmHighMap.set(c.slug, c)
+      }
+      const fileResult: ImportAnalyzeResult['files'][number] = {
+        name,
+        relPath,
+        sourcePath: ingestResult.sourcePath
+      }
+      // 定制分析：用户要求非空时执行（失败记 analysisError，编译仍算成功）
+      if (requirement.trim()) {
+        try {
+          emitCustomProgress({ file: name, stage: '定制分析…', percent: 90 })
+          const note = await vaultManager.readNote(ingestResult.sourcePath)
+          const analysis: CustomAnalysisOutput = await aiPipeline.customAnalyze(
+            provider, note.title, note.rawBody, requirement.trim(), contract
+          )
+          await vaultManager.appendCustomAnalysis(ingestResult.sourcePath, requirement.trim(), analysis.report)
+          // 重建该页索引（正文新增了 Custom Analysis 区块）
+          const refreshed = await vaultManager.readNote(ingestResult.sourcePath)
+          searchIndex.indexNote({
+            path: refreshed.path, title: refreshed.title, tags: refreshed.tags,
+            created: refreshed.created, updated: refreshed.updated, kind: 'file'
+          }, refreshed.rawBody, refreshed.aiSummary)
+          sendToWindows('wiki:vault:changed', { type: 'modify', path: ingestResult.sourcePath })
+          emitCustomProgress({ file: name, stage: '归纳分析 tag…', percent: 95 })
+          fileResult.analysis = analysis
+          if (analysis.analysisTags.length) newTags.push(...analysis.analysisTags)
+          emitCustomProgress({ file: name, stage: '完成', percent: 100, done: true })
+        } catch (e) {
+          fileResult.analysisError = e instanceof Error ? e.message : String(e)
+          emitCustomProgress({ file: name, stage: '完成', percent: 100, done: true })
+        }
+      }
+      results.push(fileResult)
+    } catch (e) {
+      results.push({ name, relPath, ingestError: e instanceof Error ? e.message : String(e) })
+    }
+  }
+
+  // Stage 3：聚合 AI 归纳的分析 tag（去重合并落盘），只返回本次真正新增的
+  let addedTags: AnalysisTag[] = []
+  if (newTags.length) {
+    const before = new Set((await vaultManager.getAnalysisTags()).map((t) => t.tag))
+    await vaultManager.addAnalysisTags(newTags)
+    addedTags = newTags.filter((t) => !before.has(t.tag))
+  }
+
+  return { files: results, newTags: addedTags, confirmHigh: Array.from(confirmHighMap.values()) }
 }
 
 /** 列出 wiki/<dir>/ 下的页面（slug + title） */
