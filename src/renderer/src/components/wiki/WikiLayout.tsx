@@ -15,7 +15,7 @@ interface Props {
    * 拖拽文件委派：独立窗口模式下由 WikiWindowApp 接管
    * （1 个走单文件快路径，多个走批量标定）。未提供时使用本组件内置逻辑。
    */
-  onDropFiles?: (files: File[]) => void
+  onDropFiles?: (files: Array<{ name: string; path: string }>) => void
 }
 
 export default function WikiLayout({ onSwitchVaultPath, compact, onDropFiles }: Props): JSX.Element {
@@ -172,58 +172,56 @@ export default function WikiLayout({ onSwitchVaultPath, compact, onDropFiles }: 
     }
   }, [wiki.currentNote?.path])
 
-  // 全局拖拽处理
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setDragOver(true)
-  }, [])
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (e.currentTarget === e.target) {
+  // Tauri 拖拽：监听原生 onDragDropEvent 转发的自定义事件
+  useEffect(() => {
+    const onDragEnter = (): void => setDragOver(true)
+    const onDragLeave = (): void => setDragOver(false)
+    const onDrop = async (e: Event): Promise<void> => {
+      const detail = (e as CustomEvent).detail as { paths: string[] }
       setDragOver(false)
-    }
-  }, [])
+      const paths = detail.paths
+      if (!paths || paths.length === 0) return
 
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setDragOver(false)
-
-    const files = e.dataTransfer.files
-    if (!files || files.length === 0) return
-
-    // 独立窗口模式：委派给 WikiWindowApp 处理（单文件快路径 / 多文件批量标定）
-    if (onDropFiles) {
-      onDropFiles(Array.from(files))
-      return
-    }
-
-    for (const file of Array.from(files)) {
-      const filePath = (file as any).path
-      if (!filePath) continue
-      try {
-        // 导入到 raw/ 分类目录
-        const relPath = await wiki.importFile(filePath)
-        // 所有源文件立即触发 INGEST（md/txt/pdf 分析内容，图片创建基础来源页）
-        setIngestMsg({ text: `正在编译 ${file.name}…`, ok: true })
-        try {
-          const result = await window.winagent.wiki.ingest(relPath)
-          const total = result.created.length + result.updated.length
-          setIngestMsg({ text: `✓ 已编译: ${result.sourcePath} + ${total} 个页面`, ok: true })
-          // 打开编译后的来源页
-          wiki.openNote(result.sourcePath)
-        } catch (err: any) {
-          console.error('INGEST 失败:', err)
-          setIngestMsg({ text: `✗ INGEST 失败: ${err.message || 'AI 分析错误'}（文件已保存在 raw/，可稍后重试）`, ok: false })
-          wiki.openNote(relPath)
-        }
-      } catch (err: any) {
-        console.error('导入文件失败:', err)
-        setIngestMsg({ text: `✗ 导入失败: ${err.message || '无法读取该文件'}`, ok: false })
+      // 独立窗口模式：委派给 WikiWindowApp 处理（单文件快路径 / 多文件批量标定）
+      if (onDropFiles) {
+        const fileObjects = paths.map((p) => {
+          const name = p.split(/[\\/]/).pop() || p
+          return { name, path: p } as any
+        })
+        onDropFiles(fileObjects)
+        return
       }
+
+      for (const p of paths) {
+        const name = p.split(/[\\/]/).pop() || p
+        try {
+          // 导入到 raw/ 分类目录
+          const relPath = await wiki.importFile(p)
+          // 所有源文件立即触发 INGEST
+          setIngestMsg({ text: `正在编译 ${name}…`, ok: true })
+          try {
+            const result = await window.winagent.wiki.ingest(relPath)
+            const total = result.created.length + result.updated.length
+            setIngestMsg({ text: `✓ 已编译: ${result.sourcePath} + ${total} 个页面`, ok: true })
+            wiki.openNote(result.sourcePath)
+          } catch (err: any) {
+            console.error('INGEST 失败:', err)
+            setIngestMsg({ text: `✗ INGEST 失败: ${err.message || 'AI 分析错误'}（文件已保存在 raw/，可稍后重试）`, ok: false })
+            wiki.openNote(relPath)
+          }
+        } catch (err: any) {
+          console.error('导入文件失败:', err)
+          setIngestMsg({ text: `✗ 导入失败: ${err.message || '无法读取该文件'}`, ok: false })
+        }
+      }
+    }
+    window.addEventListener('tauri:dragenter', onDragEnter)
+    window.addEventListener('tauri:dragleave', onDragLeave)
+    window.addEventListener('tauri:drop', onDrop)
+    return () => {
+      window.removeEventListener('tauri:dragenter', onDragEnter)
+      window.removeEventListener('tauri:dragleave', onDragLeave)
+      window.removeEventListener('tauri:drop', onDrop)
     }
   }, [wiki, onDropFiles])
 
@@ -255,9 +253,6 @@ export default function WikiLayout({ onSwitchVaultPath, compact, onDropFiles }: 
   return (
     <div
       className="flex min-h-0 flex-1 relative"
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
     >
       {/* 左侧边栏 */}
       <WikiSidebar
@@ -382,9 +377,6 @@ export default function WikiLayout({ onSwitchVaultPath, compact, onDropFiles }: 
       {dragOver && (
         <div
           className="wiki-drop-overlay"
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
         >
           <div className="text-center">
             <div className="mb-3 text-5xl">📥</div>

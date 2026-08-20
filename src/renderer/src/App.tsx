@@ -242,34 +242,39 @@ export default function App(): JSX.Element {
     { icon: Server, title: 'OpenAI / Ollama', desc: '云端 API 与本地模型无缝切换', tab: 'models' as TabKey }
   ]
 
-  // 全局拖拽 → 弹出分析要求弹窗（用户决定分析方式；取消则不导入）
-  const handleDrop = async (e: React.DragEvent): Promise<void> => {
-    e.preventDefault()
-    e.stopPropagation()
-    setDragOver(false)
-    const files = e.dataTransfer.files
-    if (!files || files.length === 0) return
-    const dropped: ImportAnalyzeFile[] = []
-    for (const file of Array.from(files)) {
-      const filePath = (file as any).path
-      if (!filePath) continue
-      dropped.push({ name: file.name, path: filePath })
+  // Tauri 拖拽：监听原生 onDragDropEvent 转发的自定义事件
+  useEffect(() => {
+    const onDragEnter = (): void => setDragOver(true)
+    const onDragLeave = (): void => setDragOver(false)
+    const onDrop = async (e: Event): Promise<void> => {
+      const detail = (e as CustomEvent).detail as { paths: string[] }
+      setDragOver(false)
+      const paths = detail.paths
+      if (!paths || paths.length === 0) return
+      const dropped: ImportAnalyzeFile[] = paths.map((p) => {
+        const name = p.split(/[\\/]/).pop() || p
+        return { name, path: p }
+      })
+      try {
+        const tags = await window.winagent.wiki.listAnalysisTags()
+        setImportDialog({ files: dropped, tags })
+      } catch {
+        setImportDialog({ files: dropped, tags: [] })
+      }
     }
-    if (dropped.length === 0) return
-    try {
-      const tags = await window.winagent.wiki.listAnalysisTags()
-      setImportDialog({ files: dropped, tags })
-    } catch {
-      setImportDialog({ files: dropped, tags: [] })
+    window.addEventListener('tauri:dragenter', onDragEnter)
+    window.addEventListener('tauri:dragleave', onDragLeave)
+    window.addEventListener('tauri:drop', onDrop)
+    return () => {
+      window.removeEventListener('tauri:dragenter', onDragEnter)
+      window.removeEventListener('tauri:dragleave', onDragLeave)
+      window.removeEventListener('tauri:drop', onDrop)
     }
-  }
+  }, [])
 
   return (
     <div
       className="flex h-full flex-col bg-bg"
-      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOver(true) }}
-      onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); if (e.currentTarget === e.target) setDragOver(false) }}
-      onDrop={handleDrop}
     >
       {/* ================= 顶栏 ================= */}
       <header className="relative z-10 flex items-center gap-2.5 border-b border-border bg-panel/70 px-4 py-2 backdrop-blur">
@@ -527,9 +532,6 @@ export default function App(): JSX.Element {
     {dragOver && (
       <div
         className="wiki-drop-overlay"
-        onDragOver={(e) => { e.preventDefault(); e.stopPropagation() }}
-        onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setDragOver(false) }}
-        onDrop={handleDrop}
       >
         <div className="text-center">
           <div className="mb-3 text-5xl">📥</div>

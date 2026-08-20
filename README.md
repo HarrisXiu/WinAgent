@@ -1,6 +1,6 @@
 # WinAgent
 
- **Windows 桌面 AI 助手**。兼容 **OpenAI 格式 API** 与 **本地 Ollama**，以《明日方舟》安洁莉娜的桌宠形象陪伴聊天，同时内置**完整 Windows 工具集**（53+ 个工具）与 **LLM Wiki 个人知识库**——你只负责剪藏，AI 负责理解和沉淀。支持 **skills（含 SKILL.md 格式）** 与 **MCP** 扩展挂载，可打包为**免安装压缩包**，在不同电脑上拷贝即用。
+ **Windows 桌面 AI 助手**（基于 **Tauri v2 + Rust** 后端）。兼容 **OpenAI 格式 API** 与 **本地 Ollama**，以《明日方舟》安洁莉娜的桌宠形象陪伴聊天，同时内置**完整 Windows 工具集**（53+ 个工具）与 **LLM Wiki 个人知识库**——你只负责剪藏，AI 负责理解和沉淀。支持 **skills（含 SKILL.md 格式）** 与 **MCP** 扩展挂载，可打包为 **MSI / NSIS 安装包**或**免安装便携版**。
 
 欢迎各位大佬的评论和指导，所有评论和邮件我都会认真阅读和回复，期待与大家交流！如有兴趣也欢迎加入此项目。
 邮箱(email):530313@qq.com;
@@ -32,9 +32,9 @@
 - **上下文压缩**：长对话自动/手动压缩，避免超出上下文窗口
 - **危险操作确认**：删除/写注册表/结束进程/执行命令/模拟输入等默认弹窗确认
 - **Ollama 兼容优化**：消息格式自动清洗（content null 处理、tool_calls 结构标准化、tool 结果补 name 字段），避免 `invalid tool call arguments` 兼容性错误
-- **API Key 加密存储**：`config.json` 中的 `apiKey` 经 Electron `safeStorage`（Windows DPAPI）加密存储（`enc:v1:` 前缀），密钥绑定当前 Windows 用户，配置文件拷到其他机器或用户无法解密；旧版明文首次启动自动升级为密文
+- **API Key 加密存储**：`config.json` 中的 `apiKey` 经 Windows DPAPI 加密存储（`enc:v1:` 前缀），密钥绑定当前 Windows 用户，配置文件拷到其他机器或用户无法解密；旧版明文首次启动自动升级为密文
 - **上下文压缩（两阶段）**：阶段一免 LLM 轻量压缩（截断旧工具结果、剥离旧图片 base64），阶段二 LLM 摘要旧消息；摘要失败自动降级，不中断对话
-- **便携**：数据（`config.json`、`Logs/`）保存在 exe 同级目录
+- **便携**：数据（`config.json`、`wiki/`）保存在 `%APPDATA%/com.winagent.app/`，遵循 Windows 应用数据规范
 - **Angelina 可爱主题**：《明日方舟》安洁莉娜主题界面——奶油色系 UI、动态角色立绘（左侧常驻，随对话状态切换「思考/执行工具/识别图片/回答」动作动画）、空状态 GIF 动图
 - **单一桌宠模式（Agent 能力合并）**：AI 以安洁莉娜的角色人设陪伴聊天（人设提示词可编辑），同时拥有专业 Agent 的**完整工具能力**——读文件、操作 Windows、检索知识库，系统提示词运行时自动附加工具清单，不会"拒绝访问本地文件"
 - **LLM Wiki 个人知识库（Karpathy 模式）**：基于 Andrej Karpathy `llm-wiki` 思路——**你只负责剪藏，LLM 负责理解和沉淀**。三层架构（raw 原始文件只读 / wiki 编译层 / outputs 输出），拖拽文件弹出分析要求弹窗（AI 编译 + 按你的要求定制分析，要求自动归纳为可复用 tag），支持概念对齐、confidence 体系、QUESTIONS 队列、LINT/REFLECT/MERGE
@@ -45,26 +45,28 @@
 
 ## 快速开始
 
-**普通用户**：从 [Releases](https://github.com/HarrisXiu/WinAgent/releases) 下载 `WinAgent-<version>-win64.zip`，解压后双击 `win-unpacked/WinAgent.exe` 即用，无需安装。首次启动会询问是否创建桌面快捷方式。
+**普通用户**：从 [Releases](https://github.com/HarrisXiu/WinAgent/releases) 下载 `WinAgent-<version>-win64.msi`（或 NSIS 安装包），双击安装即用。
 
-**开发者**（需 Node.js 18+）：
+**开发者**（需 Node.js 18+、Rust 1.77+、[Tauri CLI](https://tauri.app/start/prerequisites/)）：
 
 ```bash
 git clone https://github.com/HarrisXiu/WinAgent.git
 cd WinAgent
 npm install
-npm run dev
+npx tauri dev
 ```
+
+> Tauri CLI 会自动调用 `npm run dev`（electron-vite）启动前端开发服务器，再加载 Tauri 窗口。首次编译 Rust 后端需要较长时间。
 
 ## 打包
 
 ```bash
-npm run dist       # 生成 release/WinAgent-<version>-win64.zip（解压即用）
-npm run dist:dir   # 只生成 release/win-unpacked/ 文件夹（不压缩，调试用）
-npm run build:icon # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO 图标
+npx tauri build          # 生成 MSI + NSIS 安装包（src-tauri/target/release/bundle/）
+npx tauri build --debug  # Debug 构建（含 DevTools，调试用）
+npm run build:icon       # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO 图标
 ```
 
-**免安装便携**：解压 zip 得到 `win-unpacked/` 文件夹，拷到任意 Windows 电脑双击 `WinAgent.exe` 即可运行；`config.json` / `skills/` / `mcp.json` / `Logs/` / `wiki/`（知识库）在 exe 同级目录读写。
+**数据目录**：Tauri 遵循 Windows 规范，应用数据保存在 `%APPDATA%/com.winagent.app/`（即 `C:\Users\<用户名>\AppData\Roaming\com.winagent.app\`），包括 `config.json`、`wiki/`（知识库）等。`skills/` 和 `mcp.json` 从打包资源中加载。
 
 > ⚠ 注意：`config.json` 中包含加密的 ApiKey，请注意隐私保护。打包前请先关闭正在运行的应用（否则 exe/dll 被占用无法覆盖）。
 
@@ -228,7 +230,7 @@ npm run build:icon # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO 图�
 
 ## 配置文件
 
-`config.json`（exe 同级目录，首次运行自动生成）：
+`config.json`（`%APPDATA%/com.winagent.app/` 目录下，首次运行自动生成）：
 
 ```jsonc
 {
@@ -271,13 +273,52 @@ npm run build:icon # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO 图�
 
 WinAgent 拥有较高系统权限（删文件、改注册表、执行命令、模拟输入、访问网络）。默认对危险操作弹窗确认；请谨慎开启“自动放行”。部分操作（写 HKLM、改系统目录）需以管理员身份运行。
 
-**API Key 加密存储**：`config.json` 中的 `apiKey` 通过 Electron `safeStorage`（Windows DPAPI）加密后以 `enc:v1:` 前缀存储，密钥绑定当前 Windows 用户，配置文件拷到其他机器或用户无法解密。内存与界面中仍为明文以便正常使用；旧版明文配置首次启动自动升级为密文。解密失败（如配置被拷到其他机器）时自动清空 `apiKey`，需用户重新填写，不会泄露错误信息。
+**API Key 加密存储**：`config.json` 中的 `apiKey` 通过 Windows DPAPI 加密后以 `enc:v1:` 前缀存储，密钥绑定当前 Windows 用户，配置文件拷到其他机器或用户无法解密。内存与界面中仍为明文以便正常使用；旧版明文配置首次启动自动升级为密文。解密失败（如配置被拷到其他机器）时自动清空 `apiKey`，需用户重新填写，不会泄露错误信息。
 
 ## 技术栈
 
-Electron + TypeScript + React + Vite + TailwindCSS。Windows 系统能力通过 Node `fs` 与 PowerShell 实现，**不依赖原生模块**，便于便携打包。
+**Tauri v2**（Rust 后端）+ TypeScript + React + Vite + TailwindCSS。前端通过 `@tauri-apps/api` 的 `invoke` / `listen` 与 Rust 后端 IPC 通信。Windows 系统能力（文件操作、进程管理、注册表、输入模拟、窗口控制等）由 Rust 原生实现，无需 Node.js 运行时。文档解析（PDF / PPTX / DOCX / XLSX 等）使用纯 Rust crate（`pdf-extract`、`calamine`、`zip`），**不依赖原生 Node 模块**，便于便携打包。
 
 ## 更新日志
+
+### v0.3.0（2026-08-15）
+
+**从 Electron 迁移至 Tauri v2**
+- 整体架构从 Electron（Node.js 后端）迁移至 **Tauri v2**（Rust 后端），前端保持 React + Vite + TailwindCSS 不变
+- IPC 通信从 Electron `contextBridge` / `ipcMain` 改为 Tauri `invoke` / `listen`，前端通过 `tauri-bridge.ts` 适配层保持 `window.winagent` API 兼容
+- 配置 Tauri ACL 权限（`src-tauri/capabilities/default.json`），为核心 IPC、事件、对话框、文件系统、shell 操作授予最小权限
+- 数据目录从 exe 同级改为 `%APPDATA%/com.winagent.app/`，遵循 Windows 应用数据规范
+- 打包格式从 zip（解压即用）改为 MSI / NSIS 安装包（Tauri bundler）
+
+**拖拽功能修复（Tauri 原生拖放）**
+- 从 Electron 的 HTML5 `File.path` 方案改为 **Tauri 原生 `onDragDropEvent`**，在 `tauri.conf.json` 中启用 `dragDropEnabled: true`
+- `tauri-bridge.ts` 拦截 Tauri 拖放事件并派发 `tauri:dragenter` / `tauri:drop` / `tauri:dragleave` 自定义 DOM 事件
+- `App.tsx` 和 `WikiLayout.tsx` 监听自定义事件，使用 Tauri 返回的文件路径字符串替代 `File` 对象
+- 知识库窗口拖放同步适配，`WikiWindowApp.tsx` 的 `handleDropFiles` / `handleFilesPicked` 改为接收 `{name, path}` 对象
+
+**白屏问题修复**
+- 根因：前端缺少 Tauri IPC 桥接层，`window.winagent` API 未定义导致 React 渲染崩溃
+- 修复：在 `main.tsx` 中于 React 渲染前导入 `tauri-bridge.ts`，确保 `window.winagent` 在组件挂载前就绪
+- 调整 CSP 配置以允许 Tauri 协议资源加载
+
+**对话与知识库功能修复**
+- 根因一：缺少 Tauri v2 ACL 权限声明，`invoke` / `listen` 调用被安全策略拦截 → 新建 `capabilities/default.json` 授予 `core:default`、`dialog:default`、`shell:default`、`fs:default` 等权限
+- 根因二：`ToolRegistry::initialize()` 未被调用，`AgentService` 使用独立的空注册表 → 改为共享 `Arc<ToolRegistry>`，在 `lib.rs` setup 阶段初始化并注入
+- 根因三：`VaultManager::initialize()` 未调用，知识库目录结构不存在 → setup 阶段自动初始化 vault
+- 根因四：`SearchIndex` 和 `GraphEngine` 启动时未构建，搜索和图谱为空 → 从磁盘笔记重建索引与图
+- wiki 工具注册移入 `ToolRegistry::initialize()` 内部，避免 `lib.rs` 访问私有类型
+
+**AI 分析管线优化**
+- **无死锁取消**：`AiPipeline` 从 `Mutex<AiPipeline>` 改为 `Arc<AiPipeline>`（内部可变），配合 `tokio::sync::watch` 单调 epoch 实现非阻塞取消——取消请求可以立即送达正在运行的分析任务，不会因 Mutex 锁竞争而死锁
+- **guarded 任务竞速**：每个分析步骤用 `guarded()` 包装，在任务完成与取消信号之间竞速，取消时立即返回 `Cancelled` 错误
+- **JSON 解析鲁棒性**：`complete_json` 函数处理 LLM 输出中常见的 prose 包裹、markdown 代码块围栏；`extract_json_object` 用括号配对提取 JSON 主体；解析失败时发起一轮 **repair 请求** 让 LLM 修正格式
+- **UTF-8 安全截断**：`snippet` / `clip_body` 函数按字符边界截断多字节字符串，避免 panic
+- **数据验证与清洗**：
+  - `normalize_tags`：trim、去重、限制 3-8 个标签、每个 2-8 字符
+  - `sanitize_relations`：验证 relation target 必须逐字匹配候选笔记路径，过滤 LLM 编造的路径
+  - `slug_list` / `str_array`：统一处理 LLM 返回的数组字段，容错字符串与数组混用
+  - `dedupe_nonempty`：去除空字符串与重复项
+- 批量摄入中止（`batch_abort`）正确调用 `AiPipeline::cancel()`，而非无效的标志位
 
 ### v0.2.3（2026-08-13）
 

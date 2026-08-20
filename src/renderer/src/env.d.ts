@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import type { WinAgentApi } from '../../preload'
+import type { WinAgentApi } from './tauri-bridge'
 
 declare global {
   interface Window {

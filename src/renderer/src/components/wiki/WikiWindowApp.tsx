@@ -73,11 +73,11 @@ export default function WikiWindowApp(): JSX.Element {
   }, [wiki, toast])
 
   /** 文件选择器批量摄入 */
-  const handleFilesPicked = useCallback(async (files: FileList | File[] | null): Promise<void> => {
+  const handleFilesPicked = useCallback(async (files: FileList | File[] | Array<{ name: string; path: string }> | null): Promise<void> => {
     if (!files || files.length === 0) return
     const relPaths: string[] = []
-    for (const f of Array.from(files)) {
-      const filePath = (f as any).path
+    for (const f of Array.from(files) as Array<any>) {
+      const filePath = f.path
       if (!filePath) continue
       try {
         relPaths.push(await wiki.importFile(filePath))
@@ -89,11 +89,11 @@ export default function WikiWindowApp(): JSX.Element {
   }, [wiki, toast, startBatch])
 
   /** 拖拽委派（WikiLayout handleDrop 转交）：1 个走单文件快路径，多个走批量标定 */
-  const handleDropFiles = useCallback(async (files: File[]): Promise<void> => {
+  const handleDropFiles = useCallback(async (files: Array<{ name: string; path: string }>): Promise<void> => {
     if (!files || files.length === 0) return
     if (files.length === 1) {
       const f = files[0]
-      const filePath = (f as any).path
+      const filePath = f.path
       if (!filePath) return
       try {
         const relPath = await wiki.importFile(filePath)

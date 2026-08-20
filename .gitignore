@@ -12,3 +12,6 @@ Angelina/
 
 # 知识库 vault 目录（运行时生成，不提交）
 /wiki/
+
+# Tauri build artifacts
+src-tauri/target/
