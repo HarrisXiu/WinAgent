@@ -106,23 +106,108 @@ pub fn default_config() -> AppConfig {
     }
 }
 
-/// Encrypt API key using Windows DPAPI
+/// Encrypt API key using Windows DPAPI (CryptProtectData).
+/// Returns "enc:v1:" + base64(ciphertext), or empty string if input is empty.
 fn encrypt_key(plain: &str) -> String {
     if plain.is_empty() {
         return String::new();
     }
-    // For now, store as plain text. DPAPI integration will be added later.
-    // TODO: implement DPAPI via windows crate
-    plain.to_string()
+    match dpapi_encrypt(plain.as_bytes()) {
+        Ok(cipher) => format!("{}{}", ENC_PREFIX, cipher),
+        Err(e) => {
+            log::error!("[Config] DPAPI encrypt failed: {}, storing plaintext as fallback", e);
+            plain.to_string()
+        }
+    }
 }
 
-/// Decrypt API key
+/// Decrypt API key. If the stored value does not start with ENC_PREFIX, return as-is (plaintext).
 fn decrypt_key(stored: &str) -> String {
+    use base64::Engine;
+    if stored.is_empty() {
+        return String::new();
+    }
     if !stored.starts_with(ENC_PREFIX) {
+        // Plaintext (old config or encrypt fallback) — return as-is
         return stored.to_string();
     }
-    // TODO: implement DPAPI decryption
-    String::new()
+    let b64 = &stored[ENC_PREFIX.len()..];
+    match base64::engine::general_purpose::STANDARD.decode(b64) {
+        Ok(cipher) => match dpapi_decrypt(&cipher) {
+            Ok(plain_bytes) => String::from_utf8_lossy(&plain_bytes).into_owned(),
+            Err(e) => {
+                log::error!("[Config] DPAPI decrypt failed: {}, clearing key", e);
+                String::new()
+            }
+        },
+        Err(e) => {
+            log::error!("[Config] base64 decode failed: {}, clearing key", e);
+            String::new()
+        }
+    }
+}
+
+fn dpapi_encrypt(plain: &[u8]) -> Result<String, String> {
+    use windows::Win32::Security::Cryptography::{CryptProtectData, CRYPT_INTEGER_BLOB};
+    use windows::Win32::Foundation::LocalFree;
+    use base64::Engine;
+
+    let mut data = plain.to_vec();
+    let blob = CRYPT_INTEGER_BLOB {
+        cbData: data.len() as u32,
+        pbData: data.as_mut_ptr(),
+    };
+
+    unsafe {
+        let mut out_blob = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
+        CryptProtectData(
+            &blob,
+            windows::core::PCWSTR::null(),
+            None,
+            None,
+            None,
+            0,
+            &mut out_blob,
+        )
+        .map_err(|e| format!("CryptProtectData: {}", e))?;
+
+        let cipher = std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
+
+        let _ = LocalFree(windows::Win32::Foundation::HLOCAL(out_blob.pbData as *mut core::ffi::c_void));
+
+        Ok(base64::engine::general_purpose::STANDARD.encode(&cipher))
+    }
+}
+
+fn dpapi_decrypt(cipher: &[u8]) -> Result<Vec<u8>, String> {
+    use windows::Win32::Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB};
+    use windows::Win32::Foundation::LocalFree;
+
+    let mut data = cipher.to_vec();
+    let blob = CRYPT_INTEGER_BLOB {
+        cbData: data.len() as u32,
+        pbData: data.as_mut_ptr(),
+    };
+
+    unsafe {
+        let mut out_blob = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
+        CryptUnprotectData(
+            &blob,
+            None,
+            None,
+            None,
+            None,
+            0,
+            &mut out_blob,
+        )
+        .map_err(|e| format!("CryptUnprotectData: {}", e))?;
+
+        let plain = std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
+
+        let _ = LocalFree(windows::Win32::Foundation::HLOCAL(out_blob.pbData as *mut core::ffi::c_void));
+
+        Ok(plain)
+    }
 }
 
 #[derive(Clone)]

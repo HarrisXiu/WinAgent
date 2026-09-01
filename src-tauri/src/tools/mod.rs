@@ -8,6 +8,7 @@ pub mod docx_tools;
 pub mod image_tools;
 pub mod registry_tools;
 pub mod wiki_tools;
+pub mod pdf_tools;
 
 use crate::types::{AppConfig, ToolInfo, ToolSchema};
 use std::collections::HashMap;
@@ -60,9 +61,11 @@ impl ToolRegistry {
         all.extend(docx_tools::create());
         all.extend(image_tools::create());
         all.extend(wiki_tools::create());
+        all.extend(pdf_tools::create());
         all.extend(self.wiki_tools.lock().unwrap().iter().cloned().collect::<Vec<_>>());
 
-        for entry in all {
+        for mut entry in all {
+            entry.source = "builtin".to_string();
             tools.insert(entry.schema.name.clone(), entry);
         }
 

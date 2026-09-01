@@ -529,9 +529,7 @@ fn extract_text(path: &std::path::Path) -> Result<String, String> {
             std::fs::read_to_string(path).map_err(|e| e.to_string())
         }
         "pdf" => {
-            // Try pdf-extract
-            let data = std::fs::read(path).map_err(|e| e.to_string())?;
-            pdf_extract::extract_text_from_mem(&data).map_err(|e| e.to_string())
+            extract_pdf_text(path)
         }
         "docx" => {
             extract_docx_text(path)
@@ -547,6 +545,43 @@ fn extract_text(path: &std::path::Path) -> Result<String, String> {
             })
         }
     }
+}
+
+fn extract_pdf_text(path: &std::path::Path) -> Result<String, String> {
+    let py_script = r#######"
+import sys
+try:
+    import pymupdf
+except ImportError:
+    try:
+        import fitz as pymupdf
+    except ImportError:
+        print("ERROR: PyMuPDF not installed")
+        sys.exit(1)
+doc = pymupdf.open(sys.argv[1])
+parts = []
+for page in doc:
+    parts.append(page.get_text())
+doc.close()
+print("\n".join(parts))
+"#######;
+    let path_str = path.to_string_lossy().to_string();
+    let attempts: [&str; 2] = ["python", r"C:\Users\53031\AppData\Local\Programs\Python\Python312\python.exe"];
+    let mut last_err = String::new();
+    for py in attempts {
+        match std::process::Command::new(py).args(["-c", py_script, &path_str]).output() {
+            Ok(o) if o.status.success() => {
+                return Ok(String::from_utf8_lossy(&o.stdout).trim().to_string());
+            }
+            Ok(o) => {
+                last_err = String::from_utf8_lossy(&o.stderr).to_string();
+            }
+            Err(e) => {
+                last_err = e.to_string();
+            }
+        }
+    }
+    Err(format!("PDF 解析失败（Python/PyMuPDF 不可用）: {}", last_err))
 }
 
 fn extract_docx_text(path: &std::path::Path) -> Result<String, String> {
