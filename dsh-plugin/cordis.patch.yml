@@ -1,0 +1,5 @@
+# dsh-winagent bundle patch —— 把 WinAgent 插件挂载进 DSH Web profile 的配置树。
+# 条目名使用裸包名：加载器从 profile 的 node_modules 解析到本包的 main（lib/index.js）。
+- insert:
+    - id: dsh-winagent
+      name: dsh-winagent

@@ -1,0 +1,14 @@
+{
+  "name": "hello_skill",
+  "description": "示例 skill：接收 name 参数并返回问候语。演示本地脚本插件如何被注册为工具。",
+  "runtime": "node",
+  "entry": "index.js",
+  "dangerous": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string", "description": "要问候的名字" }
+    },
+    "required": ["name"]
+  }
+}

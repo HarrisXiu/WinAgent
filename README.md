@@ -42,6 +42,7 @@
 - **知识库面板**：侧边滑出，文件树分层展示（📥 raw 只读 / 📚 wiki 可编辑），中缝可拖拽调整宽度，量子粒子关系图谱
 - **SKILL.md 格式支持**：除原生 `manifest.json` 外，支持 Anthropic 官方 `SKILL.md` 格式 skill，GitHub 上的 skill 可直接放入 `skills/` 目录使用
 - **图片生成提示词**：`generate_image_prompt` 工具——需要图片时生成可直接复制到 Midjourney / Stable Diffusion / 即梦AI 的绘图 Prompt（支持 17 种风格、6 种宽高比），不编造图片
+- **DSH 插件版（dsh-winagent）**：同一套 Agent 能力以插件形式装进 DeepSeek Harness（`dsh plugin --profile web add` 一条命令安装，详见下文「DSH 插件版」），在 DSH Web 界面里直接使用，无需桌面壳
 
 ## 快速开始
 
@@ -278,6 +279,39 @@ WinAgent 拥有较高系统权限（删文件、改注册表、执行命令、�
 ## 技术栈
 
 **Tauri v2**（Rust 后端）+ TypeScript + React + Vite + TailwindCSS。前端通过 `@tauri-apps/api` 的 `invoke` / `listen` 与 Rust 后端 IPC 通信。Windows 系统能力（文件操作、进程管理、注册表、输入模拟、窗口控制等）由 Rust 原生实现，无需 Node.js 运行时。文档解析（PDF / PPTX / DOCX / XLSX 等）使用纯 Rust crate（`pdf-extract`、`calamine`、`zip`），**不依赖原生 Node 模块**，便于便携打包。
+
+## DSH 插件版（dsh-winagent）
+
+把 WinAgent 的完整 Agent 能力做成 DeepSeek Harness（DSH）Web 插件：**OpenAI 兼容 API / 本地 Ollama + 53+ Windows 工具 + skills + MCP + LLM Wiki 知识库**，装在 DSH Web 界面里直接使用。插件代码在仓库的 [`dsh-plugin/`](./dsh-plugin) 目录，数据目录为 `$DSH_HOME/winagent/`。
+
+### 安装
+
+```powershell
+# 本地链接安装（开发）：在 dsh 所在环境执行
+dsh plugin --profile web add link:<本仓库绝对路径>\dsh-plugin
+# 或发布 npm 后：
+dsh plugin --profile web add dsh-winagent
+# 或从 GitHub 安装（本仓库发布后）：
+dsh plugin --profile web add github:HarrisXiu/WinAgent
+```
+
+安装完成后**重启 dsh web**，浏览器 **F5 刷新**：页面右下角出现 **WinAgent** 悬浮按钮，点击打开插件界面；插件也会出现在 DSH「设置 → 插件」清单里。
+
+### 功能
+
+- 聊天界面：流式输出、思维链折叠、工具调用卡片、危险操作确认弹窗、图片/文本附件、视觉辅助
+- 设置：Provider 管理（OpenAI 兼容 / Ollama）、请求行为、深度思考、危险工具放行、人设提示词、skills / mcp / vault 路径
+- 知识库：文件树、全文搜索、编辑、URL 导入、上传文件自动编译入库（LLM Wiki）、LINT / REFLECT 工作流
+- 工具：53+ 内置 Windows 工具 + skills（manifest.json / SKILL.md）+ MCP（stdio / HTTP）挂载
+
+### 开发
+
+```powershell
+cd dsh-plugin
+npx tsc -p tsconfig.json   # 或仓库根目录 npm run plugin:build
+```
+
+> 说明：桌面版的个性化桌宠主题不在插件范围内；人设提示词仍可在插件设置中自由修改。插件运行在 dsh web 进程内，以当前 Windows 用户权限执行工具，危险操作默认弹窗确认。
 
 ## 更新日志
 

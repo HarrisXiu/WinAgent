@@ -7,6 +7,9 @@ Logs/
 *.log
 .DS_Store
 
+# AI 辅助研究中间产物（不提交）
+.plugin-work/
+
 # Angelina 原始素材目录（版权素材，不提交；应用所需素材已在 src/renderer/src/assets/angelina/）
 Angelina/
 

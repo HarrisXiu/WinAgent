@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WinAgent · Windows 操作 Agent</title>
+  <link rel="stylesheet" href="/winagent/assets/app.css">
+</head>
+<body>
+  <div id="app">
+    <header id="hd">
+      <div class="brand">
+        <span class="logo">🖥️</span>
+        <div class="brand-text">
+          <b>WinAgent</b>
+          <span class="sub">Windows 操作 Agent · DSH 插件</span>
+        </div>
+      </div>
+      <div class="hd-mid">
+        <select id="provider-select" title="Provider"></select>
+        <select id="model-select" title="模型"></select>
+        <button id="btn-models" class="ghost" title="拉取模型列表">⟳</button>
+        <span id="usage" class="usage" title="本会话 token 统计">0 tok</span>
+        <span id="status" class="status"></span>
+      </div>
+      <div class="hd-right">
+        <button id="btn-tools" class="ghost">工具</button>
+        <button id="btn-settings" class="ghost">设置</button>
+        <button id="btn-wiki" class="ghost">知识库</button>
+        <button id="btn-compact" class="ghost">压缩</button>
+        <button id="btn-reset" class="ghost">新会话</button>
+      </div>
+    </header>
+
+    <main id="chat">
+      <div id="empty-hint">
+        <h2>WinAgent</h2>
+        <p>一个能操作你 Windows 电脑的 Agent：读文件、改注册表、管进程、模拟输入、做 Word 文档、检索知识库……</p>
+        <p class="dim">危险操作（删除 / 写注册表 / 结束进程 / 执行命令 / 模拟输入）默认会弹窗确认。</p>
+      </div>
+    </main>
+
+    <div id="inputbar">
+      <button id="btn-attach" title="添加附件（图片/文本）">📎</button>
+      <input type="file" id="filepick" multiple hidden>
+      <div id="attach-chips"></div>
+      <textarea id="input" rows="1" placeholder="给 WinAgent 下指令…（Enter 发送，Shift+Enter 换行）"></textarea>
+      <button id="btn-send">发送</button>
+      <button id="btn-stop" class="danger" hidden>停止</button>
+    </div>
+
+    <aside id="panel" class="hidden">
+      <div id="panel-head"><span id="panel-title">面板</span><button id="panel-close">✕</button></div>
+      <div id="panel-body"></div>
+    </aside>
+
+    <div id="confirm-overlay" class="hidden">
+      <div class="confirm-box">
+        <h3>⚠ 危险操作确认</h3>
+        <p class="confirm-name" id="confirm-name"></p>
+        <pre id="confirm-args"></pre>
+        <label class="auto"><input type="checkbox" id="confirm-auto"> 之后全部自动放行（可在设置中关闭）</label>
+        <div class="confirm-btns">
+          <button id="confirm-deny" class="danger">拒绝</button>
+          <button id="confirm-ok">允许</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="hidden"></div>
+  </div>
+  <script src="/winagent/assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+{
+  "name": "dsh-winagent",
+  "version": "0.1.0",
+  "description": "WinAgent 的 DSH Web 插件：在 DSH 里使用 Windows 操作 Agent（OpenAI 兼容 API / 本地 Ollama，53+ Windows 工具，skills 与 MCP 挂载，LLM Wiki 个人知识库）",
+  "author": "WinAgent",
+  "license": "MIT",
+  "main": "lib/index.js",
+  "files": [
+    "lib",
+    "assets",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "gray-matter": "^4.0.3",
+    "jszip": "^3.10.1",
+    "mathml2omml": "^0.5.0",
+    "pdf-parse": "^1.1.1",
+    "temml": "^0.13.3",
+    "word-extractor": "^1.0.4",
+    "xlsx": "^0.18.5"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
