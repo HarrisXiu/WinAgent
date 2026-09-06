@@ -1,5 +1,6 @@
 import type { ProviderConfig, ChatMessage, IngestAnalysis, NoteRelation, CustomAnalysisOutput } from '../shared/types'
 import { chatStream } from '../llm/OpenAIClient'
+import { Logger } from '../util/Logger'
 
 export interface AiAnalysisResult {
   tags: string[]
@@ -32,6 +33,8 @@ export interface AnalyzeOptions {
   contract?: string
   /** 开放问题列表（QUESTIONS.md）：判断本笔记能否回答，能回答的原样复制进 suggestions */
   openQuestions?: string[]
+  /** 笔记 frontmatter 关键标量（entity_type/confidence/source_count 等）：模型据此检查字段合理性 */
+  frontmatter?: Record<string, unknown>
 }
 
 /** 各类型笔记的定制审查规则 */
@@ -56,14 +59,16 @@ const TYPE_RULES: Record<NoteType, string> = {
 export class AiPipeline {
   /**
    * 进行中的操作 → 独立 AbortController。
-   * analyze 与 ingestSource 各占一个 key，并发互不覆盖；cancel() 只取消 analyze，不会误杀 ingest。
+   * analyze / custom / ingest 各占一个 key，并发互不覆盖。
    */
   private controllers = new Map<string, AbortController>()
 
-  /** 取消正在进行的 AI 分析（不影响 INGEST） */
+  /** 取消全部进行中的 AI 操作（analyze/custom/ingest 一网打尽，供用户主动中止） */
   cancel(): void {
-    this.controllers.get('analyze')?.abort()
-    this.controllers.delete('analyze')
+    for (const [key, controller] of this.controllers) {
+      controller.abort()
+      this.controllers.delete(key)
+    }
   }
 
   /** 注册一个新操作并返回其 signal；同 key 已有进行中的请求先取消（防连点） */
@@ -97,6 +102,16 @@ export class AiPipeline {
     const signal = this.track('analyze')
     const { noteType = 'note', contract = '', openQuestions = [] } = opts
 
+    // frontmatter 关键标量序列化为一行（entity_type 等字段在 frontmatter 中，正文看不到）
+    const fmScalars = opts.frontmatter
+      ? Object.entries(opts.frontmatter)
+          .filter(([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
+          .slice(0, 8)
+      : []
+    const frontmatterLine = fmScalars.length
+      ? `\n当前笔记 frontmatter 关键字段：${fmScalars.map(([k, v]) => `${k}=${v}`).join(', ')}`
+      : ''
+
     // 候选去重 + 过滤空路径（当前笔记自身由调用方排除）
     const seen = new Set<string>()
     const others = candidates.filter((c) => c.path && !seen.has(c.path) && !!seen.add(c.path))
@@ -127,27 +142,28 @@ export class AiPipeline {
 }
 要求：
 - relations 取 0-5 条；没有明显相关的候选时返回空数组
-- relations 的 target 必须逐字取自下方候选列表中的「路径」列，禁止编造或改写
+- relations 的 target 必须逐字复制下方候选列表每行「- 」之后、「（标题」之前的路径部分，禁止编造或改写
 - suggestions 类型示例：正文过短（stub，<100 字）建议补充内容、缺少 [[source-slug]] 溯源、正文可回答开放问题（写问题原文）、与某笔记存在矛盾（写原因）
 - tags 示例：["机器学习", "神经网络", "AI", "教程"]${typeRule}${questionRule}${contractRule}`
       },
       {
         role: 'user',
-        content: `当前笔记标题：${title}
+        content: `当前笔记标题：${title}${frontmatterLine}
 当前笔记内容：${truncate(body, 4000)}
 
-知识库中其他笔记（路径（标题））：
-${others.map((c) => `- ${c.path}（${c.title}）`).join('\n') || '（暂无其他笔记）'}`
+知识库中其他笔记（每行格式：- 路径（标题: xxx））：
+${others.map((c) => `- ${c.path}（标题: ${c.title}）`).join('\n') || '（暂无其他笔记）'}`
       }
     ]
 
     try {
       const result = await chatStream(provider, messages, {
         temperature: 0.3,
-        maxTokens: 1000,
+        maxTokens: 1200,
         stream: false,
         signal
       })
+      assertNotTruncated(result, 'AI 分析')
       const parsed = parseJsonObject(result.content)
       if (!parsed || typeof parsed !== 'object') {
         throw new Error(`AI 分析结果无法解析为 JSON。前 200 字符: ${result.content.slice(0, 200)}`)
@@ -165,7 +181,12 @@ ${others.map((c) => `- ${c.path}（${c.title}）`).join('\n') || '（暂无其�
               target: (r.target as string).trim(),
               reason: typeof r.reason === 'string' ? r.reason.trim() : ''
             }))
-            .filter((r) => candidateMap.has(r.target.toLowerCase()))
+            .filter((r) => {
+              if (candidateMap.has(r.target.toLowerCase())) return true
+              // 编造的 target 不静默丢弃：记日志便于发现模型对齐问题
+              Logger.warn(`[AiPipeline] relations 编造 target 已过滤: "${r.target}"（不在候选列表中）`)
+              return false
+            })
             .map((r) => ({ ...r, title: candidateMap.get(r.target.toLowerCase())!.title }))
             .slice(0, 5)
         : []
@@ -187,19 +208,25 @@ ${others.map((c) => `- ${c.path}（${c.title}）`).join('\n') || '（暂无其�
    * @param sourceBody source 页正文（含 ## Summary / Key Points）
    * @param requirement 用户分析要求原文
    * @param contract 知识库行为契约（vault CLAUDE.md），注入后报告行为随之变化
+   * @param existingTags 已有分析要求 tag（ANALYSIS_TAGS.md）：新 tag 与已有语义一致时复用其名称
    */
   async customAnalyze(
     provider: ProviderConfig,
     sourceTitle: string,
     sourceBody: string,
     requirement: string,
-    contract: string
+    contract: string,
+    existingTags: Array<{ tag: string; template: string }> = []
   ): Promise<CustomAnalysisOutput> {
     const signal = this.track('custom')
 
     // 契约注入：与 analyze/ingestSource 同一模板，改 CLAUDE.md → 报告行为随之变化
     const contractRule = contract
       ? `\n\n=== 知识库行为契约（CLAUDE.md，必须遵守）===\n${contract}`
+      : ''
+    // 已有 tag 模板注入：让归纳的 tag 优先复用既有名称（复用闭环）
+    const existingTagsRule = existingTags.length
+      ? `\n\n=== 已有分析要求 tag（本次归纳的 tag 与已有语义一致时，必须复用其 tag 名） ===\n${existingTags.map((t) => `- ${t.tag}（${t.template}）`).join('\n')}`
       : ''
 
     const messages: ChatMessage[] = [
@@ -214,7 +241,7 @@ ${others.map((c) => `- ${c.path}（${c.title}）`).join('\n') || '（暂无其�
 要求：
 - report 不编造内容，所有结论必须来自来源页；引用原文时注明所在章节
 - report 若指出该来源与其他知识内容的矛盾，明确标注分歧
-- analysisTags 归纳 1-3 个「用户本次分析要求」的短标签与一句话模板，便于下次复用同样的分析方式${contractRule}`
+- analysisTags 归纳 1-3 个「用户本次分析要求」的短标签与一句话模板，便于下次复用同样的分析方式${existingTagsRule}${contractRule}`
       },
       {
         role: 'user',
@@ -233,6 +260,7 @@ ${others.map((c) => `- ${c.path}（${c.title}）`).join('\n') || '（暂无其�
         stream: false,
         signal
       })
+      assertNotTruncated(result, '定制分析')
       const parsed = parseJsonObject(result.content)
       if (!parsed || typeof parsed !== 'object') {
         throw new Error(`定制分析结果无法解析为 JSON。前 200 字符: ${result.content.slice(0, 200)}`)
@@ -321,6 +349,7 @@ ${others.map((c) => `- ${c.path}（${c.title}）`).join('\n') || '（暂无其�
   "language": "来源写作语言代码（zh/en/ja/…，无法判断则省略）",
   "canonicalSource": "若本来源是译文/转述/转载，填原始出处（URL 或标题）；原创来源省略该字段"
 }
+数量要求：concepts 提取 3-8 个（仅提取文中实际出现的核心概念，不足 3 个时按实际数量）；entities 0-6 个；keyPoints 3-8 条。
 ${personalRule}
 概念对齐规则（重要）：
 - 下方提供了知识库中已有概念列表（slug + 中文名 + aliases）
@@ -348,15 +377,17 @@ ${questionList}
     try {
       const result = await chatStream(provider, messages, {
         temperature: 0.3,
-        maxTokens: 3000,
+        maxTokens: 4000,
         stream: false,
         signal
       })
+      assertNotTruncated(result, 'INGEST 分析')
       const parsed = parseJsonObject(result.content)
       if (!parsed) {
-        console.warn('[AiPipeline] INGEST LLM 输出无法解析为 JSON，将使用空兜底。前 200 字符:', result.content.slice(0, 200))
+        // 契约 §9：失败必须如实报错，不得静默吞掉（静默空兜底会写出「(无摘要)」的坏页）
+        throw new Error(`LLM 输出无法解析为 JSON。前 200 字符: ${result.content.slice(0, 200)}`)
       }
-      return sanitizeIngest(parsed ?? {})
+      return sanitizeIngest(parsed)
     } catch (e) {
       throw new Error(`INGEST 分析失败: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
@@ -371,8 +402,15 @@ function truncate(text: string, maxLen: number): string {
   return text.slice(0, maxLen) + '\n\n...（内容已截断）'
 }
 
-/** 从 LLM 返回中解析 JSON 对象 */
-function parseJsonObject(text: string): any | null {
+/** LLM 输出被 maxTokens 截断时如实报错（契约 §9：失败必须报错，不得静默吞掉） */
+function assertNotTruncated(result: { finishReason?: string }, label: string): void {
+  if (result.finishReason === 'length') {
+    throw new Error(`${label}输出被 maxTokens 截断，结果不完整。请调大 maxTokens 后重试`)
+  }
+}
+
+/** 从 LLM 返回中解析 JSON 对象（直接 parse → ```json 代码块 → 首个 {...}，三级兜底；WorkflowService 等处复用） */
+export function parseJsonObject(text: string): any | null {
   if (!text) return null
   // 直接解析
   try {
@@ -417,7 +455,7 @@ function sanitizeIngest(raw: any): IngestAnalysis {
       .replace(/^-|-$/g, '') || 'untitled',
     title: str(raw.title, '未命名来源'),
     summary: str(raw.summary),
-    keyPoints: strArr(raw.keyPoints),
+    keyPoints: strArr(raw.keyPoints).slice(0, 8),
     concepts: (concepts as any[])
       .filter((c: any) => c && typeof c.name === 'string' && c.name.trim())
       .map((c: any) => ({
@@ -426,7 +464,7 @@ function sanitizeIngest(raw: any): IngestAnalysis {
         definition: str(c.definition),
         matchSlug: str(c.matchSlug, undefined as any) || undefined
       }))
-      .slice(0, 10),
+      .slice(0, 8),
     entities: (entities as any[])
       .filter((e: any) => e && typeof e.name === 'string' && e.name.trim())
       .map((e: any) => ({
@@ -435,7 +473,7 @@ function sanitizeIngest(raw: any): IngestAnalysis {
         description: str(e.description),
         matchSlug: str(e.matchSlug, undefined as any) || undefined
       }))
-      .slice(0, 10),
+      .slice(0, 6),
     contradictions: strArr(raw.contradictions),
     answeredQuestions: strArr(raw.answeredQuestions),
     language: str(raw.language, undefined as any) || undefined,

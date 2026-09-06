@@ -13,8 +13,11 @@ import type { AgentService } from './agent/AgentService'
 import { EventBus } from './event-bus'
 import { WikiHost } from './wiki/wiki-host'
 import { createWikiTools } from './tools/wikiTools'
+import { KnowledgeRetriever } from './wiki/KnowledgeRetriever'
+import { seedDataDir } from './bootstrap'
 import { fetchModels } from './llm/OpenAIClient'
 import { Logger } from './util/Logger'
+import { getCapabilities } from './util/capabilities'
 import { PACKAGE_ROOT } from './platform'
 
 const JSON_HEADERS = {
@@ -50,49 +53,9 @@ export function createServerHost(
     return abs
   }
 
-  async function seedDataDir(): Promise<void> {
-    const dir = getDataDir()
-    await fs.mkdir(dir, { recursive: true })
-    // skills：首次使用从插件自带资源播种（pdf/docx/pptx/xlsx 读取器 + 示例 skill）
-    const skillsDir = path.join(dir, 'skills')
-    const bundled = path.join(PACKAGE_ROOT, 'assets', 'skills')
-    try {
-      const existing = await fs.readdir(skillsDir)
-      if (existing.length === 0) throw new Error('empty')
-    } catch {
-      await fs.mkdir(skillsDir, { recursive: true })
-      await copyDir(bundled, skillsDir)
-    }
-    // mcp.json：写入默认模板（两个 disabled 示例）
-    const mcpPath = path.join(dir, 'mcp.json')
-    try {
-      await fs.access(mcpPath)
-    } catch {
-      await fs.writeFile(mcpPath, JSON.stringify({
-        mcpServers: {
-          _example_filesystem: {
-            disabled: true,
-            command: 'npx',
-            args: ['-y', '@modelcontextprotocol/server-filesystem', 'C:\\Users']
-          },
-          _example_http: { disabled: true, url: 'http://localhost:8000/mcp' }
-        }
-      }, null, 2), 'utf-8')
-    }
-  }
-
-  async function copyDir(src: string, dst: string): Promise<void> {
-    const entries = await fs.readdir(src, { withFileTypes: true })
-    for (const e of entries) {
-      const s = path.join(src, e.name)
-      const d = path.join(dst, e.name)
-      if (e.isDirectory()) {
-        await fs.mkdir(d, { recursive: true })
-        await copyDir(s, d)
-      } else {
-        await fs.copyFile(s, d)
-      }
-    }
+  async function seed(): Promise<void> {
+    // skills/mcp.json 播种逻辑与桌面版共用（bootstrap.seedDataDir）
+    await seedDataDir()
   }
 
   async function reloadTools(): Promise<void> {
@@ -106,13 +69,15 @@ export function createServerHost(
   }
 
   async function init(): Promise<void> {
-    await seedDataDir()
+    await seed()
     const cfg = await store.load()
     wikiHost = new WikiHost(store, bus)
     await wikiHost.init()
     registry.setWikiTools(createWikiTools(wikiHost.vault, wikiHost.search, store))
     await registry.initialize(cfg)
     await reloadTools()
+    // 自动 RAG：把知识检索能力注入对话服务（每轮提问自动检索知识库并注入结果）
+    agent.setKnowledgeRetriever(new KnowledgeRetriever(wikiHost.vault, wikiHost.search, store))
     Logger.info('dsh-winagent 启动完成，数据目录: ' + getDataDir())
     ctx.logger?.info?.('dsh-winagent mounted (data: ' + getDataDir() + ')')
   }
@@ -259,6 +224,17 @@ export function createServerHost(
         json(res, 200, { name, path: filePath, mime, isImage: true, dataUrl })
         return
       }
+      // PDF：≤15MB 附带 dataUrl（供模型文件直传，被拒时自动降级工具读取）；超限仅路径
+      if (ext === '.pdf') {
+        const buf = await fs.readFile(filePath)
+        const base = { name, path: filePath, mime: 'application/pdf', isImage: false, isPdf: true }
+        if (buf.length > 15 * 1024 * 1024) {
+          json(res, 200, base)
+          return
+        }
+        json(res, 200, { ...base, dataUrl: `data:application/pdf;base64,${buf.toString('base64')}` })
+        return
+      }
       const textExts = ['.txt', '.md', '.json', '.js', '.ts', '.tsx', '.jsx', '.py', '.java',
         '.c', '.cpp', '.h', '.css', '.html', '.xml', '.yml', '.yaml', '.csv', '.log', '.sh', '.bat']
       if (textExts.includes(ext)) {
@@ -297,6 +273,7 @@ export function createServerHost(
         await reloadTools()
         json(res, 200, registry.getInfos())
       }],
+      ['GET', /^\/winagent\/api\/capabilities$/, (_req, res) => json(res, 200, getCapabilities())],
       ['GET', /^\/winagent\/api\/models$/, async (req, res, q) => {
         try {
           const cfg = store.get()
@@ -419,6 +396,10 @@ export function createServerHost(
         const body = await readJson(req)
         try { json(res, 200, await wiki().workflowQuery(String(body.query ?? ''))) }
         catch (e) { json(res, 500, { error: String((e as Error)?.message || e) }) }
+      }],
+      ['POST', /^\/winagent\/api\/wiki\/workflow\/cancel$/, (_req, res) => {
+        wiki().workflowCancel()
+        json(res, 200, { ok: true })
       }],
       ['POST', /^\/winagent\/api\/wiki\/import\/url$/, async (req, res) => {
         const body = await readJson(req)

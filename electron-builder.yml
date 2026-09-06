@@ -6,11 +6,8 @@ directories:
 files:
   - out/**/*
   - package.json
-extraResources:
-  - from: skills
-    to: skills
-  - from: mcp.json
-    to: mcp.json
+  # dsh-winagent 服务层（file: 依赖，symlink 解引用后打包；assets/skills 随包播种到 userData）
+  - node_modules/dsh-winagent/**/*
 win:
   target:
     - target: portable

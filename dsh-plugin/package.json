@@ -5,6 +5,16 @@
   "author": "WinAgent",
   "license": "MIT",
   "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./services": {
+      "types": "./lib/services.d.ts",
+      "default": "./lib/services.js"
+    }
+  },
   "files": [
     "lib",
     "assets",
@@ -19,9 +29,14 @@
     "jszip": "^3.10.1",
     "mathml2omml": "^0.5.0",
     "pdf-parse": "^1.1.1",
+    "pptxgenjs": "^3.12.0",
     "temml": "^0.13.3",
     "word-extractor": "^1.0.4",
     "xlsx": "^0.18.5"
+  },
+  "optionalDependencies": {
+    "@napi-rs/canvas": "^0.1.60",
+    "pdfjs-dist": "^4.10.38"
   },
   "dsh": {
     "bundle": {

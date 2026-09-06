@@ -6,8 +6,7 @@ import { registryTools } from './registryTools'
 import { inputTools } from './inputTools'
 import { windowTools } from './windowTools'
 import { httpTools } from './httpTools'
-import { docxTools } from './docxTools'
-import { imageTools } from './imageTools'
+import { officeTools } from './officeTools'
 import { loadSkills } from '../skills/SkillLoader'
 import { McpManager } from '../mcp/McpManager'
 import { Logger } from '../util/Logger'
@@ -36,7 +35,7 @@ export class ToolRegistry {
     this.mcp.dispose()
     // 内置工具（含知识库工具）
     this.addAll(
-      [...fileTools, ...systemTools, ...registryTools, ...inputTools, ...windowTools, ...httpTools, ...docxTools, ...imageTools, ...this.wikiTools],
+      [...fileTools, ...systemTools, ...registryTools, ...inputTools, ...windowTools, ...httpTools, ...officeTools, ...this.wikiTools],
       'builtin'
     )
     void cfg

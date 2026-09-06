@@ -23,6 +23,7 @@ const GraphEngine_1 = require("./GraphEngine");
 const AiPipeline_1 = require("./AiPipeline");
 const contract_1 = require("./contract");
 const WorkflowService_1 = require("./WorkflowService");
+const slug_1 = require("./slug");
 /** 扁平化笔记树 */
 function flattenWikiNotes(notes) {
     const result = [];
@@ -33,10 +34,9 @@ function flattenWikiNotes(notes) {
     }
     return result;
 }
-/** 中文名 → 英文小写连字符 slug */
+/** 中文名 → 英文小写连字符 slug（统一走 slugifyKebab，契约 §0） */
 function slugify(name) {
-    const ascii = name.toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
-    return ascii || `concept-${Date.now().toString(36)}`;
+    return (0, slug_1.slugifyKebab)(name, 'concept');
 }
 async function fileExists(p) {
     try {
@@ -94,6 +94,8 @@ class WikiHost {
     batchSession = null;
     autoIngestQueue = new Map();
     recentIngests = new Map();
+    /** 进行中的 REFLECT/QUERY 工作流取消器（workflowCancel 用） */
+    workflowAbort = null;
     constructor(store, bus) {
         this.store = store;
         this.bus = bus;
@@ -127,13 +129,13 @@ class WikiHost {
         const indexData = [];
         for (const n of filesOnly) {
             try {
-                const content = await this.vault.readNote(n.path);
-                indexData.push({ meta: n, content: content.rawBody, summary: content.aiSummary });
+                const note = await this.vault.readNote(n.path);
+                indexData.push({ meta: n, note });
             }
             catch { /* skip */ }
         }
         for (const d of indexData) {
-            this.search.indexNote(d.meta, d.content, d.summary);
+            this.indexFromContent(d.meta, d.note);
         }
         Logger_1.Logger.info(`[Wiki] 已索引 ${indexData.length} 篇 wiki 笔记`);
     }
@@ -147,7 +149,11 @@ class WikiHost {
                 const content = await this.vault.readNote(n.path);
                 if (content.graphExcluded)
                     continue;
-                inputs.push({ path: n.path, title: n.title, tags: n.tags, links: content.links });
+                // aiRelations（AI 分析发现的关系）入图，让 AI 关系与手工 wikilink 同屏可见
+                inputs.push({
+                    path: n.path, title: n.title, tags: n.tags, links: content.links,
+                    aiRelations: (content.aiRelations || []).map((r) => r.target).filter(Boolean)
+                });
             }
             catch { /* skip */ }
         }
@@ -156,12 +162,20 @@ class WikiHost {
     async indexOne(relPath) {
         try {
             const note = await this.vault.readNote(relPath);
-            this.search.indexNote({
+            this.indexFromContent({
                 path: note.path, title: note.title, tags: note.tags,
                 created: note.created, updated: note.updated, kind: 'file'
-            }, note.rawBody, note.aiSummary);
+            }, note);
         }
         catch { /* skip */ }
+    }
+    /** 按读取结果建索引：附带 frontmatter 的 aliases/confidence/source_count（检索分层与 RAG 用） */
+    indexFromContent(meta, note) {
+        this.search.indexNote(meta, note.rawBody, note.aiSummary, {
+            aliases: note.aliases,
+            confidence: note.confidence,
+            sourceCount: note.sourceCount
+        });
     }
     // ──────────────────────── 基础笔记操作 ────────────────────────
     async listNotes() {
@@ -224,7 +238,13 @@ class WikiHost {
             if (!provider)
                 throw new Error('没有可用的 AI 模型，请先在设置中配置');
             const result = await this.pipeline.analyze(provider, note.title, note.rawBody, candidates, {
-                noteType, contract, openQuestions
+                noteType, contract, openQuestions,
+                // 附 frontmatter 关键标量：entity_type/confidence 等字段在 frontmatter 中，正文看不到
+                frontmatter: {
+                    ...(note.entityType ? { entity_type: note.entityType } : {}),
+                    ...(note.confidence ? { confidence: note.confidence } : {}),
+                    ...(note.sourceCount !== undefined ? { source_count: note.sourceCount } : {})
+                }
             });
             await this.vault.updateAiResults(relPath, result.summary, result.tags, result.relations);
             await this.indexOne(relPath);
@@ -585,13 +605,23 @@ class WikiHost {
         this.batchSession.active = true;
         try {
             for (const p of this.batchSession.pending) {
+                // abort 把 batchSession 置 null 后立即停止（避免 null 解引用）
+                if (!this.batchSession)
+                    break;
                 try {
-                    this.batchSession.done.push(await this.runIngest(p));
+                    const r = await this.runIngest(p);
+                    if (!this.batchSession)
+                        break;
+                    this.batchSession.done.push(r);
                 }
                 catch (e) {
+                    if (!this.batchSession)
+                        break;
                     this.batchSession.errors.push({ path: p, error: e instanceof Error ? e.message : String(e) });
                 }
             }
+            if (!this.batchSession)
+                return { results: [], errors: [], confirmHigh: [], aborted: true };
             const confirmHighMap = new Map();
             for (const r of this.batchSession.done) {
                 for (const c of r.confirmHigh ?? []) {
@@ -615,6 +645,8 @@ class WikiHost {
     }
     async ingestBatchAbort() {
         this.batchSession = null;
+        // 取消在飞的 LLM 请求（ingest/analyze/custom 一并中止，否则 abort 后请求仍在后台消耗）
+        this.pipeline.cancel();
         return { ok: true };
     }
     async listCompiledRawFiles() {
@@ -638,10 +670,22 @@ class WikiHost {
         return r;
     }
     async workflowReflect() {
-        const r = await (0, WorkflowService_1.runReflect)(this.vault, this.store);
-        if (r.ok)
-            this.bus.push('vaultChanged', { type: 'created', path: r.reportPath });
-        return r;
+        const ac = new AbortController();
+        this.workflowAbort = ac;
+        try {
+            const r = await (0, WorkflowService_1.runReflect)(this.vault, this.store, ac.signal);
+            if (r.ok)
+                this.bus.push('vaultChanged', { type: 'created', path: r.reportPath });
+            return r;
+        }
+        finally {
+            this.workflowAbort = null;
+        }
+    }
+    /** 取消进行中的 REFLECT/QUERY 工作流（LLM 请求一并中止） */
+    workflowCancel() {
+        this.workflowAbort?.abort();
+        this.workflowAbort = null;
     }
     async workflowMerge(keep, remove, area) {
         const r = await (0, WorkflowService_1.runMerge)(this.vault, keep, remove, area);
@@ -652,10 +696,17 @@ class WikiHost {
         return r;
     }
     async workflowQuery(query) {
-        const r = await (0, WorkflowService_1.runQuery)(this.vault, this.search, this.store, query);
-        if (r.ok)
-            this.bus.push('vaultChanged', { type: 'created', path: r.reportPath });
-        return r;
+        const ac = new AbortController();
+        this.workflowAbort = ac;
+        try {
+            const r = await (0, WorkflowService_1.runQuery)(this.vault, this.search, this.store, query, ac.signal);
+            if (r.ok)
+                this.bus.push('vaultChanged', { type: 'created', path: r.reportPath });
+            return r;
+        }
+        finally {
+            this.workflowAbort = null;
+        }
     }
     // ──────────────────────── 导入 ────────────────────────
     async importUrl(url) {
@@ -707,8 +758,8 @@ class WikiHost {
             return { ok: false, error: '网页正文为空（可能是 JS 渲染页面，请复制内容后保存为文件导入）' };
         }
         const today = new Date().toISOString().slice(0, 10);
-        const slug = title.toLowerCase().replace(/[^a-z0-9一-龥]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
-            || host.replace(/[^a-z0-9]/g, '-');
+        // slug 统一走 slugifyKebab（纯英文 kebab，契约 §0）；中文标题回退 host-时间戳
+        const slug = (0, slug_1.slugifyKebab)(title, 'clipping');
         const relPath = `raw/clippings/${today}-${host}-${slug}.md`;
         const rawBody = [`# ${title}`, ``, `> 来源：${target}`, ``, cleaned, ``].join('\n');
         const rawFm = { title, date: today, source_url: target, domain: host, tags: [] };
@@ -728,6 +779,8 @@ class WikiHost {
         if (!provider)
             throw new Error('没有可用的 AI 模型，请先在设置中配置');
         const contract = await (0, contract_1.readContract)(this.vault.getVaultPath());
+        // 已有分析要求 tag：注入 prompt 让新 tag 优先复用既有名称（复用闭环）
+        const existingTags = await this.vault.getAnalysisTags();
         const results = [];
         const newTags = [];
         const confirmHighMap = new Map();
@@ -759,7 +812,7 @@ class WikiHost {
                     try {
                         this.emitCustomProgress({ file: name, stage: '定制分析…', percent: 90 });
                         const note = await this.vault.readNote(ingestResult.sourcePath);
-                        const analysis = await this.pipeline.customAnalyze(provider, note.title, note.rawBody, requirement.trim(), contract);
+                        const analysis = await this.pipeline.customAnalyze(provider, note.title, note.rawBody, requirement.trim(), contract, existingTags);
                         await this.vault.appendCustomAnalysis(ingestResult.sourcePath, requirement.trim(), analysis.report);
                         await this.indexOne(ingestResult.sourcePath);
                         this.bus.push('vaultChanged', { type: 'modify', path: ingestResult.sourcePath });

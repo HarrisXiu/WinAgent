@@ -265,6 +265,11 @@ function handleAgentEvent(e) {
     case 'compact':
       appendSys('🧹 上下文已压缩：' + e.before + ' → ' + e.after + ' tokens')
       break
+    case 'knowledge':
+      appendSys(e.count > 0
+        ? '📚 已检索知识库：注入 ' + e.count + ' 条相关笔记'
+        : '📚 已检索知识库：未找到相关内容')
+      break
     case 'vision':
       if (e.status === 'start') appendSys('👁 视觉模型识别图片中（' + e.model + '）…')
       else if (e.status === 'done') appendSys('👁 视觉识别完成（' + e.model + '）')

@@ -14,8 +14,11 @@ const path_1 = __importDefault(require("path"));
 const ConfigStore_1 = require("./config/ConfigStore");
 const wiki_host_1 = require("./wiki/wiki-host");
 const wikiTools_1 = require("./tools/wikiTools");
+const KnowledgeRetriever_1 = require("./wiki/KnowledgeRetriever");
+const bootstrap_1 = require("./bootstrap");
 const OpenAIClient_1 = require("./llm/OpenAIClient");
 const Logger_1 = require("./util/Logger");
+const capabilities_1 = require("./util/capabilities");
 const platform_1 = require("./platform");
 const JSON_HEADERS = {
     'Content-Type': 'application/json; charset=utf-8',
@@ -34,52 +37,9 @@ function createServerHost(ctx, store, registry, agent, bus) {
         const abs = path_1.default.isAbsolute(p) ? p : path_1.default.join((0, ConfigStore_1.getDataDir)(), p);
         return abs;
     }
-    async function seedDataDir() {
-        const dir = (0, ConfigStore_1.getDataDir)();
-        await fs_1.promises.mkdir(dir, { recursive: true });
-        // skills：首次使用从插件自带资源播种（pdf/docx/pptx/xlsx 读取器 + 示例 skill）
-        const skillsDir = path_1.default.join(dir, 'skills');
-        const bundled = path_1.default.join(platform_1.PACKAGE_ROOT, 'assets', 'skills');
-        try {
-            const existing = await fs_1.promises.readdir(skillsDir);
-            if (existing.length === 0)
-                throw new Error('empty');
-        }
-        catch {
-            await fs_1.promises.mkdir(skillsDir, { recursive: true });
-            await copyDir(bundled, skillsDir);
-        }
-        // mcp.json：写入默认模板（两个 disabled 示例）
-        const mcpPath = path_1.default.join(dir, 'mcp.json');
-        try {
-            await fs_1.promises.access(mcpPath);
-        }
-        catch {
-            await fs_1.promises.writeFile(mcpPath, JSON.stringify({
-                mcpServers: {
-                    _example_filesystem: {
-                        disabled: true,
-                        command: 'npx',
-                        args: ['-y', '@modelcontextprotocol/server-filesystem', 'C:\\Users']
-                    },
-                    _example_http: { disabled: true, url: 'http://localhost:8000/mcp' }
-                }
-            }, null, 2), 'utf-8');
-        }
-    }
-    async function copyDir(src, dst) {
-        const entries = await fs_1.promises.readdir(src, { withFileTypes: true });
-        for (const e of entries) {
-            const s = path_1.default.join(src, e.name);
-            const d = path_1.default.join(dst, e.name);
-            if (e.isDirectory()) {
-                await fs_1.promises.mkdir(d, { recursive: true });
-                await copyDir(s, d);
-            }
-            else {
-                await fs_1.promises.copyFile(s, d);
-            }
-        }
+    async function seed() {
+        // skills/mcp.json 播种逻辑与桌面版共用（bootstrap.seedDataDir）
+        await (0, bootstrap_1.seedDataDir)();
     }
     async function reloadTools() {
         const cfg = store.get();
@@ -91,13 +51,15 @@ function createServerHost(ctx, store, registry, agent, bus) {
         await registry.loadExternal(skillsDir, mcpPath);
     }
     async function init() {
-        await seedDataDir();
+        await seed();
         const cfg = await store.load();
         wikiHost = new wiki_host_1.WikiHost(store, bus);
         await wikiHost.init();
         registry.setWikiTools((0, wikiTools_1.createWikiTools)(wikiHost.vault, wikiHost.search, store));
         await registry.initialize(cfg);
         await reloadTools();
+        // 自动 RAG：把知识检索能力注入对话服务（每轮提问自动检索知识库并注入结果）
+        agent.setKnowledgeRetriever(new KnowledgeRetriever_1.KnowledgeRetriever(wikiHost.vault, wikiHost.search, store));
         Logger_1.Logger.info('dsh-winagent 启动完成，数据目录: ' + (0, ConfigStore_1.getDataDir)());
         ctx.logger?.info?.('dsh-winagent mounted (data: ' + (0, ConfigStore_1.getDataDir)() + ')');
     }
@@ -233,6 +195,17 @@ function createServerHost(ctx, store, registry, agent, bus) {
                 json(res, 200, { name, path: filePath, mime, isImage: true, dataUrl });
                 return;
             }
+            // PDF：≤15MB 附带 dataUrl（供模型文件直传，被拒时自动降级工具读取）；超限仅路径
+            if (ext === '.pdf') {
+                const buf = await fs_1.promises.readFile(filePath);
+                const base = { name, path: filePath, mime: 'application/pdf', isImage: false, isPdf: true };
+                if (buf.length > 15 * 1024 * 1024) {
+                    json(res, 200, base);
+                    return;
+                }
+                json(res, 200, { ...base, dataUrl: `data:application/pdf;base64,${buf.toString('base64')}` });
+                return;
+            }
             const textExts = ['.txt', '.md', '.json', '.js', '.ts', '.tsx', '.jsx', '.py', '.java',
                 '.c', '.cpp', '.h', '.css', '.html', '.xml', '.yml', '.yaml', '.csv', '.log', '.sh', '.bat'];
             if (textExts.includes(ext)) {
@@ -269,6 +242,7 @@ function createServerHost(ctx, store, registry, agent, bus) {
                     await reloadTools();
                     json(res, 200, registry.getInfos());
                 }],
+            ['GET', /^\/winagent\/api\/capabilities$/, (_req, res) => json(res, 200, (0, capabilities_1.getCapabilities)())],
             ['GET', /^\/winagent\/api\/models$/, async (req, res, q) => {
                     try {
                         const cfg = store.get();
@@ -441,6 +415,10 @@ function createServerHost(ctx, store, registry, agent, bus) {
                     catch (e) {
                         json(res, 500, { error: String(e?.message || e) });
                     }
+                }],
+            ['POST', /^\/winagent\/api\/wiki\/workflow\/cancel$/, (_req, res) => {
+                    wiki().workflowCancel();
+                    json(res, 200, { ok: true });
                 }],
             ['POST', /^\/winagent\/api\/wiki\/import\/url$/, async (req, res) => {
                     const body = await readJson(req);

@@ -688,7 +688,8 @@ export class VaultManager {
         kind: 'file',
         rawBody: '',
         links: [],
-        graphExcluded: false
+        graphExcluded: false,
+        aliases: undefined
       }
     }
     const parsed = matter(raw)
@@ -710,7 +711,11 @@ export class VaultManager {
       aiRelations: Array.isArray(fm.aiRelations) ? fm.aiRelations : undefined,
       annotations: Array.isArray(fm.annotations) ? fm.annotations : [],
       graphExcluded: fm['graph-excluded'] === true || fm['graph-excluded'] === 'true',
-      rawFile: typeof fm.raw_file === 'string' && fm.raw_file ? fm.raw_file : undefined
+      rawFile: typeof fm.raw_file === 'string' && fm.raw_file ? fm.raw_file : undefined,
+      confidence: typeof fm.confidence === 'string' && fm.confidence ? fm.confidence : undefined,
+      sourceCount: typeof fm.source_count === 'number' ? fm.source_count : undefined,
+      aliases: Array.isArray(fm.aliases) ? fm.aliases.filter((a: unknown): a is string => typeof a === 'string') : undefined,
+      entityType: typeof fm.entity_type === 'string' && fm.entity_type ? fm.entity_type : undefined
     }
   }
 

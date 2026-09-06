@@ -12,6 +12,8 @@ export interface ProviderConfig {
   model: string
   /** 是否支持图片识别（vision）：undefined=自动检测，true/false=用户显式指定 */
   supportsVision?: boolean
+  /** 是否支持文件直传（PDF 等 document 输入）：undefined=自动尝试（失败自动降级工具读取），true=强制，false=禁用 */
+  supportsFiles?: boolean
 }
 
 /**
@@ -60,12 +62,22 @@ export interface ThemeConfig {
   accent2: string
 }
 
+/** 自动 RAG 注入配置：每轮提问自动检索知识库并把结果注入上下文 */
+export interface KnowledgeRagConfig {
+  enabled: boolean
+  /** 每次注入的最大条数 */
+  topK: number
+  /** 注入的相关度阈值（归一化 0~1），低于该值的结果不注入 */
+  minScore: number
+}
+
 export interface AppConfig {
   activeProviderId: string
   providers: ProviderConfig[]
   temperature: number
   maxTokens: number
-  systemPrompt: string
+  /** @deprecated 旧版字段，仅兼容旧 config.json；运行时使用 petPrompt，load 时一次性迁移后置空 */
+  systemPrompt?: string
   /** 危险工具是否自动放行（不弹确认） */
   autoApproveTools: boolean
   /** 历史 token 超过该值触发上下文压缩 */
@@ -82,12 +94,14 @@ export interface AppConfig {
   stream: boolean
   /** 深度思考开关 */
   thinkingMode: ThinkingMode
-  /** 对话模式：agent=专业助手 / pet=桌宠角色 */
-  chatMode: ChatMode
-  /** 桌宠模式人设提示词（角色扮演） */
+  /** @deprecated 旧版字段（对话模式已合并进 petPrompt），仅兼容旧 config.json，运行时不读取 */
+  chatMode?: ChatMode
+  /** 人设提示词（纯人设，不含工具/规则；规则由系统动态拼接） */
   petPrompt: string
   /** Wiki 个人知识库 Vault 路径（默认相对于 dataDir） */
   vaultPath: string
+  /** 自动 RAG 注入（每轮提问检索知识库并注入结果） */
+  knowledgeRag: KnowledgeRagConfig
   /** 主题配置（模式 + 自定义主色，色阶自动推导） */
   theme: ThemeConfig
 }
@@ -127,7 +141,13 @@ export interface ToolCall {
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>
+  content:
+    | string
+    | Array<
+        | { type: 'text'; text: string }
+        | { type: 'image_url'; image_url: { url: string } }
+        | { type: 'file'; file: { filename: string; file_data: string } }
+      >
   reasoning_content?: string
   tool_calls?: ToolCall[]
   tool_call_id?: string
@@ -144,6 +164,8 @@ export type AgentEvent =
   | { type: 'tool_result'; id: string; name: string; result: string; ok: boolean }
   | { type: 'compact'; before: number; after: number }
   | { type: 'vision'; status: 'start' | 'done' | 'error'; model: string; text?: string }
+  /** 自动 RAG：本轮提问已检索知识库（count=0 表示未命中） */
+  | { type: 'knowledge'; query: string; count: number }
   | { type: 'usage'; last: TokenUsage; session: TokenUsage }
   | { type: 'error'; message: string }
   | { type: 'done' }
@@ -199,6 +221,14 @@ export interface NoteContent extends NoteMeta {
   graphExcluded?: boolean
   /** frontmatter raw_file 字段（source/personal-writing 页指向的原始文件 relPath，双栏对照用） */
   rawFile?: string
+  /** frontmatter confidence（concept/synthesis 页：low/medium/high），检索与 RAG 注入分层表述用 */
+  confidence?: string
+  /** frontmatter source_count（concept 页：来源计数） */
+  sourceCount?: number
+  /** frontmatter aliases（中文名/英文名别名列表），检索兜底与 RAG 注入用 */
+  aliases?: string[]
+  /** frontmatter entity_type（entity 页：person/tool/institution/paper） */
+  entityType?: string
 }
 
 /** 写入笔记的数据 */
@@ -244,9 +274,14 @@ export interface SearchResult {
   path: string
   title: string
   snippet: string
+  /** 归一化相关度（0~1，IDF 加权），跨查询可比 */
   score: number
   /** AI 摘要（索引时传入，检索时随结果返回，便于直接回答） */
   summary?: string
+  /** frontmatter confidence（concept/synthesis 页），按置信度分层表述用 */
+  confidence?: string
+  /** frontmatter source_count（concept 页） */
+  sourceCount?: number
 }
 
 /** 标签及计数 */
@@ -323,6 +358,8 @@ export interface BatchIngestDoneResult {
   errors: Array<{ path: string; error: string }>
   /** 聚合的待确认 high 概念（按 slug 去重） */
   confirmHigh: Array<{ slug: string; title: string; sourceCount: number }>
+  /** true = 用户中途 abort，results/errors 不完整 */
+  aborted?: boolean
 }
 
 /** 分析要求 Tag（用户拖入文件时选择/输入的分析要求，AI 归纳后持久化复用） */

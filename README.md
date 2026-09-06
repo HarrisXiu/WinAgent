@@ -1,6 +1,6 @@
 # WinAgent
 
- **Windows 桌面 AI 助手**（基于 **Tauri v2 + Rust** 后端）。兼容 **OpenAI 格式 API** 与 **本地 Ollama**，以《明日方舟》安洁莉娜的桌宠形象陪伴聊天，同时内置**完整 Windows 工具集**（53+ 个工具）与 **LLM Wiki 个人知识库**——你只负责剪藏，AI 负责理解和沉淀。支持 **skills（含 SKILL.md 格式）** 与 **MCP** 扩展挂载，可打包为 **MSI / NSIS 安装包**或**免安装便携版**。
+ **Windows 桌面 AI 助手**（基于 **Electron**，业务逻辑复用 dsh-winagent 插件服务层）。兼容 **OpenAI 格式 API** 与 **本地 Ollama**，以《明日方舟》安洁莉娜的桌宠形象陪伴聊天，同时内置**完整 Windows 工具集**（53+ 个工具）与 **LLM Wiki 个人知识库**——你只负责剪藏，AI 负责理解和沉淀。支持 **skills（含 SKILL.md 格式）** 与 **MCP** 扩展挂载，可打包为**免安装便携版**。
 
 欢迎各位大佬的评论和指导，所有评论和邮件我都会认真阅读和回复，期待与大家交流！如有兴趣也欢迎加入此项目。
 邮箱(email):530313@qq.com;
@@ -10,7 +10,7 @@
 
 - **多 Provider**：OpenAI / DeepSeek / 任意 OpenAI 兼容端 / 本地 Ollama，一键切换
 - **模型自动拉取**：Ollama `/api/tags`、OpenAI 兼容 `/v1/models`
-- **文件/图片附件**：输入框 + 按钮选择文件和图片，图片自动以 vision 格式发送，文本文件内容内嵌；不支持 vision 的模型自动降级为路径描述
+- **文件/图片/PDF 附件**：图片自动以 vision 格式发送，文本文件内容内嵌；PDF（≤15MB）在 provider 支持时直接以文件输入发送（拒收自动降级）；不支持 vision 的模型自动降级为视觉辅助或路径描述
 - **Vision 模型识别**：自动按模型名关键词检测（`gpt-4o`、`vision`、`vl`、`llava`、`gemini`、`claude-3`、`qwen-vl`、`glm-4v` 等），也可在设置中手动指定「支持/不支持/自动检测」
 - **视觉辅助（双模型协作）**：主模型为纯语言模型时，自动调用另一个视觉模型识别图片，再把识别结果回填给主模型继续完成任务。**支持同一 API 下用两个模型**（如主模型 `mimo-v2.5-pro` + 视觉模型 `mimo-v2.5`）
 - **流式输出开关**：可关闭流式，改为生成完毕后一次性返回
@@ -24,52 +24,55 @@
   - 输入模拟：`mouse_move`、`mouse_click`、`mouse_scroll`、`key_press`、`key_combination`、`type_text`、`get_cursor_pos`、`get_screen_size`
   - 窗口：`find_windows`、`set_window_state`、`bring_window_to_front`、`close_window`
   - 网络：`http_request`、`http_download`
-  - Word 文档：`create_word_document`、`markdown_to_word`、`latex_formula_to_omml`
-  - 知识库：`search_knowledge_base`、`read_note`、`list_notes`、`read_raw_file`、`add_question`、`save_knowledge_output`、`lint_knowledge_base`、`merge_knowledge_pages`、`reflect_knowledge_base`
-- **Word 文档生成**：直接输出 `.docx`，支持标题/段落/列表/表格/分页，数学公式以 **Word 原生可编辑公式（OMML）** 插入（非图片，双击可用公式编辑器修改）
+  - 文档生成与转换：`markdown_to_docx`、`write_xlsx`、`write_pptx`、`office_convert`
+  - 知识库：`search_knowledge_base`、`retrieve_knowledge`、`read_note`、`list_notes`、`read_raw_file`、`add_question`、`save_knowledge_output`、`lint_knowledge_base`、`merge_knowledge_pages`、`reflect_knowledge_base`
+- **文档生成（模型优先）**：模型产出 Markdown / 结构化 JSON，工具做确定性序列化——`markdown_to_docx`（pandoc 检测到则优先，否则内置纯 JS 链）、`write_xlsx`（SheetJS）、`write_pptx`（pptxgenjs）；数学公式以 **Word 原生可编辑公式（OMML）** 插入（非图片，双击可用公式编辑器修改）
+- **文档读取与视觉理解（混合回退链）**：PDF 附件直传 → `render_pdf_page` 整页渲染 PNG 视觉阅读（扫描件/复杂排版，pdfjs-dist + @napi-rs/canvas）→ `read_pdf` / `read_docx(with_images)` 等 skills 哑提取 + 模型结构化（纯 JS 零系统依赖）；`[[IMG:]]` 标记协议——skill 输出图片标记，Agent 自动转为视觉输入（非 vision 模型走视觉辅助）
+- **格式互转**：`office_convert` 四级降级链（纯 JS SheetJS → pandoc → LibreOffice headless → Office COM），Office 文档 → PDF 等常用转换本机装有 Office 即可用；不可达时报错附安装指引
 - **Skills 挂载**：`skills/` 目录下的脚本插件（node/python/command）
 - **MCP 挂载**：`mcp.json` 挂载外部 MCP server（stdio / HTTP）
 - **上下文压缩**：长对话自动/手动压缩，避免超出上下文窗口
 - **危险操作确认**：删除/写注册表/结束进程/执行命令/模拟输入等默认弹窗确认
 - **Ollama 兼容优化**：消息格式自动清洗（content null 处理、tool_calls 结构标准化、tool 结果补 name 字段），避免 `invalid tool call arguments` 兼容性错误
-- **API Key 加密存储**：`config.json` 中的 `apiKey` 经 Windows DPAPI 加密存储（`enc:v1:` 前缀），密钥绑定当前 Windows 用户，配置文件拷到其他机器或用户无法解密；旧版明文首次启动自动升级为密文
+- **API Key 存储**：`config.json` 中的 `apiKey` 以明文存于用户私有目录（`%APPDATA%/com.winagent.app/`），请勿分享该目录；旧版 DPAPI 密文（`enc:v1:` 前缀）加载时自动清空，重填一次即可
 - **上下文压缩（两阶段）**：阶段一免 LLM 轻量压缩（截断旧工具结果、剥离旧图片 base64），阶段二 LLM 摘要旧消息；摘要失败自动降级，不中断对话
 - **便携**：数据（`config.json`、`wiki/`）保存在 `%APPDATA%/com.winagent.app/`，遵循 Windows 应用数据规范
 - **Angelina 可爱主题**：《明日方舟》安洁莉娜主题界面——奶油色系 UI、动态角色立绘（左侧常驻，随对话状态切换「思考/执行工具/识别图片/回答」动作动画）、空状态 GIF 动图
 - **单一桌宠模式（Agent 能力合并）**：AI 以安洁莉娜的角色人设陪伴聊天（人设提示词可编辑），同时拥有专业 Agent 的**完整工具能力**——读文件、操作 Windows、检索知识库，系统提示词运行时自动附加工具清单，不会"拒绝访问本地文件"
 - **LLM Wiki 个人知识库（Karpathy 模式）**：基于 Andrej Karpathy `llm-wiki` 思路——**你只负责剪藏，LLM 负责理解和沉淀**。三层架构（raw 原始文件只读 / wiki 编译层 / outputs 输出），拖拽文件弹出分析要求弹窗（AI 编译 + 按你的要求定制分析，要求自动归纳为可复用 tag），支持概念对齐、confidence 体系、QUESTIONS 队列、LINT/REFLECT/MERGE
+- **对话自动 RAG**：每轮提问自动检索知识库并把相关笔记（标题/路径/confidence/摘要）注入上下文——回答知识类问题优先依据库内知识、注明来源；未命中时明确告知「知识库中没有相关内容」再自答并标注，绝不冒充库内知识
 - **文档自动解析**：拖入 PDF / PPTX / DOCX / XLSX / PPT / DOC / XLS / Markdown / 文本，自动提取文本 → AI 分析 → 生成知识库页面（带进度条）；PPT 通过 Office COM 转换，旧版格式全覆盖
 - **知识库面板**：侧边滑出，文件树分层展示（📥 raw 只读 / 📚 wiki 可编辑），中缝可拖拽调整宽度，量子粒子关系图谱
 - **SKILL.md 格式支持**：除原生 `manifest.json` 外，支持 Anthropic 官方 `SKILL.md` 格式 skill，GitHub 上的 skill 可直接放入 `skills/` 目录使用
-- **图片生成提示词**：`generate_image_prompt` 工具——需要图片时生成可直接复制到 Midjourney / Stable Diffusion / 即梦AI 的绘图 Prompt（支持 17 种风格、6 种宽高比），不编造图片
+- **图片生成提示词**：需要图片时模型直接生成可复制的绘图 Prompt（可直接粘贴的英文 Prompt + 中文拆解，适配 Midjourney / Stable Diffusion / 即梦AI 等），不编造图片
 - **DSH 插件版（dsh-winagent）**：同一套 Agent 能力以插件形式装进 DeepSeek Harness（`dsh plugin --profile web add` 一条命令安装，详见下文「DSH 插件版」），在 DSH Web 界面里直接使用，无需桌面壳
 
 ## 快速开始
 
-**普通用户**：从 [Releases](https://github.com/HarrisXiu/WinAgent/releases) 下载 `WinAgent-<version>-win64.msi`（或 NSIS 安装包），双击安装即用。
+**普通用户**：从 [Releases](https://github.com/HarrisXiu/WinAgent/releases) 下载 `WinAgent-<version>-win64.exe`（便携版），双击即用。
 
-**开发者**（需 Node.js 18+、Rust 1.77+、[Tauri CLI](https://tauri.app/start/prerequisites/)）：
+**开发者**（需 Node.js 18+）：
 
 ```bash
 git clone https://github.com/HarrisXiu/WinAgent.git
 cd WinAgent
 npm install
-npx tauri dev
+npm run dev
 ```
 
-> Tauri CLI 会自动调用 `npm run dev`（electron-vite）启动前端开发服务器，再加载 Tauri 窗口。首次编译 Rust 后端需要较长时间。
+> 桌面版主进程复用 `dsh-plugin/` 的服务层（`dsh-winagent` file: 依赖）；改了插件代码后先 `npm run plugin:build` 再 `npm run dev`。
 
 ## 打包
 
 ```bash
-npx tauri build          # 生成 MSI + NSIS 安装包（src-tauri/target/release/bundle/）
-npx tauri build --debug  # Debug 构建（含 DevTools，调试用）
+npm run dist             # electron-vite build + electron-builder（便携版 exe → release/）
+npm run pack             # 仅打包目录不生成安装包（调试用）
 npm run build:icon       # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO 图标
 ```
 
-**数据目录**：Tauri 遵循 Windows 规范，应用数据保存在 `%APPDATA%/com.winagent.app/`（即 `C:\Users\<用户名>\AppData\Roaming\com.winagent.app\`），包括 `config.json`、`wiki/`（知识库）等。`skills/` 和 `mcp.json` 从打包资源中加载。
+**数据目录**：应用数据保存在 `%APPDATA%/com.winagent.app/`（即 `C:\Users\<用户名>\AppData\Roaming\com.winagent.app\`），包括 `config.json`、`wiki/`（知识库）、`skills/`、`mcp.json`。首次启动时 skills 与 mcp.json 模板自动播种。
 
-> ⚠ 注意：`config.json` 中包含加密的 ApiKey，请注意隐私保护。打包前请先关闭正在运行的应用（否则 exe/dll 被占用无法覆盖）。
+> ⚠ 注意：`config.json` 中包含 API Key（明文），请注意隐私保护、勿分享该目录。打包前请先关闭正在运行的应用（否则 exe/dll 被占用无法覆盖）。
 
 ## 使用本地 Ollama (使用本地小模型可能导致agent无法正确调用工具 不建议使用)
 
@@ -95,6 +98,7 @@ npm run build:icon       # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO
 - 图片显示缩略图预览，文本文件显示文件图标
 - **图片**：支持 vision 的模型（`gpt-4o`、`qwen2.5-vl`、`llava` 等）直接识别；不支持的模型走视觉辅助或降级为路径描述，不会报错。可在「设置 → 图片识别」中手动覆盖（自动检测 / 支持 / 不支持）
 - **文本文件**（`.txt`/`.md`/`.json`/`.js`/`.ts`/`.py` 等）：内容自动读取并拼入消息
+- **PDF**（≤15MB）：支持文件输入的模型直接以 document 形式发送（网关拒收自动降级为 `read_pdf` / `render_pdf_page` 工具读取）；超限传递路径信息
 - **其他文件**：传递文件名和路径信息，可配合工具操作
 
 ## 视觉辅助（纯语言主模型 + 视觉模型协作）
@@ -162,21 +166,27 @@ npm run build:icon       # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO
 - 包含工具调用循环的每一轮、视觉辅助模型、上下文压缩摘要的开销
 - `/clear` 或清空对话后归零
 
-## Word 文档与数学公式
+## 文档生成、转换与视觉理解
 
-直接让 Agent 生成 Word，公式以 **Word 原生可编辑公式**（OMML）写入，而非图片——在 Word 中双击即可用公式编辑器修改。
+让 Agent 生成 Word / Excel / PPT，公式以 **Word 原生可编辑公式**（OMML）写入，而非图片——在 Word 中双击即可用公式编辑器修改。架构为**模型优先三层管线**：模型产出 Markdown / 结构化 JSON（理解、排版决策、内容生成都交给模型），工具只做确定性序列化。
 
 例子：
 
 > 帮我写一份关于二次方程的数学讲义，包含求根公式和判别式，保存到桌面 quadratic.docx
+> 把这份报告做成 10 页 PPT，保存到桌面 report.pptx
 
-### 三个工具
+### 生成与转换工具
 
 | 工具 | 用途 |
 |------|------|
-| `markdown_to_word` | Markdown 文本一键转 Word，支持 `#` 标题、`-`/`1.` 列表、`\| 表格 \|`、`$$块级公式$$`、`$行内公式$`、`---` 分页 |
-| `create_word_document` | 结构化块描述（JSON 数组），精细控制排版：字体、字号、对齐、粗斜体、横向页面 |
-| `latex_formula_to_omml` | 数学公式编辑器：校验 LaTeX 语法并输出 OMML，写文档前预检复杂公式 |
+| `markdown_to_docx` | Markdown 一键转 Word：`#` 标题、`-`/`1.` 列表、`\| 表格 \|`、`$$块级公式$$`/`$行内公式$`、`---` 分页；检测到 pandoc 优先用 pandoc 引擎，否则内置纯 JS 引擎（零依赖，字体/字号/横向参数生效） |
+| `write_xlsx` | 创建 Excel：`sheets` JSON 数组精确控制（{name, rows}），或直接给 Markdown 表格文本（数字字符串自动转数值） |
+| `write_pptx` | 创建 PowerPoint（16:9）：slides JSON（title / subtitle / bullets / text / notes），三种版式（封面页 / 标题+要点 / 双栏要点） |
+| `office_convert` | 格式互转枢纽：xlsx↔csv/json、md↔docx↔html↔txt（需 pandoc）、任意 Office 文档 → PDF（LibreOffice / MS Office 自动探测）、`.doc` → `.docx`；四级降级链，不可达时报错附安装指引 |
+
+### 文档读取与视觉理解（混合回退链）
+
+PDF 附件（≤15MB）优先**文件直传**（provider 支持时，拒收自动降级）；扫描件 / 复杂排版用 `render_pdf_page` 整页渲染成 PNG 由视觉模型直接看；常规文档用 `read_pdf` / `read_docx` 等 skills 哑提取文本（纯 JS 零系统依赖）+ 模型结构化。`read_docx(with_images)` 解包文档内嵌图片、`extract_pdf_images` 抽取 PDF 嵌入图——图片以 `[[IMG:]]` 标记返回，Agent 自动转为视觉输入（非 vision 模型走视觉辅助描述），base64 不进文本上下文。
 
 ### 公式写法
 
@@ -196,7 +206,7 @@ npm run build:icon       # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO
 ### 三层架构
 
 ```
-<vault>/（默认为 exe 同级 wiki/ 目录，可在设置中修改）
+<vault>/（桌面版默认 %APPDATA%/com.winagent.app/wiki，插件版默认 $DSH_HOME/winagent/wiki，可在设置中修改）
 ├── raw/          📥 原始文件（你拥有，AI 只读）—— 拖拽/复制文件进来自动处理
 │   ├── articles/ clippings/ images/ pdfs/ notes/ personal/
 ├── wiki/         📚 编译层（AI 维护，你可浏览/修正）
@@ -213,9 +223,9 @@ npm run build:icon       # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO
 - **剪藏**：把任何文档（PDF / PPTX / DOCX / XLSX / PPT / DOC / XLS / Markdown / 文本）拖进窗口 → 弹出分析要求弹窗 → AI 编译生成 sources/concepts/entities 页面（带进度条），并按你的要求定制分析（报告追加到来源页 `## Custom Analysis` 区块）。手动复制文件到 raw/ 目录也会被自动监视编译
 - **分析要求 Tag**：弹窗中可勾选历史分析 tag 快速复用常用分析方式——tag 由 AI 自动归纳（短标签 + 一句话模板），多选填入输入框后可继续编辑；也可点「直接编译入库」跳过定制分析、点「取消」放弃导入。Tag 存于 `wiki/ANALYSIS_TAGS.md`，可手动编辑/删除
 - **浏览**：点顶栏 📚 打开知识库面板——raw 层只读预览（不可变原则），wiki 层可编辑修正；文件树分层展示，中缝可拖拽调整宽度；量子粒子关系图谱可视化
-- **对话检索**：对话中提及知识库/笔记/wiki 内容时，AI 主动调用 `search_knowledge_base` 检索（返回标题 + AI 摘要 + 正文片段，通常可直接回答），命中不理想自动换关键词重试；需要细节时 `read_note` / `read_raw_file` 读全文，回答注明来源标题并溯源到 wiki/sources/ 具体来源页
+- **对话检索（自动 RAG）**：每轮提问系统自动检索知识库并注入相关笔记（标题/路径/confidence/摘要），AI 回答知识类问题优先依据库内知识、注明来源并溯源到 wiki/sources/ 具体来源页；注入不够详细时 AI 自动调用 `retrieve_knowledge` 深度检索（一次取多篇全文）或 `search_knowledge_base` 换关键词重试；未命中时明确告知「知识库中没有相关内容」再用自己的知识回答并标注
 - **记录问题**：说"我想搞清楚 X" → 加入 QUESTIONS.md 队列，之后摄入的新来源能回答时自动提示
-- **健康检查**：说"检查知识库" → LINT 9 项检查（broken links / stub / SHA-256 完整性 / stale 等）
+- **健康检查**：说"检查知识库" → LINT 10 项检查（frontmatter / broken links / 索引一致性 / stub / 近重复 / SHA-256 完整性 / stale / 别名重叠 / wikilink 格式 / 系统文件保护）
 - **综合分析**：说"综合分析知识库" → REFLECT 四阶段（反向检验 / 模式扫描 / 深度合成 / Gap Analysis）
 - **去重合并**：重复概念页 → AI 先与你确认方案再执行 MERGE（保留 redirect 页）
 
@@ -237,18 +247,23 @@ npm run build:icon       # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO
 {
   "activeProviderId": "ollama",
   "providers": [
-    // apiKey 保存时自动加密为 "enc:v1:..."（DPAPI），此处展示的是内存中的明文形态
+    // apiKey 以明文保存于用户私有目录，请勿分享 config.json
     { "id": "ollama", "label": "Ollama (本地)", "type": "ollama", "baseUrl": "http://localhost:11434", "apiKey": "", "model": "qwen2.5:32b", "supportsVision": undefined },
     // supportsVision: undefined=自动检测, true=强制支持, false=强制不支持
   ],
   "temperature": 0.3,
   "maxTokens": 4096,
-  "systemPrompt": "…",
   "autoApproveTools": false,
   "compactThresholdTokens": 24000,
   "keepRecentTurns": 6,
   "skillsDir": "skills",
   "mcpConfigPath": "mcp.json",
+  "petPrompt": "…",          // 人设提示词（纯人设；工具清单与执行规则由系统动态拼接，勿写进人设）
+  "knowledgeRag": {
+    "enabled": true,         // 对话自动 RAG：每轮提问自动检索知识库并注入结果
+    "topK": 3,               // 每次注入的最大条数
+    "minScore": 0.12         // 注入的相关度阈值（归一化 0~1）
+  },
   "visionAssist": {
     "enabled": false,        // 主模型不支持图片时，是否调用视觉模型代为识别
     "providerId": "",        // 空 = 与主模型同一 API；否则指定另一个 provider id
@@ -274,11 +289,11 @@ npm run build:icon       # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO
 
 WinAgent 拥有较高系统权限（删文件、改注册表、执行命令、模拟输入、访问网络）。默认对危险操作弹窗确认；请谨慎开启“自动放行”。部分操作（写 HKLM、改系统目录）需以管理员身份运行。
 
-**API Key 加密存储**：`config.json` 中的 `apiKey` 通过 Windows DPAPI 加密后以 `enc:v1:` 前缀存储，密钥绑定当前 Windows 用户，配置文件拷到其他机器或用户无法解密。内存与界面中仍为明文以便正常使用；旧版明文配置首次启动自动升级为密文。解密失败（如配置被拷到其他机器）时自动清空 `apiKey`，需用户重新填写，不会泄露错误信息。
+**API Key 存储**：`config.json` 中的 `apiKey` 以明文保存于用户私有数据目录（桌面版 `%APPDATA%/com.winagent.app/`，插件版 `$DSH_HOME/winagent/`），均为本机当前用户的私有位置，请勿分享该目录或 config.json。旧版 DPAPI 密文（`enc:v1:` 前缀）加载时自动清空，需重填一次。
 
 ## 技术栈
 
-**Tauri v2**（Rust 后端）+ TypeScript + React + Vite + TailwindCSS。前端通过 `@tauri-apps/api` 的 `invoke` / `listen` 与 Rust 后端 IPC 通信。Windows 系统能力（文件操作、进程管理、注册表、输入模拟、窗口控制等）由 Rust 原生实现，无需 Node.js 运行时。文档解析（PDF / PPTX / DOCX / XLSX 等）使用纯 Rust crate（`pdf-extract`、`calamine`、`zip`），**不依赖原生 Node 模块**，便于便携打包。
+**Electron** + TypeScript + React + Vite（electron-vite）+ TailwindCSS。桌面版主进程是精简编排层（窗口 + IPC + 数据目录），**全部业务逻辑（Agent 循环、53+ 工具、LLM Wiki、skills/MCP）复用 `dsh-plugin/` 服务层**（`dsh-winagent` file: 依赖）——一套 TS 代码同时服务桌面版与 DSH Web 插件。文档解析（PDF / PPTX / DOCX / XLSX）通过子进程调用插件自带解析脚本。
 
 ## DSH 插件版（dsh-winagent）
 
@@ -302,6 +317,7 @@ dsh plugin --profile web add github:HarrisXiu/WinAgent
 - 聊天界面：流式输出、思维链折叠、工具调用卡片、危险操作确认弹窗、图片/文本附件、视觉辅助
 - 设置：Provider 管理（OpenAI 兼容 / Ollama）、请求行为、深度思考、危险工具放行、人设提示词、skills / mcp / vault 路径
 - 知识库：文件树、全文搜索、编辑、URL 导入、上传文件自动编译入库（LLM Wiki）、LINT / REFLECT 工作流
+- 文档处理：模型优先三层管线（读取回退链 / `[[IMG:]]` 视觉注入 / 生成 / `office_convert` 互转）；`GET /winagent/api/capabilities` 返回本地能力探测结果
 - 工具：53+ 内置 Windows 工具 + skills（manifest.json / SKILL.md）+ MCP（stdio / HTTP）挂载
 
 ### 开发
@@ -314,6 +330,32 @@ npx tsc -p tsconfig.json   # 或仓库根目录 npm run plugin:build
 > 说明：桌面版的个性化桌宠主题不在插件范围内；人设提示词仍可在插件设置中自由修改。插件运行在 dsh web 进程内，以当前 Windows 用户权限执行工具，危险操作默认弹窗确认。
 
 ## 更新日志
+
+### v0.4.0（2026-09-06）
+
+**主体回调 TS：桌面版回归 Electron，删除 Rust 后端**
+- 桌面版主进程重写为精简编排层（窗口 + IPC + 数据目录），全部业务逻辑复用 `dsh-plugin/` 服务层（`dsh-winagent` file: 依赖）——一套 TS 代码同时服务桌面版与 DSH Web 插件，不再维护两套实现
+- 删除 `src-tauri/` 与旧 `src/main/` 服务副本（git 历史保留）；数据目录沿用 `%APPDATA%/com.winagent.app/`，既有 wiki vault / config 无缝延续
+- 拖拽改回 Electron `File.path` + HTML5 事件（`drag-shim.ts` 派发同名自定义事件，`App.tsx` / `WikiLayout.tsx` 零改动）
+
+**文档处理模型优先重构（Office/PDF 三层管线）**
+- 工具变薄变确定：模型承担理解/结构化/内容生成，工具只做哑提取与确定性序列化；删除旧工具（`generate_image_prompt`、`create_word_document`、`markdown_to_word`、`latex_formula_to_omml`）
+- 生成整合：`markdown_to_docx`（pandoc 检测优先 / 内置 temml+mathml2omml 纯 JS 链兜底）+ 新增 `write_xlsx`（SheetJS）、`write_pptx`（pptxgenjs）、`office_convert` 四级降级格式互转（纯 JS → pandoc → LibreOffice → Office COM）
+- 视觉理解链：新增 `render_pdf_page`（pdfjs-dist + @napi-rs/canvas 整页渲染）与 `extract_pdf_images`（嵌入图抽取）skill；`read_docx` 支持 `with_images` 解包 word/media/；`[[IMG:]]` 标记协议——skill 输出图片标记，Agent 剥离转为视觉输入（非 vision 模型走视觉辅助），base64 不进文本上下文
+- PDF 附件直传：provider 支持文件输入时 PDF（≤15MB）直接作为 document 输入发送，网关拒收自动降级为 `read_pdf` / `render_pdf_page` 工具路径；`ProviderConfig.supportsFiles` 可显式控制
+- 能力探测基础设施：`capabilities.ts`（pandoc / LibreOffice / Office COM / pdfjs 渲染链 / PyMuPDF，启动预热缓存）+ `GET /winagent/api/capabilities` + 系统提示词自动注入能力摘要
+- skills 播种改为按文件夹增量合并（老数据目录自动获得新增 skill）；可选依赖 `pdfjs-dist` / `@napi-rs/canvas`（未装时视觉渲染能力降级，其余不受影响）
+
+**LLM Wiki 知识增强（对话自动 RAG）**
+- **自动检索注入**：每轮提问自动检索知识库，把相关笔记（标题/路径/confidence/摘要）注入上下文；未命中时明确提示「知识库中没有相关内容」，杜绝模型凭空作答而不告知
+- **检索引擎重写**：IDF 加权评分（BM25 简化版）+ 字段权重（title/aliases/tags/summary/content）+ aliases 单独索引 + 中文单字查询支持 + 归一化分数（0~1）
+- **System prompt 重构**：人设与规则职责分离（`petPrompt` 纯人设、规则动态拼接），消除 4210 字符的重复规则块；知识库触发条件从关键词式放宽为「知识类问题优先依据库内知识作答」
+- 新增 `retrieve_knowledge` 深度检索工具（一次取多篇全文）；`merge_knowledge_pages` 升级为危险操作（强制确认弹窗）；search 结果附带 confidence
+
+**AI 分析管线修复**
+- INGEST 输出截断/解析失败从静默空兜底改为如实报错（对齐契约 §9）；REFLECT 增加 Limitations 字段（回音室风险标注落盘）；QUERY 的 confidence 表述与契约 §7 对齐（high 仅由用户背书）
+- 概念/实体提取数量口径统一（契约 §1）；slug 统一纯英文 kebab（`slugifyKebab`，契约 §0）；批量摄入 abort 修复 null 解引用并取消在飞请求；REFLECT/QUERY 支持取消
+- GraphEngine 悬空边修复 + AI 发现的关系（aiRelations）入图谱
 
 ### v0.3.0（2026-08-15）
 
@@ -555,6 +597,4 @@ npx tsc -p tsconfig.json   # 或仓库根目录 npm run plugin:build
 - LLM 摘要失败自动降级返回阶段一结果，不中断当前请求
 - `safeSplitIndex`：确保压缩切分点不以 `tool` 消息开头，避免 API 报错
 
-**其他**
-- `MAX_ROUNDS` 提升至 25
-- Ollama 兼容优化：消息格式自动清洗（content null 处理、tool_calls 结构标准化、tool 结果补 name 字段）
+

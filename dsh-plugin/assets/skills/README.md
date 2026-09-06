@@ -1,6 +1,6 @@
 # Skills 插件目录
 
-把每个 skill 放在本目录下的独立子文件夹中，每个 skill 需包含一个 `manifest.json`。
+把每个 skill 放在本目录下的独立子文件夹中，每个 skill 需包含一个 `manifest.json` 或 `SKILL.md`（Anthropic 官方格式，frontmatter 提供元数据，正文作为给模型的使用指令）。
 启动时 WinAgent 会自动扫描并把它们注册为可供模型调用的工具。
 
 ## manifest.json 字段
@@ -32,5 +32,23 @@
   - `python`：调用系统 `python`（需自行安装）。
   - `command`：用 `cmd /c entry` 执行（可运行 .bat/.exe/命令）。
 - `dangerous: true` 时，执行前会弹出确认框（除非在设置里开启“自动放行”）。
+
+## 图片标记协议（[[IMG:...]]）
+
+skill 可在 stdout 中输出图片标记，格式：`[[IMG:data:image/png;base64,....]]`（支持 png/jpeg/gif/webp）。
+宿主 Agent 会自动剥离这些标记，把图片作为视觉输入附在下一轮消息中——模型可直接“看到”图片，
+base64 不会进入文本上下文。适合文档插图/页面渲染/图表抽取类 skill。
+
+## 内置 skills（随插件播种到数据目录，按文件夹增量更新）
+
+| 文件夹 | 工具名 | 用途 |
+|---|---|---|
+| `pdf/` | `read_pdf` | PDF 文本提取（pdf-parse，纯 JS） |
+| `docx/` | `read_docx` | Word 文本提取（jszip/word-extractor）；`with_images=true` 同时提取嵌入图片为视觉输入 |
+| `xlsx/` | `read_xlsx` | Excel 文本提取（SheetJS） |
+| `pptx/` | `read_pptx` | PPT 文本提取（jszip；.ppt 走 PowerPoint COM） |
+| `pdf-render/` | `render_pdf_page` | PDF 整页渲染 PNG 供视觉理解（可选依赖 pdfjs-dist + @napi-rs/canvas） |
+| `pdf-images/` | `extract_pdf_images` | PDF 嵌入图片抽取（同上可选依赖） |
+| `hello/` | `hello` | 示例 skill |
 
 参见 `hello/` 示例。

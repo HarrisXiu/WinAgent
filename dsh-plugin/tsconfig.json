@@ -11,6 +11,7 @@
     "resolveJsonModule": true,
     "outDir": "lib",
     "rootDir": "src",
+    "declaration": true,
     "strict": false,
     "types": ["node"]
   },

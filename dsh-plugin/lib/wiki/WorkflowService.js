@@ -15,6 +15,8 @@ const path_1 = __importDefault(require("path"));
 const gray_matter_1 = __importDefault(require("gray-matter"));
 const OpenAIClient_1 = require("../llm/OpenAIClient");
 const contract_1 = require("./contract");
+const AiPipeline_1 = require("./AiPipeline");
+const slug_1 = require("./slug");
 // ==================== LINT（10 项健康检查） ====================
 async function runLint(vm) {
     const today = new Date().toISOString().slice(0, 10);
@@ -340,7 +342,7 @@ async function runMerge(vm, keep, remove, area) {
     };
 }
 // ==================== REFLECT（综合分析，含 Stage 0 反向检验） ====================
-async function runReflect(vm, store) {
+async function runReflect(vm, store, signal) {
     const vault = vm.getVaultPath();
     const today = new Date().toISOString().slice(0, 10);
     // === Stage 0 反向检验：核验每个来源的完整性（回音室风险预防） ===
@@ -350,7 +352,7 @@ async function runReflect(vm, store) {
     const degradeHint = stage0Issues.length
         ? `\n以下来源未通过完整性校验，综合时降低其权重：\n${stage0Issues.map((s) => `- ${s.path}（${s.reason}）`).join('\n')}`
         : '';
-    const echoChamberHint = '\n若知识库中没有与候选结论相矛盾的来源，必须在 Limitations 中标注「⚠ 回音室风险：未找到反驳来源，结论可能存在确认偏差」';
+    const echoChamberHint = '\n若知识库中没有与候选结论相矛盾的来源，必须在 limitations 字段中标注「⚠ 回音室风险：未找到反驳来源，结论可能存在确认偏差」';
     // 收集所有概念/实体/来源页面（标题 + 摘要级内容）
     const concepts = await collectPageBriefs(vault, 'concepts', 400);
     const entities = await collectPageBriefs(vault, 'entities', 300);
@@ -372,17 +374,18 @@ async function runReflect(vm, store) {
   "contradictions": ["发现的矛盾对（来源间冲突，若无则空数组）"],
   "gaps": ["内容空白/盲区（多处提及但无独立页面、覆盖稀薄的主题，若无则空数组）"],
   "orphans": ["孤立概念：source_count=1 或长期无更新的页面 slug"],
-  "synthesis": "一段综合洞察（200 字内）"
+  "synthesis": "一段综合洞察（200 字内）",
+  "limitations": "局限性说明：证据不足之处、潜在偏差；无反驳来源时必须含回音室风险标注（无局限性可写「暂无」）"
 }
-反向检验要求：在生成结论前主动寻找与候选结论相矛盾的证据；若找不到反对声音，在 synthesis 中明确标注确认偏差风险。${echoChamberHint}${degradeHint}${contractRule}`
+反向检验要求：在生成结论前主动寻找与候选结论相矛盾的证据。${echoChamberHint}${degradeHint}${contractRule}`
         },
         {
             role: 'user',
             content: `知识库概念（${concepts.length}）:\n${concepts.join('\n---\n')}\n\n实体（${entities.length}）:\n${entities.join('\n')}\n\n来源（${sources.length}）:\n${sources.join('\n')}`
         }
     ];
-    const result = await (0, OpenAIClient_1.chatStream)(provider, messages, { temperature: 0.3, maxTokens: 1500, stream: false });
-    const parsed = parseReflectJson(result.content);
+    const result = await (0, OpenAIClient_1.chatStream)(provider, messages, { temperature: 0.3, maxTokens: 1500, stream: false, signal });
+    const parsed = (0, AiPipeline_1.parseJsonObject)(result.content);
     if (!parsed) {
         return { ok: false, reportPath: '', summary: '', error: `REFLECT 分析失败：LLM 输出无法解析（${result.content.slice(0, 200)}）` };
     }
@@ -413,6 +416,10 @@ async function runReflect(vm, store) {
         `## Stage 0 反向检验`,
         ``,
         stage0Lines.join('\n') || '（无）',
+        ``,
+        `## Limitations`,
+        ``,
+        parsed.limitations || '（无）',
         ``,
         `## Sources`,
         ``,
@@ -503,31 +510,8 @@ async function collectPageBriefs(vault, area, maxLen) {
     }
     return briefs;
 }
-function parseReflectJson(text) {
-    if (!text)
-        return null;
-    try {
-        return JSON.parse(text.trim());
-    }
-    catch { /* continue */ }
-    const codeBlock = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (codeBlock) {
-        try {
-            return JSON.parse(codeBlock[1].trim());
-        }
-        catch { /* continue */ }
-    }
-    const objMatch = text.match(/\{[\s\S]*\}/);
-    if (objMatch) {
-        try {
-            return JSON.parse(objMatch[0]);
-        }
-        catch { /* fail */ }
-    }
-    return null;
-}
 // ==================== QUERY（检索问答，溯源 + Confidence Notes） ====================
-async function runQuery(vm, searchIndex, store, query) {
+async function runQuery(vm, searchIndex, store, query, signal) {
     const q = (query || '').trim();
     if (!q)
         return { ok: false, reportPath: '', summary: '', error: '问题不能为空' };
@@ -565,7 +549,7 @@ async function runQuery(vm, searchIndex, store, query) {
             content: `你是个人知识库的问答引擎。基于下方提供的候选笔记回答用户问题。
 强制要求：
 1. 每条核心主张必须标注来源路径（如 [[source-slug]]），不允许只引用概念页而不溯源到 sources。
-2. 按 confidence 分层表述：high=用户背书或 ≥5 源一致；medium=≥3 源；low=单源或不确定。
+2. 按 confidence 分层表述：high=仅用户已确认背书的来源；medium=≥3 源一致；low=单源或不确定。
 3. 证据不足时明确说明「知识库中证据不足」，绝不编造。
 4. 输出 Markdown，结尾必须包含「## ⚠ Confidence Notes」节，列出所有 low/medium 置信度的引用及其原因，以及「## Limitations」节（含回音室风险提示：若未找到反驳来源需标注）。${contractRule}`
         },
@@ -574,15 +558,11 @@ async function runQuery(vm, searchIndex, store, query) {
             content: `问题：${q}\n\n=== 候选笔记 ===\n${contextBlocks.join('\n\n---\n\n')}`
         }
     ];
-    const result = await (0, OpenAIClient_1.chatStream)(provider, messages, { temperature: 0.3, maxTokens: 2000, stream: false });
+    const result = await (0, OpenAIClient_1.chatStream)(provider, messages, { temperature: 0.3, maxTokens: 2000, stream: false, signal });
     const answer = result.content.trim();
-    // 4. 落盘 wiki/outputs/（type: query-output, graph-excluded）
-    const slug = q
-        .toLowerCase()
-        .replace(/[^a-z0-9一-鿿]+/g, '-')
-        .replace(/-+/g, '-')
-        .slice(0, 40);
-    const outPath = `wiki/outputs/${today}-query-${slug || 'answer'}.md`;
+    // 4. 落盘 wiki/outputs/（type: query-output, graph-excluded）；slug 统一纯英文 kebab（契约 §0）
+    const slug = (0, slug_1.slugifyKebab)(q, 'query');
+    const outPath = `wiki/outputs/${today}-query-${slug}.md`;
     await fs_1.promises.mkdir(path_1.default.join(vault, 'wiki/outputs'), { recursive: true });
     const body = `# ${q}\n\n> 检索自 ${readCount} 篇笔记，生成于 ${today}\n\n${answer}\n`;
     await fs_1.promises.writeFile(path_1.default.join(vault, outPath), gray_matter_1.default.stringify(body, { type: 'query-output', title: q, date: today, 'graph-excluded': true }), 'utf-8');

@@ -6,13 +6,27 @@ class EventBus {
     seq = 0;
     waitSeq = 0;
     waiters = new Map();
+    /** push 时的同步订阅者（Electron 主进程 IPC 转发用），返回退订函数 */
+    subscribers = new Set();
     push(type, data) {
         this.seq++;
-        this.events.push({ seq: this.seq, type, data });
+        const event = { seq: this.seq, type, data };
+        this.events.push(event);
         if (this.events.length > 4000)
             this.events.splice(0, this.events.length - 4000);
         for (const wake of [...this.waiters.values()])
             wake();
+        for (const cb of [...this.subscribers]) {
+            try {
+                cb(event);
+            }
+            catch { /* 订阅者异常不影响事件分发 */ }
+        }
+    }
+    /** 订阅 push 事件（同步回调）；返回退订函数 */
+    subscribe(cb) {
+        this.subscribers.add(cb);
+        return () => this.subscribers.delete(cb);
     }
     /** seq 之后的所有事件；没有则等 timeoutMs，到期返回空数组。 */
     waitSince(seq, timeoutMs) {

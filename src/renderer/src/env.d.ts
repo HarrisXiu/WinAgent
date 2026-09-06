@@ -1,5 +1,8 @@
 /// <reference types="vite/client" />
-import type { WinAgentApi } from './tauri-bridge'
+
+// window.winagent 的 API 形状：由 preload（contextBridge.exposeInMainWorld）注入，
+// 与 src/preload/index.ts 的暴露面一致。这里取 preload 模块导出的 API 类型。
+import type { WinAgentApi } from '../../preload/index'
 
 declare global {
   interface Window {
@@ -8,10 +11,3 @@ declare global {
 }
 
 export {}
-
-// 扩展 Window 以支持 Electron 文件拖拽
-declare global {
-  interface DataTransferItem {
-    path?: string
-  }
-}

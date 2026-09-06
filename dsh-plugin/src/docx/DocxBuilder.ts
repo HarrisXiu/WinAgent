@@ -1,6 +1,27 @@
 import JSZip from 'jszip'
 import temml from 'temml'
-import { mml2omml } from 'mathml2omml'
+
+/**
+ * mathml2omml 是 ESM-only 包：CJS 宿主（Electron 内置 Node 20 等）无法 require。
+ * 顶层静态 import 会让整个模块加载即炸，因此改为惰性动态 import 预加载。
+ * （temml 为 CJS 兼容，可静态 import）
+ */
+let mml2ommlFn: ((mathml: string) => string) | null = null
+
+/** 预加载公式引擎；docx 工具入口 await 本函数（首次之后为 no-op） */
+export async function ensureMathEngines(): Promise<void> {
+  if (mml2ommlFn) return
+  // new Function 规避 TS 把 import() 编译成 require 的行为，保证真动态 import
+  const dyn = new Function('s', 'return import(s)') as (s: string) => Promise<any>
+  const mod = await dyn('mathml2omml')
+  mml2ommlFn = (mod.mml2omml ?? mod.default?.mml2omml) as (mathml: string) => string
+  if (!mml2ommlFn) throw new Error('mathml2omml 加载失败：导出结构不符合预期')
+}
+
+function mml2omml(mathml: string): string {
+  if (!mml2ommlFn) throw new Error('公式引擎未初始化（请先调用 ensureMathEngines）')
+  return mml2ommlFn(mathml)
+}
 
 /** 文档块类型（由工具参数解析而来） */
 export type DocBlock =

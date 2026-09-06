@@ -3,11 +3,33 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.ensureMathEngines = ensureMathEngines;
 exports.latexToOmml = latexToOmml;
 exports.buildDocx = buildDocx;
 const jszip_1 = __importDefault(require("jszip"));
 const temml_1 = __importDefault(require("temml"));
-const mathml2omml_1 = require("mathml2omml");
+/**
+ * mathml2omml 是 ESM-only 包：CJS 宿主（Electron 内置 Node 20 等）无法 require。
+ * 顶层静态 import 会让整个模块加载即炸，因此改为惰性动态 import 预加载。
+ * （temml 为 CJS 兼容，可静态 import）
+ */
+let mml2ommlFn = null;
+/** 预加载公式引擎；docx 工具入口 await 本函数（首次之后为 no-op） */
+async function ensureMathEngines() {
+    if (mml2ommlFn)
+        return;
+    // new Function 规避 TS 把 import() 编译成 require 的行为，保证真动态 import
+    const dyn = new Function('s', 'return import(s)');
+    const mod = await dyn('mathml2omml');
+    mml2ommlFn = (mod.mml2omml ?? mod.default?.mml2omml);
+    if (!mml2ommlFn)
+        throw new Error('mathml2omml 加载失败：导出结构不符合预期');
+}
+function mml2omml(mathml) {
+    if (!mml2ommlFn)
+        throw new Error('公式引擎未初始化（请先调用 ensureMathEngines）');
+    return mml2ommlFn(mathml);
+}
 /** XML 文本转义 */
 function esc(s) {
     return s
@@ -20,7 +42,7 @@ function esc(s) {
 /** LaTeX → OMML（Word 原生可编辑公式） */
 function latexToOmml(latex, display = true) {
     const mathml = temml_1.default.renderToString(latex, { displayMode: display, xml: true });
-    let omml = (0, mathml2omml_1.mml2omml)(mathml);
+    let omml = mml2omml(mathml);
     // mml2omml bug: 部分 XML 结构标签被双重转义为 &lt;...&gt;，导致 XML 解析失败
     // Step 1: 全局反转义 &lt; → <, &gt; → >，恢复正确的 XML 结构
     omml = omml.replace(/&lt;/g, '<').replace(/&gt;/g, '>');

@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import './tauri-bridge'
+import './drag-shim'
 import App from './App'
 import WikiWindowApp from './components/wiki/WikiWindowApp'
 import ThemeProvider from './theme/ThemeProvider'

@@ -38,6 +38,9 @@ class LoggerImpl {
     info(msg) {
         void this.write('INFO', msg);
     }
+    warn(msg) {
+        void this.write('WARN', msg);
+    }
     error(msg) {
         void this.write('ERROR', msg);
     }

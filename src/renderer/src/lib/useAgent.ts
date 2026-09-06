@@ -96,6 +96,11 @@ export function useAgent() {
         case 'compact':
           setStatus(`已压缩上下文：${e.before} → ${e.after} tokens`)
           break
+        case 'knowledge':
+          setStatus(e.count > 0
+            ? `📚 已检索知识库：注入 ${e.count} 条相关笔记`
+            : '📚 已检索知识库：未找到相关内容')
+          break
         case 'vision':
           if (e.status === 'start') setStatus(`视觉模型 ${e.model} 识别图片中…`)
           else if (e.status === 'done') setStatus(`图片识别完成（${e.model}）`)

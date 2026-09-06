@@ -23,6 +23,12 @@ export default defineConfig({
   },
   renderer: {
     root: 'src/renderer',
+    server: {
+      // 强制 IPv4：新 Node 对 localhost 只监听 ::1，而 Electron/Chromium 请求 localhost
+      // 走 127.0.0.1 → ERR_CONNECTION_REFUSED → dev 模式白屏
+      host: '127.0.0.1',
+      port: 5173
+    },
     build: {
       rollupOptions: {
         input: { index: resolve(__dirname, 'src/renderer/index.html') }

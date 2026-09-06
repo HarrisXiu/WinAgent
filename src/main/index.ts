@@ -1,51 +1,45 @@
+/**
+ * WinAgent 桌面版主进程（Electron）。
+ *
+ * 主体逻辑（Agent 对话、53+ 工具、LLM Wiki 知识库、skills/MCP）全部复用 dsh-winagent
+ * 插件的服务层（lib/services.js）；本文件只做桌面编排：
+ *   1. 把数据目录指向 userData（%APPDATA%\com.winagent.app）
+ *   2. 装配服务核心（createWinAgentCore）
+ *   3. EventBus → IPC 事件转发
+ *   4. ipcMain 通道注册（与 preload 的 window.winagent API 一一对应）
+ *   5. 主窗口 + 知识库窗口
+ */
 import { app, BrowserWindow, ipcMain, shell, dialog, nativeTheme } from 'electron'
-import { promises as fs } from 'fs'
-import { createHash } from 'crypto'
-import { spawn } from 'child_process'
 import path from 'path'
-import { ConfigStore, getDataDir } from './config/ConfigStore'
-import { ToolRegistry } from './tools/ToolRegistry'
-import { AgentService } from './agent/AgentService'
-import { fetchModels } from './llm/OpenAIClient'
-import { Logger } from './util/Logger'
-import { VaultManager } from './wiki/VaultManager'
-import { SearchIndex } from './wiki/SearchIndex'
-import { GraphEngine } from './wiki/GraphEngine'
-import type { GraphInput } from './wiki/GraphEngine'
-import { AiPipeline, type NoteType } from './wiki/AiPipeline'
-import { createWikiTools } from './tools/wikiTools'
-import { readContract, readContractSections } from './wiki/contract'
-import { runLint, runMerge, runReflect, runQuery } from './wiki/WorkflowService'
-import type { AgentEvent, AppConfig, ChatMessage, NoteData, GraphData, AISuggestion, IngestResult, IngestProgress, BatchIngestStartResult, BatchIngestDoneResult, WorkflowResult, AnalysisTag, CustomAnalysisOutput, ImportAnalyzeResult } from '../shared/types'
-import matter from 'gray-matter'
+
+// ── 1. 数据目录：必须先于服务层加载设置（服务层 Logger 单例在 import 时按数据目录构造）──
+// 显式沿用 Tauri 时代的数据目录（com.winagent.app 下已有用户的 config.json 与 wiki vault）；
+// Electron 默认按 package.json 的 name 解析为 %APPDATA%/winagent，会另起一份。
+app.setPath('userData', path.join(app.getPath('appData'), 'com.winagent.app'))
+process.env.WINAGENT_DATA_DIR = app.getPath('userData')
+
+// 服务层从 node_modules/dsh-winagent 解析（file: 依赖，见根 package.json）。
+// 动态 require：保证上面的 env 已生效；类型由 dsh-winagent/lib/services.d.ts 提供。
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const services = require('dsh-winagent/services') as typeof import('dsh-winagent/services')
+
+type AppConfig = import('dsh-winagent/services').AppConfig
+type NoteData = import('dsh-winagent/services').NoteData
+type AnalysisTag = import('dsh-winagent/services').AnalysisTag
+type BusEvent = import('dsh-winagent/services').BusEvent
 
 let mainWindow: BrowserWindow | null = null
-/** 知识库独立窗口（顶栏「知识库浏览器」弹出） */
+/** 知识库独立窗口（顶栏「知识库浏览器」弹出，?view=wiki 渲染 WikiWindowApp） */
 let wikiWindow: BrowserWindow | null = null
-const store = new ConfigStore()
-const registry = new ToolRegistry()
-let agent: AgentService
-let vaultManager: VaultManager | null = null
-let searchIndex: SearchIndex | null = null
-let graphEngine: GraphEngine | null = null
-let aiPipeline: AiPipeline | null = null
 
-// 待处理的危险操作确认
+/** 服务核心（ready 后就绪） */
+let core: import('dsh-winagent/services').WinAgentCore | null = null
+
+// 待处理的危险操作确认（agent:confirm → 渲染进程 → agent:confirm:reply）
 const pendingConfirms = new Map<string, (approved: boolean) => void>()
 let confirmSeq = 0
 
-async function reloadTools(cfg: AppConfig): Promise<void> {
-  await registry.initialize(cfg)
-  let skillsDir = store.resolvePath(cfg.skillsDir)
-  // 打包模式：extraResources 打包到 resources/ 下，回退查找
-  const altSkills = path.join(path.dirname(process.execPath), 'resources', cfg.skillsDir)
-  try {
-    await fs.access(altSkills)
-    skillsDir = altSkills
-  } catch { /* 开发模式或自定义路径，使用原始解析 */ }
-  const mcpPath = store.resolvePath(cfg.mcpConfigPath)
-  await registry.loadExternal(skillsDir, mcpPath)
-}
+// ── 2. 主题 / 窗口 ──────────────────────────────────────────
 
 /** 解析当前主题模式：auto 时跟随系统亮暗（nativeTheme） */
 function resolveThemeMode(cfg: AppConfig): 'light' | 'dark' {
@@ -56,7 +50,7 @@ function resolveThemeMode(cfg: AppConfig): 'light' | 'dark' {
 /** 窗口启动背景色（与 body 首帧一致，避免启动闪色） */
 function windowBackground(): string {
   try {
-    return resolveThemeMode(store.get()) === 'dark' ? '#181824' : '#fff8f4'
+    return resolveThemeMode(core!.store.get()) === 'dark' ? '#181824' : '#fff8f4'
   } catch {
     return '#fff8f4'
   }
@@ -90,9 +84,26 @@ function createWindow(): void {
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+    loadDevUrl(process.env.ELECTRON_RENDERER_URL)
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
+  }
+}
+
+/**
+ * dev 模式加载渲染进程。vite 重新优化依赖时 dev server 会短暂拒绝连接
+ * （ERR_CONNECTION_REFUSED → 白屏），这里指数间隔重试直至就绪。
+ */
+async function loadDevUrl(url: string, retries = 20): Promise<void> {
+  try {
+    await mainWindow?.loadURL(url)
+  } catch (e) {
+    const msg = String((e as Error)?.message || e)
+    if (retries > 0 && (msg.includes('ERR_CONNECTION_REFUSED') || msg.includes('ERR_CONNECTION_RESET'))) {
+      await new Promise((r) => setTimeout(r, 500))
+      return loadDevUrl(url, retries - 1)
+    }
+    services.Logger.error('渲染进程加载失败: ' + msg)
   }
 }
 
@@ -123,7 +134,6 @@ function createWikiWindow(): void {
     return { action: 'deny' }
   })
 
-  // 阻止拖拽文件到窗口导致的导航（文件应进入知识库而非被打开）
   wikiWindow.webContents.on('will-navigate', (e) => {
     e.preventDefault()
   })
@@ -139,46 +149,64 @@ function createWikiWindow(): void {
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    wikiWindow.loadURL(process.env.ELECTRON_RENDERER_URL + '?view=wiki')
+    loadDevUrl(process.env.ELECTRON_RENDERER_URL + '?view=wiki')
   } else {
     wikiWindow.loadFile(path.join(__dirname, '../renderer/index.html'), { query: { view: 'wiki' } })
   }
 }
 
-/** 广播 wiki 事件到所有窗口（agent:event / agent:confirm 只发主窗口，不广播） */
+/** 广播到所有窗口 */
 function sendToWindows(channel: string, ...args: unknown[]): void {
   for (const w of BrowserWindow.getAllWindows()) {
     if (!w.isDestroyed()) w.webContents.send(channel, ...args)
   }
 }
 
-function sendEvent(e: AgentEvent): void {
-  mainWindow?.webContents.send('agent:event', e)
+// ── 3. EventBus → IPC 转发 ─────────────────────────────────
+
+/** bus 事件名 → IPC 通道名；映射表之外的类型不转发 */
+const BUS_TO_IPC: Record<string, string> = {
+  agentEvent: 'agent:event',
+  confirm: 'agent:confirm',
+  configChanged: 'config:changed',
+  vaultChanged: 'wiki:vault:changed',
+  ingestProgress: 'wiki:ingest:progress',
+  customProgress: 'wiki:custom:progress'
 }
 
-function confirmTool(name: string, args: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const id = `cf_${++confirmSeq}`
-    pendingConfirms.set(id, resolve)
-    mainWindow?.webContents.send('agent:confirm', { id, name, args })
+function startBusForwarding(): void {
+  core!.bus.subscribe((e: BusEvent) => {
+    const channel = BUS_TO_IPC[e.type]
+    if (!channel) return
+    // agent 事件只发主窗口；其余广播（主题切换/wiki 进度需双窗口同步）
+    if (e.type === 'agentEvent' || e.type === 'confirm') {
+      mainWindow?.webContents.send(channel, e.data)
+    } else {
+      sendToWindows(channel, e.data)
+    }
   })
 }
 
-function registerIpc(): void {
-  ipcMain.handle('config:get', () => store.get())
+// ── 4. IPC 通道（与 preload 的 window.winagent API 一一对应）──
 
+function registerIpc(): void {
+  const wiki = () => {
+    if (!core) throw new Error('服务未初始化')
+    return core.wikiHost
+  }
+
+  // === Config ===
+  ipcMain.handle('config:get', () => core!.store.get())
   ipcMain.handle('config:save', async (_e, cfg: AppConfig) => {
-    await store.save(cfg)
-    await reloadTools(cfg)
-    const saved = store.get()
-    // 广播到所有窗口（主题切换双窗口实时同步）
+    await core!.store.save(cfg)
+    await core!.reloadTools()
+    const saved = core!.store.get()
     sendToWindows('config:changed', saved)
     return saved
   })
+  ipcMain.handle('config:dataDir', () => services.getDataDir())
 
-  ipcMain.handle('config:dataDir', () => getDataDir())
-
-  // 选择本地文件夹（用于设置 Skills 目录）
+  // === Dialog ===
   ipcMain.handle('dialog:pickDirectory', async () => {
     if (!mainWindow) return null
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -188,7 +216,9 @@ function registerIpc(): void {
     return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
   })
 
+  // === File（附件读取：图片→dataUrl，文本→内容，其他→路径信息） ===
   ipcMain.handle('file:read', async (_e, filePath: string) => {
+    const fs = await import('fs')
     const ext = path.extname(filePath).toLowerCase()
     const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
     const isImage = imageExts.includes(ext)
@@ -200,42 +230,57 @@ function registerIpc(): void {
     const name = path.basename(filePath)
 
     if (isImage) {
-      const buf = await fs.readFile(filePath)
+      const buf = await fs.promises.readFile(filePath)
       const dataUrl = `data:${mime};base64,${buf.toString('base64')}`
       return { name, path: filePath, mime, isImage: true, dataUrl }
     }
 
-    // 文本类文件读取内容，其他文件只返回路径信息
+    // PDF：≤15MB 附带 dataUrl（供模型文件直传，被拒时自动降级工具读取）；超限仅路径
+    if (ext === '.pdf') {
+      const buf = await fs.promises.readFile(filePath)
+      const base = { name, path: filePath, mime: 'application/pdf', isImage: false, isPdf: true }
+      if (buf.length > 15 * 1024 * 1024) return base
+      return { ...base, dataUrl: `data:application/pdf;base64,${buf.toString('base64')}` }
+    }
+
     const textExts = ['.txt', '.md', '.json', '.js', '.ts', '.tsx', '.jsx', '.py', '.java',
       '.c', '.cpp', '.h', '.css', '.html', '.xml', '.yml', '.yaml', '.csv', '.log', '.sh', '.bat']
     if (textExts.includes(ext)) {
-      const textContent = await fs.readFile(filePath, 'utf-8')
+      const textContent = await fs.promises.readFile(filePath, 'utf-8')
       return { name, path: filePath, mime, isImage: false, textContent: textContent.slice(0, 50000) }
     }
     return { name, path: filePath, mime, isImage: false }
   })
 
-  ipcMain.handle('tools:list', () => registry.getInfos())
-
+  // === Tools / Models ===
+  ipcMain.handle('tools:list', () => core!.registry.getInfos())
   ipcMain.handle('tools:reload', async () => {
-    await reloadTools(store.get())
-    return registry.getInfos()
+    await core!.reloadTools()
+    return core!.registry.getInfos()
   })
-
   ipcMain.handle('models:fetch', async (_e, providerId: string) => {
-    const cfg = store.get()
-    const provider = cfg.providers.find((p) => p.id === providerId) || store.activeProvider()
-    return fetchModels(provider)
+    const cfg = core!.store.get()
+    const provider = cfg.providers.find((p) => p.id === providerId) || core!.store.activeProvider()
+    return services.fetchModels(provider)
   })
 
+  // === Agent ===
   ipcMain.handle('agent:send', async (_e, text: string, attachments?: any[]) => {
-    await agent.process(text, { onEvent: sendEvent, confirmTool }, attachments)
+    await core!.agent.process(text, {
+      onEvent: (e) => core!.bus.push('agentEvent', e),
+      confirmTool
+    }, attachments)
   })
-
-  ipcMain.handle('agent:stop', () => agent.stop())
-  ipcMain.handle('agent:reset', () => agent.reset())
+  ipcMain.handle('agent:stop', () => {
+    core!.agent.stop()
+    clearPendingConfirms(false)
+  })
+  ipcMain.handle('agent:reset', () => {
+    core!.agent.reset()
+    clearPendingConfirms(false)
+  })
   ipcMain.handle('agent:compact', async () => {
-    await agent.compactNow({ onEvent: sendEvent, confirmTool })
+    await core!.agent.compactNow({ onEvent: (e) => core!.bus.push('agentEvent', e), confirmTool })
   })
 
   ipcMain.on('agent:confirm:reply', (_e, payload: { id: string; approved: boolean }) => {
@@ -245,1248 +290,128 @@ function registerIpc(): void {
       pendingConfirms.delete(payload.id)
     }
   })
-}
 
-function registerWikiIpc(): void {
-  // === 窗口 ===
-  ipcMain.handle('wiki:window:open', () => {
-    createWikiWindow()
-  })
-
-  // === Vault ===
-  ipcMain.handle('wiki:vault:path', () => vaultManager?.getVaultPath() || '')
-
+  // === Wiki — 窗口 / Vault ===
+  ipcMain.handle('wiki:window:open', () => createWikiWindow())
+  ipcMain.handle('wiki:vault:path', () => wiki().getVaultPath())
   ipcMain.handle('wiki:vault:setPath', async (_e, p: string) => {
-    if (!vaultManager) return
-    await vaultManager.setVaultPath(p)
-    // 重建搜索索引
-    if (searchIndex) {
-      const notes = await vaultManager.listNotes()
-      const flatNotes = flattenWikiNotes(notes)
-      const indexData: Array<{ meta: any; content: string; summary?: string }> = []
-      for (const n of flatNotes) {
-        if (n.kind !== 'file' || !n.path.startsWith('wiki/')) continue
-        try {
-          const content = await vaultManager.readNote(n.path)
-          indexData.push({ meta: n, content: content.rawBody, summary: content.aiSummary })
-        } catch { /* skip */ }
-      }
-      await searchIndex.rebuild(indexData)
-    }
+    await wiki().setVaultPath(p)
   })
 
-  // === Notes ===
-  ipcMain.handle('wiki:notes:list', async () => {
-    if (!vaultManager) return []
-    return vaultManager.listNotes()
-  })
-
-  ipcMain.handle('wiki:notes:read', async (_e, relPath: string) => {
-    if (!vaultManager) throw new Error('Vault not initialized')
-    return vaultManager.readNote(relPath)
-  })
-
+  // === Wiki — Notes ===
+  ipcMain.handle('wiki:notes:list', async () => wiki().listNotes())
+  ipcMain.handle('wiki:notes:read', async (_e, relPath: string) => wiki().readNote(relPath))
   ipcMain.handle('wiki:notes:write', async (_e, relPath: string, data: NoteData) => {
-    if (!vaultManager) throw new Error('Vault not initialized')
-    await vaultManager.writeNote(relPath, data)
-    // 更新搜索索引
-    if (searchIndex) {
-      const note = await vaultManager.readNote(relPath)
-      searchIndex.indexNote({
-        path: note.path, title: note.title, tags: note.tags,
-        created: note.created, updated: note.updated, kind: 'file'
-      }, note.rawBody, note.aiSummary)
-    }
-    // 异步重建图谱
-    rebuildGraph().catch(() => {})
+    await wiki().writeNote(relPath, data)
   })
-
   ipcMain.handle('wiki:notes:delete', async (_e, relPath: string) => {
-    if (!vaultManager) throw new Error('Vault not initialized')
-    // 系统文件受保护，禁止删除
-    if (vaultManager.isSystemFile(relPath)) {
-      throw new Error('系统文件受保护，不能删除')
-    }
-    await vaultManager.deleteNote(relPath)
-    searchIndex?.removeNote(relPath)
-    rebuildGraph().catch(() => {})
+    await wiki().deleteNote(relPath)
   })
-
   ipcMain.handle('wiki:notes:create', async (_e, relPath: string, title: string) => {
-    if (!vaultManager) throw new Error('Vault not initialized')
-    await vaultManager.createNote(relPath, title)
-    rebuildGraph().catch(() => {})
+    await wiki().createNote(relPath, title)
   })
 
-  // === Links ===
-  ipcMain.handle('wiki:links:backlinks', async (_e, targetPath: string) => {
-    if (!vaultManager) return []
-    return vaultManager.getBacklinks(targetPath)
-  })
+  // === Wiki — Links / Tags / Search ===
+  ipcMain.handle('wiki:links:backlinks', async (_e, targetPath: string) => wiki().getBacklinks(targetPath))
+  ipcMain.handle('wiki:tags:list', async () => wiki().getAllTags())
+  ipcMain.handle('wiki:tags:notes', async (_e, tag: string) => wiki().getNotesByTag(tag))
+  ipcMain.handle('wiki:search', async (_e, query: string, limit?: number) => wiki().searchNotes(query, limit))
 
-  // === Tags ===
-  ipcMain.handle('wiki:tags:list', async () => {
-    if (!vaultManager) return []
-    return vaultManager.getAllTags()
-  })
-
-  ipcMain.handle('wiki:tags:notes', async (_e, tag: string) => {
-    if (!vaultManager) return []
-    return vaultManager.getNotesByTag(tag)
-  })
-
-  // === Search ===
-  ipcMain.handle('wiki:search', async (_e, query: string, limit?: number) => {
-    if (!searchIndex) return []
-    return searchIndex.search(query, limit)
-  })
-
-  // === Graph ===
-  ipcMain.handle('wiki:graph:data', async (): Promise<GraphData> => {
-    if (!graphEngine) return { nodes: [], edges: [] }
-    return graphEngine.getData()
-  })
-
-  ipcMain.handle('wiki:graph:node', async (_e, nodeId: string): Promise<GraphData> => {
-    if (!graphEngine) return { nodes: [], edges: [] }
-    return graphEngine.getNeighborhood(nodeId, 1)
-  })
-
+  // === Wiki — Graph ===
+  ipcMain.handle('wiki:graph:data', async () => wiki().getGraphData())
+  ipcMain.handle('wiki:graph:node', async (_e, nodeId: string) => wiki().getGraphNode(nodeId))
   ipcMain.handle('wiki:graph:rebuild', async () => {
-    if (!vaultManager || !graphEngine) return
-    await rebuildGraph()
+    await wiki().rebuildGraph()
   })
 
-  // === AI 分析 ===
-  ipcMain.handle('wiki:ai:analyze', async (_e, relPath: string): Promise<AISuggestion> => {
-    if (!vaultManager || !aiPipeline) return {}
-    try {
-      const note = await vaultManager.readNote(relPath)
-      const allNotes = await vaultManager.listNotes()
-      // 候选笔记：wiki/ 层全部文件（排除当前笔记），path+title 供关系发现映射回可跳转路径
-      const candidates = flattenWikiNotes(allNotes)
-        .filter((n) => n.kind === 'file' && n.path.startsWith('wiki/') && n.path !== relPath)
-        .map((n) => ({ path: n.path, title: n.title }))
+  // === Wiki — AI 分析 ===
+  ipcMain.handle('wiki:ai:analyze', async (_e, relPath: string) => wiki().aiAnalyze(relPath))
+  ipcMain.handle('wiki:ai:cancel', () => wiki().aiCancel())
 
-      // 页面类型：按 relPath 判断，AI 分析按类型注入定制审查规则
-      const noteType: NoteType = relPath.startsWith('wiki/sources/') ? 'source'
-        : relPath.startsWith('wiki/concepts/') ? 'concept'
-        : relPath.startsWith('wiki/entities/') ? 'entity'
-        : relPath.startsWith('raw/') ? 'raw'
-        : 'note'
+  // === Wiki — Ingest ===
+  ipcMain.handle('wiki:ingest', async (_e, rawRelPath: string) => wiki().runIngest(rawRelPath))
+  ipcMain.handle('wiki:ingest:batchStart', async (_e, paths: string[]) => wiki().ingestBatchStart(paths))
+  ipcMain.handle('wiki:ingest:batchContinue', async () => wiki().ingestBatchContinue())
+  ipcMain.handle('wiki:ingest:batchAbort', async () => wiki().ingestBatchAbort())
 
-      // 契约注入（按小节抽取）：改 CLAUDE.md → AI 分析行为随之变化（标定闭环）
-      const contract = await readContractSections(
-        vaultManager.getVaultPath(),
-        ['总则', 'wikilink', 'confidence', '个人写作', '质量红线']
-      )
-      // 开放问题列表：判断本笔记能否回答
-      const openQuestions = await vaultManager.getOpenQuestions()
-
-      const cfg = await store.load()
-      const provider = cfg.providers.find((p) => p.id === cfg.activeProviderId) || cfg.providers[0]
-      if (!provider) throw new Error('没有可用的 AI 模型，请先在设置中配置')
-
-      const result = await aiPipeline.analyze(provider, note.title, note.rawBody, candidates, {
-        noteType,
-        contract,
-        openQuestions
-      })
-
-      // 持久化：tags 合并 + summary / relations 写入 frontmatter（刷新后保留，不丢失）
-      await vaultManager.updateAiResults(relPath, result.summary, result.tags, result.relations)
-
-      // 更新搜索索引和图谱
-      const refreshedNote = await vaultManager.readNote(relPath)
-      searchIndex?.indexNote({
-        path: refreshedNote.path,
-        title: refreshedNote.title,
-        tags: refreshedNote.tags,
-        created: refreshedNote.created,
-        updated: refreshedNote.updated,
-        kind: 'file'
-      }, refreshedNote.rawBody, refreshedNote.aiSummary)
-      rebuildGraph().catch(() => {})
-
-      // 通知渲染进程（广播到所有窗口）
-      sendToWindows('wiki:vault:changed', {
-        type: 'modify', path: relPath
-      })
-
-      return result
-    } catch (err: any) {
-      if (err.name === 'AbortError') return {}
-      throw err
-    }
+  // === Wiki — 工作流 ===
+  ipcMain.handle('wiki:workflow:lint', async () => wiki().workflowLint())
+  ipcMain.handle('wiki:workflow:reflect', async () => wiki().workflowReflect())
+  ipcMain.handle('wiki:workflow:merge', async (_e, keep: string, remove: string, area: 'concepts' | 'entities') => {
+    return wiki().workflowMerge(keep, remove, area)
   })
+  ipcMain.handle('wiki:workflow:query', async (_e, query: string) => wiki().workflowQuery(query))
 
-  ipcMain.handle('wiki:ai:cancel', async () => {
-    aiPipeline?.cancel()
-  })
-
-  // === INGEST（LLM Wiki 编译模式） ===
-  ipcMain.handle('wiki:ingest', async (_e, rawRelPath: string): Promise<IngestResult> => {
-    if (!vaultManager || !aiPipeline || !searchIndex) throw new Error('Wiki 未初始化')
-    return runIngest(rawRelPath)
-  })
-
-  // === 批量摄入（交互式标定） ===
-  ipcMain.handle('wiki:ingest:batchStart', async (_e, paths: string[]): Promise<BatchIngestStartResult> => {
-    if (!vaultManager || !aiPipeline || !searchIndex) throw new Error('Wiki 未初始化')
-    if (batchSession) throw new Error('已有批量摄入在进行中，请先完成或停止')
-    if (!Array.isArray(paths) || paths.length === 0) throw new Error('未选择文件')
-
-    // 去重 + 过滤已编译文件（复用扫描逻辑：查 sources 页 raw_file 引用）
-    const compiledRaw = await listCompiledRawFiles()
-    const unique = Array.from(new Set(paths.map((p) => p.replace(/\\/g, '/'))))
-    const pending = unique.filter((p) => !compiledRaw.has(p))
-    const skipped = unique.filter((p) => compiledRaw.has(p))
-    if (pending.length === 0) {
-      throw new Error(`所选 ${unique.length} 个文件均已编译过（${skipped.length} 个跳过）`)
-    }
-
-    // 全部预写 recentIngests，抑制 fs.watch 触发的 autoIngest 双重编译
-    const now = Date.now()
-    for (const p of pending) recentIngests.set(p, now)
-
-    // 编译第 1 篇后暂停（异常直接抛出，不建立会话）
-    const firstPath = pending[0]
-    const first = await runIngest(firstPath)
-    batchSession = {
-      pending: pending.slice(1),
-      done: [first],
-      errors: skipped.length
-        ? [{ path: '（跳过）', error: `${skipped.length} 个文件已编译过，未重复摄入` }]
-        : [],
-      active: false
-    }
-    return { rawFile: firstPath, first, total: pending.length }
-  })
-
-  ipcMain.handle('wiki:ingest:batchContinue', async (): Promise<BatchIngestDoneResult> => {
-    if (!vaultManager || !aiPipeline || !searchIndex) throw new Error('Wiki 未初始化')
-    if (!batchSession) return { results: [], errors: [], confirmHigh: [] }
-    if (batchSession.active) throw new Error('批量摄入正在执行中')
-    batchSession.active = true
-    try {
-      for (const p of batchSession.pending) {
-        try {
-          batchSession.done.push(await runIngest(p))
-        } catch (e) {
-          batchSession.errors.push({ path: p, error: e instanceof Error ? e.message : String(e) })
-        }
-      }
-      // 聚合待确认 high 概念（按 slug 去重）
-      const confirmHighMap = new Map<string, { slug: string; title: string; sourceCount: number }>()
-      for (const r of batchSession.done) {
-        for (const c of r.confirmHigh ?? []) {
-          const prev = confirmHighMap.get(c.slug)
-          if (!prev || c.sourceCount > prev.sourceCount) confirmHighMap.set(c.slug, c)
-        }
-      }
-      const result: BatchIngestDoneResult = {
-        results: batchSession.done,
-        errors: batchSession.errors,
-        confirmHigh: Array.from(confirmHighMap.values())
-      }
-      batchSession = null
-      return result
-    } finally {
-      if (batchSession) batchSession.active = false
-    }
-  })
-
-  ipcMain.handle('wiki:ingest:batchAbort', async (): Promise<{ ok: boolean }> => {
-    batchSession = null
-    return { ok: true }
-  })
-
-  // === 工作流（LINT / REFLECT / MERGE / QUERY） ===
-  ipcMain.handle('wiki:workflow:lint', async (): Promise<WorkflowResult> => {
-    if (!vaultManager) throw new Error('Wiki 未初始化')
-    const r = await runLint(vaultManager)
-    if (r.ok) sendToWindows('wiki:vault:changed', { type: 'created', path: r.reportPath })
-    return r
-  })
-
-  ipcMain.handle('wiki:workflow:reflect', async (): Promise<WorkflowResult> => {
-    if (!vaultManager) throw new Error('Wiki 未初始化')
-    const r = await runReflect(vaultManager, store)
-    if (r.ok) sendToWindows('wiki:vault:changed', { type: 'created', path: r.reportPath })
-    return r
-  })
-
-  ipcMain.handle('wiki:workflow:merge', async (_e, keep: string, remove: string, area: string): Promise<WorkflowResult> => {
-    if (!vaultManager) throw new Error('Wiki 未初始化')
-    const r = await runMerge(vaultManager, keep, remove, area)
-    if (r.ok) {
-      sendToWindows('wiki:vault:changed', { type: 'created', path: r.reportPath })
-      sendToWindows('wiki:vault:changed', { type: 'deleted', path: `wiki/${area}/${remove}.md` })
-    }
-    return r
-  })
-
-  ipcMain.handle('wiki:workflow:query', async (_e, query: string): Promise<WorkflowResult> => {
-    if (!vaultManager || !searchIndex) throw new Error('Wiki 未初始化')
-    const r = await runQuery(vaultManager, searchIndex, store, query)
-    if (r.ok) sendToWindows('wiki:vault:changed', { type: 'created', path: r.reportPath })
-    return r
-  })
-
-  // === URL 导入（网页抓取 → raw/clippings → INGEST） ===
-  ipcMain.handle('wiki:import:url', async (_e, url: string): Promise<{ ok: boolean; relPath?: string; sourcePath?: string; error?: string }> => {
-    if (!vaultManager || !aiPipeline || !searchIndex) throw new Error('Wiki 未初始化')
-    return runUrlImport(url)
-  })
-
-  // === 概念 confidence 确认（用户背书 high） ===
-  ipcMain.handle('wiki:concept:confirm', async (_e, slug: string, area: 'concepts' | 'entities') => {
-    if (!vaultManager) throw new Error('Wiki 未初始化')
-    const absPath = path.join(vaultManager.getVaultPath(), 'wiki', area, `${slug}.md`)
-    try {
-      const raw = await fs.readFile(absPath, 'utf-8')
-      const parsed = matter(raw)
-      const fm = parsed.data as Record<string, any>
-      fm.confidence = 'high'
-      fm.last_reviewed = new Date().toISOString().slice(0, 10)
-      await fs.writeFile(absPath, matter.stringify(parsed.content, fm), 'utf-8')
-      await vaultManager.appendLog(`confidence | ${area}/${slug} 已确认为 high（用户背书）`)
-      // 刷新索引
-      const note = await vaultManager.readNote(`wiki/${area}/${slug}.md`)
-      searchIndex?.indexNote({
-        path: note.path, title: note.title, tags: note.tags,
-        created: note.created, updated: note.updated, kind: 'file'
-      }, note.rawBody, note.aiSummary)
-      return { ok: true }
-    } catch {
-      return { ok: false, error: `页面不存在: wiki/${area}/${slug}.md` }
-    }
-  })
-
-  // === Import ===
+  // === Wiki — 导入 ===
+  ipcMain.handle('wiki:import:url', async (_e, url: string) => wiki().importUrl(url))
   ipcMain.handle('wiki:import:file', async (_e, srcPath: string, targetDir?: string) => {
-    if (!vaultManager) throw new Error('Vault not initialized')
-    return vaultManager.importFile(srcPath, targetDir)
+    // 返回 relPath 字符串（preload/renderer 期望 Promise<string>）
+    return wiki().importFile(srcPath, targetDir)
+  })
+  ipcMain.handle('wiki:import:analyze', async (_e, filePaths: string[], requirement: string) => {
+    return wiki().importAnalyze(filePaths, requirement)
   })
 
-  // 拖入分析流程：导入 → 编译 →（有要求时）定制分析 → 归纳分析 tag
-  ipcMain.handle('wiki:import:analyze', async (_e, filePaths: string[], requirement: string): Promise<ImportAnalyzeResult> => {
-    if (!vaultManager || !aiPipeline || !searchIndex) throw new Error('Wiki 未初始化')
-    return runImportAnalyze(filePaths, requirement || '')
-  })
-
-  // === 分析要求 Tag ===
-  ipcMain.handle('wiki:analysisTags:list', async (): Promise<AnalysisTag[]> => {
-    if (!vaultManager) return []
-    return vaultManager.getAnalysisTags()
-  })
-
-  ipcMain.handle('wiki:analysisTags:add', async (_e, tags: AnalysisTag[]): Promise<AnalysisTag[]> => {
-    if (!vaultManager) throw new Error('Vault not initialized')
-    const merged = await vaultManager.addAnalysisTags(tags)
-    if (tags.length > 0) {
-      await vaultManager.appendLog(`analysis-tags | 新增 ${tags.length} 个分析要求 tag`)
-    }
-    return merged
-  })
-
-  // === Attachments ===
-  ipcMain.handle('wiki:attachments:list', async (_e, subDir?: string) => {
-    if (!vaultManager) return []
-    return vaultManager.listAttachments(subDir)
-  })
-
-  // === Annotations ===
+  // === Wiki — 分析 tag / 附件 / 批注 / 概念确认 ===
+  ipcMain.handle('wiki:analysisTags:list', async () => wiki().getAnalysisTags())
+  ipcMain.handle('wiki:analysisTags:add', async (_e, tags: AnalysisTag[]) => wiki().addAnalysisTags(tags))
+  ipcMain.handle('wiki:attachments:list', async (_e, subDir?: string) => wiki().listAttachments(subDir))
   ipcMain.handle('wiki:annotations:add', async (_e, relPath: string, text: string, range: string) => {
-    if (!vaultManager) throw new Error('Vault not initialized')
-    return vaultManager.addAnnotation(relPath, text, range)
+    return wiki().addAnnotation(relPath, text, range)
   })
-
   ipcMain.handle('wiki:annotations:remove', async (_e, relPath: string, annotationId: string) => {
-    if (!vaultManager) throw new Error('Vault not initialized')
-    return vaultManager.removeAnnotation(relPath, annotationId)
+    await wiki().removeAnnotation(relPath, annotationId)
   })
-
-  // === Vault 变更事件 ===
-  if (vaultManager) {
-    vaultManager.onChange((event) => {
-      sendToWindows('wiki:vault:changed', event)
-      // raw/ 新文件自动触发 INGEST（任何方式放入 raw/ 的文件都会被编译）
-      if (event.type === 'created' && event.path.startsWith('raw/') && event.path !== 'raw/') {
-        scheduleAutoIngest(event.path)
-      }
-    })
-  }
-}
-
-/** raw/ 新文件自动 INGEST（防抖 + 去重，避免与拖拽导入重复编译） */
-const autoIngestQueue = new Map<string, ReturnType<typeof setTimeout>>()
-const recentIngests = new Map<string, number>()
-
-/** 批量摄入会话（交互式标定：先编译 1 篇暂停审查，确认后继续） */
-interface BatchSession {
-  pending: string[]          // 剩余未编译 relPaths
-  done: IngestResult[]       // 已完成结果
-  errors: Array<{ path: string; error: string }>
-  active: boolean            // continue 执行中（防重入）
-}
-let batchSession: BatchSession | null = null
-
-function scheduleAutoIngest(relPath: string): void {
-  // 检查是否最近（60 秒内）已处理过
-  const last = recentIngests.get(relPath)
-  if (last && Date.now() - last < 60000) return
-
-  // 防抖：1.5 秒内只触发一次
-  const existing = autoIngestQueue.get(relPath)
-  if (existing) clearTimeout(existing)
-  const timer = setTimeout(async () => {
-    autoIngestQueue.delete(relPath)
-    // 复查去重窗口：批量摄入等流程已预写 recentIngests，避免同一文件被编译两次
-    const last = recentIngests.get(relPath)
-    if (last && Date.now() - last < 60000) return
-    recentIngests.set(relPath, Date.now())
-    try {
-      Logger.info(`[AutoIngest] 检测到 raw 新文件: ${relPath}`)
-      await runIngest(relPath)
-      Logger.info(`[AutoIngest] 完成: ${relPath}`)
-    } catch (e) {
-      Logger.error(`[AutoIngest] 失败: ${relPath}: ${String(e)}`)
-    }
-  }, 1500)
-  autoIngestQueue.set(relPath, timer)
-}
-
-// 辅助函数：扁平化笔记树
-function flattenWikiNotes(notes: import('../shared/types').NoteMeta[]): import('../shared/types').NoteMeta[] {
-  const result: import('../shared/types').NoteMeta[] = []
-  for (const n of notes) {
-    result.push(n)
-    if (n.children) result.push(...flattenWikiNotes(n.children))
-  }
-  return result
-}
-
-/** 从 VaultManager 收集笔记数据并重建图谱（只含 wiki/ 层，排除 graph-excluded 系统文件） */
-async function rebuildGraph(): Promise<void> {
-  if (!vaultManager || !graphEngine) return
-  const notes = await vaultManager.listNotes()
-  const flatNotes = flattenWikiNotes(notes).filter((n) => n.kind === 'file' && n.path.startsWith('wiki/'))
-  const inputs: GraphInput[] = []
-  for (const n of flatNotes) {
-    try {
-      const content = await vaultManager.readNote(n.path)
-      if (content.graphExcluded) continue
-      inputs.push({
-        path: n.path,
-        title: n.title,
-        tags: n.tags,
-        links: content.links
-      })
-    } catch { /* skip */ }
-  }
-  graphEngine.rebuild(inputs)
-}
-
-/** 推送 INGEST 进度事件到渲染进程（广播所有窗口） */
-function emitIngestProgress(p: IngestProgress): void {
-  sendToWindows('wiki:ingest:progress', p)
-}
-
-/** 推送定制分析进度事件到渲染进程（广播所有窗口，复用 IngestProgress 形状） */
-function emitCustomProgress(p: IngestProgress): void {
-  sendToWindows('wiki:custom:progress', p)
-}
-
-/**
- * URL 直接导入（教程 defuddle 的 WinAgent 版）：
- * 抓取网页 → 提取标题与正文段落 → 写入 raw/clippings/（frontmatter 含 source_url）→ 立即 INGEST
- */
-async function runUrlImport(url: string): Promise<{ ok: boolean; relPath?: string; sourcePath?: string; error?: string }> {
-  const target = (url || '').trim()
-  if (!/^https?:\/\//i.test(target)) {
-    return { ok: false, error: '请输入合法的 http/https 链接' }
-  }
-  let host = ''
-  try {
-    host = new URL(target).hostname.replace(/^www\./, '')
-  } catch {
-    return { ok: false, error: 'URL 格式不合法' }
-  }
-
-  let html = ''
-  try {
-    const res = await fetch(target, {
-      signal: AbortSignal.timeout(20000),
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) WinAgent/0.2' }
-    })
-    if (!res.ok) return { ok: false, error: `网页请求失败：HTTP ${res.status}` }
-    const buf = await res.arrayBuffer()
-    // 非文本内容（pdf 等）走文件导入路径，不在此处理
-    const contentType = res.headers.get('content-type') || ''
-    if (!/text\/html|application\/xhtml/i.test(contentType)) {
-      return { ok: false, error: `该 URL 返回的是 ${contentType.split(';')[0] || '未知类型'}，请下载后拖入知识库` }
-    }
-    html = Buffer.from(buf).toString('utf-8')
-  } catch (e) {
-    return { ok: false, error: `抓取网页失败：${e instanceof Error ? e.message : String(e)}` }
-  }
-
-  // 提取标题 + 正文（去 script/style/nav，段落化）
-  const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || host)
-    .replace(/<[^>]+>/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 120)
-  const cleaned = html
-    .replace(/<(script|style|noscript|iframe|svg|nav|footer|header)[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|h[1-6]|li|blockquote|pre)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0)
-    .join('\n\n')
-    .slice(0, 30000)
-  if (!cleaned) {
-    return { ok: false, error: '网页正文为空（可能是 JS 渲染页面，请复制内容后保存为文件拖入）' }
-  }
-
-  // 写入 raw/clippings/
-  const today = new Date().toISOString().slice(0, 10)
-  const slug = title
-    .toLowerCase()
-    .replace(/[^a-z0-9一-龥]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 60) || host.replace(/[^a-z0-9]/g, '-')
-  const relPath = `raw/clippings/${today}-${host}-${slug}.md`
-  const rawBody = [
-    `# ${title}`,
-    ``,
-    `> 来源：${target}`,
-    ``,
-    cleaned,
-    ``
-  ].join('\n')
-  const rawFm = {
-    title,
-    date: today,
-    source_url: target,
-    domain: host,
-    tags: []
-  }
-  const absPath = path.join(vaultManager!.getVaultPath(), relPath)
-  await fs.mkdir(path.dirname(absPath), { recursive: true })
-  await fs.writeFile(absPath, matter.stringify(rawBody, rawFm), 'utf-8')
-
-  // 立即 INGEST（recentIngests 去重窗口防止 watcher 重复编译）
-  recentIngests.set(relPath, Date.now())
-  const ingestResult = await runIngest(relPath)
-  return { ok: true, relPath, sourcePath: ingestResult.sourcePath }
-}
-
-/** 执行一次 INGEST（LLM Wiki 编译）：raw 文件 → sources/concepts/entities 页 */
-async function runIngest(rawRelPath: string): Promise<IngestResult> {
-  if (!vaultManager || !aiPipeline || !searchIndex) throw new Error('Wiki 未初始化')
-  // 记录去重标记（防止 fs.watch 触发的 autoIngest 重复编译）
-  recentIngests.set(rawRelPath, Date.now())
-
-  const cfg = await store.load()
-  const provider = cfg.providers.find((p) => p.id === cfg.activeProviderId) || cfg.providers[0]
-  if (!provider) throw new Error('没有可用的 AI 模型，请先在设置中配置')
-
-  const fileName = rawRelPath.split('/').pop() || rawRelPath
-  emitIngestProgress({ file: fileName, stage: '读取源文件…', percent: 5 })
-
-  // 1. 读取 raw 文件内容（md/txt 直接读；office/pdf 通过子进程提取；图片仅取元数据）
-  const rawAbs = path.join(vaultManager.getVaultPath(), rawRelPath)
-  const rawBuf = await fs.readFile(rawAbs)
-  const ext = path.extname(rawRelPath).toLowerCase()
-  const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']
-  const officeExts = ['.pdf', '.pptx', '.docx', '.xlsx', '.xlsm', '.ppt', '.doc', '.xls']
-  const textExts = ['.md', '.txt', '.markdown', '.json', '.js', '.ts', '.tsx', '.jsx', '.py',
-    '.java', '.c', '.cpp', '.h', '.css', '.html', '.xml', '.yml', '.yaml', '.csv', '.log', '.sh', '.bat']
-  let rawText = ''
-  let emptyReason = ''
-  if (officeExts.includes(ext)) {
-    const stageNames: Record<string, string> = {
-      '.pdf': '提取 PDF 文本…',
-      '.pptx': '提取 PPT 文本…',
-      '.docx': '提取 Word 文本…',
-      '.xlsx': '提取 Excel 文本…',
-      '.xlsm': '提取 Excel 文本…',
-      '.ppt': '转换并提取 PPT 文本…',
-      '.doc': '提取 Word(旧版) 文本…',
-      '.xls': '提取 Excel(旧版) 文本…'
-    }
-    emitIngestProgress({ file: fileName, stage: stageNames[ext] || '提取文档文本…', percent: 10 })
-    try {
-      rawText = await extractDocumentText(rawAbs, ext.slice(1))
-      if (!rawText) Logger.info(`[Ingest] ${ext} 无文本内容: ${rawRelPath}`)
-    } catch (e) {
-      Logger.error(`[Ingest] ${ext} 提取失败 ${rawRelPath}: ${String(e)}`)
-      rawText = ''
-      emptyReason = `（${ext.slice(1).toUpperCase()} 文本提取失败：${e instanceof Error ? e.message : String(e)}）`
-    }
-  } else if (textExts.includes(ext)) {
-    rawText = rawBuf.toString('utf-8')
-  } else if (imageExts.includes(ext)) {
-    rawText = '' // 图片无文本，创建基础 source 页
-    emptyReason = '（图片文件，无文本内容）'
-  } else {
-    // 未知扩展名：NUL 字节检测是否为二进制
-    const isBinary = rawBuf.includes(0)
-    if (isBinary) {
-      rawText = ''
-      emptyReason = `（无法识别的二进制格式 ${ext}，无法提取文本）`
-    } else {
-      rawText = rawBuf.toString('utf-8')
-    }
-  }
-  const rawTitle = rawRelPath.split('/').pop()?.replace(/\.\w+$/, '') || '未命名'
-  const today = new Date().toISOString().slice(0, 10)
-
-  // 2. 计算 SHA-256 + 检测 possibly_outdated（raw frontmatter date > 2 年）
-  const rawSha256 = createHash('sha256').update(rawBuf).digest('hex')
-  let rawDate = ''
-  try {
-    const rawMatter = matter(rawBuf.toString('utf-8'))
-    rawDate = typeof rawMatter.data.date === 'string' ? rawMatter.data.date.slice(0, 10) : ''
-  } catch { /* no frontmatter */ }
-  const possiblyOutdated = !!rawDate && isOlderThan(rawDate, 730)
-
-  // 3. 读取已有概念列表 + 开放问题（用于对齐与匹配）+ 行为契约（每次读盘，标定闭环生效）
-  const existingConcepts = await listConceptSlugs()
-  const openQuestions = await vaultManager.getOpenQuestions()
-  const isPersonal = rawRelPath.startsWith('raw/personal/')
-  // 契约每次读盘（行级截断，保章节完整；无契约文件时使用内置默认规则）
-  const contract = await readContract(vaultManager.getVaultPath())
-
-  // 4. LLM 分析（无文本内容的文件跳过分析，直接生成基础来源页）
-  emitIngestProgress({ file: fileName, stage: 'AI 分析内容…', percent: 25 })
-  const analysis = rawText.trim()
-    ? await aiPipeline.ingestSource(provider, rawTitle, rawText, existingConcepts, openQuestions, isPersonal, contract)
-    : {
-        slug: slugify(rawTitle) || 'untitled',
-        title: rawTitle,
-        summary: emptyReason || '（无文本内容）',
-        keyPoints: [],
-        concepts: [],
-        entities: [],
-        contradictions: []
-      }
-
-  // 5. 写入 sources 页
-  const sourcePath = `wiki/sources/${analysis.slug}.md`
-  const sourceFm: Record<string, any> = {
-    type: isPersonal ? 'personal-writing' : 'source',
-    title: analysis.title,
-    date: rawDate || today,
-    source_url: '',
-    domain: '',
-    tags: [],
-    processed: true,
-    raw_file: rawRelPath,
-    raw_sha256: rawSha256,
-    last_verified: today,
-    possibly_outdated: possiblyOutdated
-  }
-  // 跨语言合并前提：language / canonical_source（译文/转述的原始出处）
-  if (analysis.language) sourceFm.language = analysis.language
-  if (analysis.canonicalSource) sourceFm.canonical_source = analysis.canonicalSource
-  if (isPersonal) {
-    sourceFm.status = 'draft'
-    sourceFm.confidence_at_writing = 'medium'
-  }
-  const conceptsLinks = analysis.concepts.map((c) => `- [[${c.matchSlug || slugify(c.name)}]] — ${c.name}`).join('\n')
-  const entitiesLinks = analysis.entities.map((e) => `- [[${e.matchSlug || slugify(e.name)}]] — ${e.name}`).join('\n')
-  const outdatedHint = possiblyOutdated
-    ? `\n\n> ⚠ 此来源发表日期已超过 2 年（${rawDate}），内容可能过时，基于它做决策时请谨慎。`
-    : ''
-  const sourceBody = isPersonal
-    ? [
-        `# ${analysis.title}（个人写作）`,
-        ``,
-        `> 原始文件: \`${rawRelPath}\` · SHA-256: \`${rawSha256.slice(0, 12)}…\`${outdatedHint}`,
-        ``,
-        `## Core Argument`,
-        ``,
-        analysis.summary || '（无）',
-        ``,
-        `## Key Claims`,
-        ``,
-        analysis.keyPoints.map((k) => `- ${k}`).join('\n') || '（无）',
-        ``,
-        `## Evidence Referenced`,
-        ``,
-        conceptsLinks || '（无）',
-        ``,
-        `## Limitations`,
-        ``,
-        `（待补充）`,
-        ``
-      ].join('\n')
-    : [
-        `# ${analysis.title}`,
-        ``,
-        `> 原始文件: \`${rawRelPath}\` · SHA-256: \`${rawSha256.slice(0, 12)}…\`${outdatedHint}`,
-        ``,
-        `## Summary`,
-        ``,
-        analysis.summary || '（无摘要）',
-        ``,
-        `## Key Points`,
-        ``,
-        analysis.keyPoints.map((k) => `- ${k}`).join('\n') || '（无要点）',
-        ``,
-        `## Concepts Extracted`,
-        ``,
-        conceptsLinks || '（无）',
-        ``,
-        `## Entities Extracted`,
-        ``,
-        entitiesLinks || '（无）',
-        ``,
-        `## Contradictions`,
-        ``,
-        analysis.contradictions?.length ? analysis.contradictions.map((c) => `- ${c}`).join('\n') : '（无）',
-        ``,
-        `## My Notes`,
-        ``,
-        `（在此记录你的想法）`,
-        ``
-      ].join('\n')
-  await fs.mkdir(path.join(vaultManager.getVaultPath(), 'wiki/sources'), { recursive: true })
-  await fs.writeFile(path.join(vaultManager.getVaultPath(), sourcePath), matter.stringify(sourceBody, sourceFm), 'utf-8')
-  emitIngestProgress({ file: fileName, stage: '创建来源页…', percent: 55 })
-
-  // 6-7. 创建/更新 concepts 与 entities 页
-  emitIngestProgress({ file: fileName, stage: '编译概念与实体…', percent: 70 })
-  const result: IngestResult = { sourcePath, conceptPaths: [], entityPaths: [], created: [], updated: [], logEntry: '' }
-
-  for (const c of analysis.concepts) {
-    const slug = c.matchSlug || slugify(c.name)
-    const pagePath = `wiki/concepts/${slug}.md`
-    const absPath = path.join(vaultManager.getVaultPath(), pagePath)
-    const exists = await fileExists(absPath)
-    result.conceptPaths.push(pagePath)
-
-    if (exists) {
-      // 更新已有概念页（个人写作不参与 source_count 计数）
-      const raw = await fs.readFile(absPath, 'utf-8')
-      const parsed = matter(raw)
-      const fm = parsed.data as Record<string, any>
-      const prevCount = fm.source_count || 0
-      const sourceCount = isPersonal ? prevCount : prevCount + 1
-      const evolution = isPersonal
-        ? `- ${today} 个人写作 [[${analysis.slug}]] 确立了对此概念的明确立场（不参与计数）`
-        : `- ${today}（${sourceCount} sources）：强化 — [[${analysis.slug}]] 提供支持`
-      // 达到 5+ 来源且未确认 high → 标记等待用户确认
-      if (!isPersonal && sourceCount >= 5 && fm.confidence !== 'high') {
-        result.confirmHigh = result.confirmHigh || []
-        result.confirmHigh.push({ slug, title: c.name, sourceCount })
-      }
-      await fs.writeFile(
-        absPath,
-        matter.stringify(
-          `${parsed.content.trimEnd()}\n\n## Evolution Log\n\n${evolution}\n`,
-          {
-            ...fm,
-            updated: new Date().toISOString(),
-            source_count: sourceCount,
-            last_reviewed: today,
-            confidence: sourceCount >= 3 ? 'medium' : fm.confidence || 'low'
-          }
-        ),
-        'utf-8'
-      )
-      result.updated.push(pagePath)
-    } else {
-      // 创建新概念页
-      const aliases = [c.name, c.nameEn].filter(Boolean)
-      const fm2: Record<string, any> = {
-        type: 'concept',
-        title: c.name,
-        date: today,
-        updated: new Date().toISOString(),
-        tags: [],
-        source_count: 1,
-        confidence: 'low',
-        domain_volatility: 'medium',
-        last_reviewed: today,
-        aliases: [...new Set(aliases)]
-      }
-      const body2 = [
-        `# ${c.name}${c.nameEn ? `（${c.nameEn}）` : ''}`,
-        ``,
-        `## Definition`,
-        ``,
-        c.definition || '（待补充）',
-        ``,
-        `## Key Points`,
-        ``,
-        `- （待补充）`,
-        ``,
-        `## My Position`,
-        ``,
-        `（待补充）`,
-        ``,
-        `## Contradictions`,
-        ``,
-        `（无）`,
-        ``,
-        `## Sources`,
-        ``,
-        `- [[${analysis.slug}]]`,
-        ``,
-        `## Evolution Log`,
-        ``,
-        `- ${today}（1 sources）：首次摄入，由 [[${analysis.slug}]] 建立`,
-        ``
-      ].join('\n')
-      await fs.writeFile(absPath, matter.stringify(body2, fm2), 'utf-8')
-      result.created.push(pagePath)
-    }
-  }
-
-  for (const e of analysis.entities) {
-    const slug = e.matchSlug || slugify(e.name)
-    const pagePath = `wiki/entities/${slug}.md`
-    const absPath = path.join(vaultManager.getVaultPath(), pagePath)
-    const exists = await fileExists(absPath)
-    result.entityPaths.push(pagePath)
-
-    if (exists) {
-      const raw = await fs.readFile(absPath, 'utf-8')
-      const parsed = matter(raw)
-      const fm = parsed.data as Record<string, any>
-      const body = `${parsed.content.trimEnd()}\n\n- [[${analysis.slug}]]`
-      await fs.writeFile(absPath, matter.stringify(body, { ...fm, updated: new Date().toISOString() }), 'utf-8')
-      result.updated.push(pagePath)
-    } else {
-      const fm2: Record<string, any> = {
-        type: 'entity',
-        title: e.name,
-        date: today,
-        tags: [],
-        entity_type: e.type,
-        aliases: [e.name]
-      }
-      const body2 = [
-        `# ${e.name}`,
-        ``,
-        `## Description`,
-        ``,
-        e.description || '（待补充）',
-        ``,
-        `## Key Contributions`,
-        ``,
-        `（待补充）`,
-        ``,
-        `## Related Concepts`,
-        ``,
-        `（待补充）`,
-        ``,
-        `## Sources`,
-        ``,
-        `- [[${analysis.slug}]]`,
-        ``
-      ].join('\n')
-      await fs.writeFile(absPath, matter.stringify(body2, fm2), 'utf-8')
-      result.created.push(pagePath)
-    }
-  }
-
-  // 8. 更新 index.md + overview.md + 处理开放问题
-  const allSources = await listWikiPages('sources')
-  const allConcepts = await listWikiPages('concepts')
-  const allEntities = await listWikiPages('entities')
-  await vaultManager.updateIndex(allSources, allConcepts, allEntities)
-  await vaultManager.updateOverview({
-    '总来源数': allSources.length,
-    '概念数': allConcepts.length,
-    '实体数': allEntities.length,
-    '开放问题数': (await vaultManager.getOpenQuestions()).length,
-    '最近摄入': analysis.title
-  })
-  // 标记本来源能回答的开放问题
-  if (analysis.answeredQuestions?.length) {
-    result.answeredQuestions = []
-    for (const q of analysis.answeredQuestions) {
-      await vaultManager.answerQuestion(q)
-      result.answeredQuestions.push(q)
-    }
-  }
-  emitIngestProgress({ file: fileName, stage: '更新索引…', percent: 85 })
-
-  // 9. 追加 log.md
-  const logEntry = `ingest | ${analysis.title} → wiki/sources/${analysis.slug}.md`
-  await vaultManager.appendLog(logEntry)
-  result.logEntry = logEntry
-
-  // 10. 更新搜索索引 + 重建图谱 + 通知渲染进程
-  for (const p of [sourcePath, ...result.conceptPaths, ...result.entityPaths]) {
-    try {
-      const note = await vaultManager.readNote(p)
-      searchIndex.indexNote({
-        path: note.path, title: note.title, tags: note.tags,
-        created: note.created, updated: note.updated, kind: 'file'
-      }, note.rawBody, note.aiSummary)
-    } catch { /* skip */ }
-  }
-  rebuildGraph().catch(() => {})
-  sendToWindows('wiki:vault:changed', { type: 'created', path: sourcePath })
-
-  emitIngestProgress({ file: fileName, stage: '完成', percent: 100, done: true })
-  return result
-}
-
-/**
- * 拖入分析流程（主窗口拖拽弹窗提交后调用）：
- * 逐文件 导入 → INGEST 编译 →（requirement 非空时）定制分析落盘，最后聚合 AI 归纳的分析 tag 持久化。
- * 单个文件失败不影响其余文件；ingest 失败的文件保留在 raw/ 可重试。
- */
-async function runImportAnalyze(filePaths: string[], requirement: string): Promise<ImportAnalyzeResult> {
-  if (!vaultManager || !aiPipeline || !searchIndex) throw new Error('Wiki 未初始化')
-
-  const cfg = await store.load()
-  const provider = cfg.providers.find((p) => p.id === cfg.activeProviderId) || cfg.providers[0]
-  if (!provider) throw new Error('没有可用的 AI 模型，请先在设置中配置')
-  const contract = await readContract(vaultManager.getVaultPath())
-
-  const results: ImportAnalyzeResult['files'] = []
-  const newTags: AnalysisTag[] = []
-  const confirmHighMap = new Map<string, { slug: string; title: string; sourceCount: number }>()
-
-  // Stage 1：导入（单个失败记 ingestError 继续；导入成功立即预写去重标记，抑制 fs.watch 触发的 autoIngest 双重编译）
-  const imports: Array<{ name: string; path: string; relPath: string }> = []
-  for (const p of filePaths) {
-    const name = p.split(/[\\/]/).pop() || p
-    try {
-      const relPath = await vaultManager.importFile(p)
-      recentIngests.set(relPath, Date.now())
-      imports.push({ name, path: p, relPath })
-    } catch (e) {
-      results.push({ name, ingestError: e instanceof Error ? e.message : String(e) })
-    }
-  }
-
-  // Stage 2：串行 编译 → 定制分析
-  for (const item of imports) {
-    const { name, relPath } = item
-    try {
-      const ingestResult = await runIngest(relPath)
-      // 聚合待确认 high 概念（与 batchContinue 480-486 同逻辑）
-      for (const c of ingestResult.confirmHigh ?? []) {
-        const prev = confirmHighMap.get(c.slug)
-        if (!prev || c.sourceCount > prev.sourceCount) confirmHighMap.set(c.slug, c)
-      }
-      const fileResult: ImportAnalyzeResult['files'][number] = {
-        name,
-        relPath,
-        sourcePath: ingestResult.sourcePath
-      }
-      // 定制分析：用户要求非空时执行（失败记 analysisError，编译仍算成功）
-      if (requirement.trim()) {
-        try {
-          emitCustomProgress({ file: name, stage: '定制分析…', percent: 90 })
-          const note = await vaultManager.readNote(ingestResult.sourcePath)
-          const analysis: CustomAnalysisOutput = await aiPipeline.customAnalyze(
-            provider, note.title, note.rawBody, requirement.trim(), contract
-          )
-          await vaultManager.appendCustomAnalysis(ingestResult.sourcePath, requirement.trim(), analysis.report)
-          // 重建该页索引（正文新增了 Custom Analysis 区块）
-          const refreshed = await vaultManager.readNote(ingestResult.sourcePath)
-          searchIndex.indexNote({
-            path: refreshed.path, title: refreshed.title, tags: refreshed.tags,
-            created: refreshed.created, updated: refreshed.updated, kind: 'file'
-          }, refreshed.rawBody, refreshed.aiSummary)
-          sendToWindows('wiki:vault:changed', { type: 'modify', path: ingestResult.sourcePath })
-          emitCustomProgress({ file: name, stage: '归纳分析 tag…', percent: 95 })
-          fileResult.analysis = analysis
-          if (analysis.analysisTags.length) newTags.push(...analysis.analysisTags)
-          emitCustomProgress({ file: name, stage: '完成', percent: 100, done: true })
-        } catch (e) {
-          fileResult.analysisError = e instanceof Error ? e.message : String(e)
-          emitCustomProgress({ file: name, stage: '完成', percent: 100, done: true })
-        }
-      }
-      results.push(fileResult)
-    } catch (e) {
-      results.push({ name, relPath, ingestError: e instanceof Error ? e.message : String(e) })
-    }
-  }
-
-  // Stage 3：聚合 AI 归纳的分析 tag（去重合并落盘），只返回本次真正新增的
-  let addedTags: AnalysisTag[] = []
-  if (newTags.length) {
-    const before = new Set((await vaultManager.getAnalysisTags()).map((t) => t.tag))
-    await vaultManager.addAnalysisTags(newTags)
-    addedTags = newTags.filter((t) => !before.has(t.tag))
-  }
-
-  return { files: results, newTags: addedTags, confirmHigh: Array.from(confirmHighMap.values()) }
-}
-
-/** 列出 wiki/<dir>/ 下的页面（slug + title） */
-async function listWikiPages(dir: string): Promise<Array<{ slug: string; title: string }>> {
-  if (!vaultManager) return []
-  const absDir = path.join(vaultManager.getVaultPath(), 'wiki', dir)
-  try {
-    const entries = await fs.readdir(absDir)
-    const pages: Array<{ slug: string; title: string }> = []
-    for (const f of entries) {
-      if (!f.endsWith('.md')) continue
-      try {
-        const raw = await fs.readFile(path.join(absDir, f), 'utf-8')
-        const parsed = matter(raw)
-        pages.push({ slug: f.replace(/\.md$/, ''), title: (parsed.data as any).title || f.replace(/\.md$/, '') })
-      } catch { /* skip */ }
-    }
-    return pages.sort((a, b) => a.slug.localeCompare(b.slug))
-  } catch {
-    return []
-  }
-}
-
-/** 列出 wiki/concepts/ 下所有概念（slug + title + aliases），用于 INGEST 对齐 */
-async function listConceptSlugs(): Promise<Array<{ slug: string; title: string; aliases: string[] }>> {
-  if (!vaultManager) return []
-  const absDir = path.join(vaultManager.getVaultPath(), 'wiki', 'concepts')
-  try {
-    const entries = await fs.readdir(absDir)
-    const result: Array<{ slug: string; title: string; aliases: string[] }> = []
-    for (const f of entries) {
-      if (!f.endsWith('.md')) continue
-      try {
-        const raw = await fs.readFile(path.join(absDir, f), 'utf-8')
-        const parsed = matter(raw)
-        const fm = parsed.data as Record<string, any>
-        result.push({
-          slug: f.replace(/\.md$/, ''),
-          title: fm.title || f.replace(/\.md$/, ''),
-          aliases: Array.isArray(fm.aliases) ? fm.aliases : []
-        })
-      } catch { /* skip */ }
-    }
-    return result
-  } catch {
-    return []
-  }
-}
-
-/** 中文名 → 英文小写连字符 slug（保留 ascii，中文转拼音不可行时用 index 兜底） */
-function slugify(name: string): string {
-  const ascii = name
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .trim()
-    .replace(/\s+/g, '-')
-  return ascii || `concept-${Date.now().toString(36)}`
-}
-
-async function fileExists(p: string): Promise<boolean> {
-  try {
-    await fs.access(p)
-    return true
-  } catch {
-    return false
-  }
-}
-
-/** 判断日期是否早于 N 天前 */
-function isOlderThan(dateStr: string, days: number): boolean {
-  const d = new Date(dateStr)
-  if (isNaN(d.getTime())) return false
-  return Date.now() - d.getTime() > days * 24 * 60 * 60 * 1000
-}
-
-/**
- * 通过子进程调用 skills/pdf/read_pdf.js 提取文档文本（pdf/pptx/docx/xlsx）
- * 子进程方案绕开打包后 asar 内 require 的不确定性，与 skill 完全同一代码路径
- */
-function extractDocumentText(absPath: string, format: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let scriptPath: string
-    if (app.isPackaged) {
-      scriptPath = path.join(process.resourcesPath, 'skills', 'pdf', 'read_pdf.js')
-    } else {
-      scriptPath = path.join(app.getAppPath(), 'skills', 'pdf', 'read_pdf.js')
-    }
-    const proc = spawn(process.execPath, [scriptPath], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-      windowsHide: true
-    })
-    let out = ''
-    let err = ''
-    proc.stdout.on('data', (d) => (out += d.toString()))
-    proc.stderr.on('data', (d) => (err += d.toString()))
-    proc.on('close', (code) => {
-      if (code === 0) {
-        try {
-          const parsed = JSON.parse(out.trim())
-          resolve(String(parsed.text || ''))
-        } catch {
-          reject(new Error('提取脚本输出解析失败'))
-        }
-      } else {
-        reject(new Error(err.trim() || `提取脚本退出码 ${code}`))
-      }
-    })
-    proc.on('error', (e) => reject(e))
-    proc.stdin.write(JSON.stringify({ path: absPath, format }))
-    proc.stdin.end()
+  ipcMain.handle('wiki:concept:confirm', async (_e, slug: string, area: 'concepts' | 'entities') => {
+    return wiki().conceptConfirm(slug, area)
   })
 }
 
-app.whenReady().then(async () => {
-  const cfg = await store.load()
-  agent = new AgentService(store, registry)
-  registerIpc()
-
-  // 初始化 Wiki 服务（轻量：仅创建目录和启动文件监听）
-  const vaultPath = store.resolveVaultPath()
-  vaultManager = new VaultManager(vaultPath)
-  await vaultManager.initialize()
-  searchIndex = new SearchIndex()
-  graphEngine = new GraphEngine()
-  aiPipeline = new AiPipeline()
-  registerWikiIpc()
-
-  // 注册知识库工具到 Agent
-  registry.setWikiTools(createWikiTools(vaultManager, searchIndex, store))
-
-  await reloadTools(cfg)
-  Logger.info('WinAgent 启动完成，数据目录: ' + getDataDir())
-  createWindow()
-
-  // 首次启动：询问是否创建桌面快捷方式
-  checkFirstRun()
-
-  // 后台异步索引 Wiki 内容（不阻塞窗口显示，并行读取所有笔记）
-  indexWikiVault()
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+function confirmTool(name: string, args: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const id = `cf_${++confirmSeq}`
+    pendingConfirms.set(id, resolve)
+    mainWindow?.webContents.send('agent:confirm', { id, name, args })
   })
-})
+}
 
-/** 首次启动检查：询问是否创建桌面快捷方式（仅打包版本） */
-async function checkFirstRun(): Promise<void> {
-  if (!app.isPackaged) return // 开发模式跳过
-  const markerPath = path.join(getDataDir(), '.shortcut-asked')
-  try {
-    await fs.access(markerPath)
-    return // 已询问过，跳过
-  } catch { /* 首次启动 */ }
-  // 写入标记文件（防止重复询问）
-  try { await fs.writeFile(markerPath, String(Date.now())) } catch { /* ok */ }
+function clearPendingConfirms(approved: boolean): void {
+  for (const [id, resolve] of [...pendingConfirms]) {
+    pendingConfirms.delete(id)
+    resolve(approved)
+  }
+}
 
-  if (!mainWindow) return
-  const { response } = await dialog.showMessageBox(mainWindow, {
-    type: 'question',
-    title: '创建桌面快捷方式',
-    message: '检测到这是首次启动 WinAgent，\n是否在桌面创建快捷方式？',
-    buttons: ['创建快捷方式', '取消'],
-    defaultId: 0,
-    cancelId: 1
+// ── 5. 启动 ────────────────────────────────────────────────
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
   })
-  if (response === 0) {
-    const shortcutPath = path.join(app.getPath('desktop'), 'WinAgent.lnk')
-    shell.writeShortcutLink(shortcutPath, 'create', {
-      target: process.execPath,
-      description: 'WinAgent — Windows AI 桌面助手',
-      icon: process.execPath,
-      iconIndex: 0
-    })
-    Logger.info('桌面快捷方式已创建: ' + shortcutPath)
-  }
-}
 
-/** 后台异步索引 wiki vault 中的 wiki 层笔记（LLM 检索编译结果，不索引 raw 层） */
-async function indexWikiVault(): Promise<void> {
-  if (!vaultManager || !searchIndex) return
-  try {
-    const allNotes = await vaultManager.listNotes()
-    const flatNotes = flattenWikiNotes(allNotes)
-    const filesOnly = flatNotes.filter((n) => n.kind === 'file' && n.path.startsWith('wiki/'))
-    if (filesOnly.length === 0) return
-
-    // 并行读取所有笔记内容
-    const indexData: Array<{ meta: any; content: string }> = []
-    const reads = filesOnly.map(async (n) => {
-      try {
-        const content = await vaultManager!.readNote(n.path)
-        indexData.push({ meta: n, content: content.rawBody })
-      } catch { /* skip unreadable files */ }
-    })
-    await Promise.all(reads)
-
-    await searchIndex.rebuild(indexData)
-    await rebuildGraph()
-    // 通知渲染进程 vault 已就绪（广播所有窗口）
-    sendToWindows('wiki:vault:changed', { type: 'modified', path: '' })
-    Logger.info(`Wiki 索引完成: ${indexData.length} 篇笔记`)
-    // 扫描 raw/ 中未编译的文件（无对应 source 页），自动补编译
-    await ingestPendingRawFiles()
-  } catch (err) {
-    Logger.error('Wiki 索引失败: ' + String(err))
-  }
-}
-
-/** 收集已有 source 页引用的 raw_file 路径集合（用于去重与批量过滤） */
-async function listCompiledRawFiles(): Promise<Set<string>> {
-  const compiled = new Set<string>()
-  if (!vaultManager) return compiled
-  const sourceDir = path.join(vaultManager.getVaultPath(), 'wiki', 'sources')
-  try {
-    const sourceFiles = await fs.readdir(sourceDir)
-    for (const f of sourceFiles.filter((f) => f.endsWith('.md'))) {
-      try {
-        const raw = await fs.readFile(path.join(sourceDir, f), 'utf-8')
-        const parsed = matter(raw)
-        const rf = (parsed.data as any).raw_file
-        if (typeof rf === 'string') compiled.add(rf.replace(/\\/g, '/'))
-      } catch { /* skip */ }
+  app.whenReady().then(async () => {
+    try {
+      core = await services.createWinAgentCore()
+      startBusForwarding()
+      services.Logger.info('桌面版服务核心就绪')
+    } catch (err) {
+      services.Logger.error('服务核心装配失败: ' + String((err as Error)?.message || err))
+      dialog.showErrorBox('WinAgent 启动失败', String((err as Error)?.message || err))
+      app.quit()
+      return
     }
-  } catch { /* sources 目录不存在 */ }
-  return compiled
+    registerIpc()
+    createWindow()
+  })
+
+  app.on('window-all-closed', () => {
+    core?.dispose()
+    if (process.platform !== 'darwin') app.quit()
+  })
 }
-
-/** 启动时对 raw/ 中未编译（无对应 source 页）的文件自动 INGEST */
-async function ingestPendingRawFiles(): Promise<void> {
-  if (!vaultManager || !aiPipeline) return
-  try {
-    const compiled = await listCompiledRawFiles()
-
-    // 扫描 raw/ 下所有可摄入的文件（不限 .md）
-    const allRawFiles = await vaultManager.listRawFiles()
-    const pending = allRawFiles.filter((p) => !compiled.has(p))
-    if (pending.length === 0) return
-    Logger.info(`[AutoIngest] 发现 ${pending.length} 个未编译的 raw 文件，开始自动编译…`)
-    // 串行编译（避免并发 LLM 调用过载）
-    for (const relPath of pending) {
-      try {
-        await runIngest(relPath)
-        Logger.info(`[AutoIngest] 已编译: ${relPath}`)
-      } catch (e) {
-        Logger.error(`[AutoIngest] 跳过（失败）: ${relPath}: ${String(e)}`)
-      }
-    }
-  } catch (err) {
-    Logger.error('未编译文件扫描失败: ' + String(err))
-  }
-}
-
-app.on('window-all-closed', () => {
-  vaultManager?.dispose()
-  registry.dispose()
-  if (process.platform !== 'darwin') app.quit()
-})

@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ContextManager = exports.IMAGE_TOKEN_COST = void 0;
 exports.estimateTokens = estimateTokens;
 const OpenAIClient_1 = require("../llm/OpenAIClient");
+const KnowledgeRetriever_1 = require("../wiki/KnowledgeRetriever");
 /** 估算每张图片的 token 开销 */
 exports.IMAGE_TOKEN_COST = 800;
 /** 预压缩阶段：旧工具结果保留的最大字符数 */
@@ -27,6 +28,8 @@ function contentTokens(c) {
     for (const p of c) {
         if (p.type === 'text')
             t += Math.ceil(p.text.length / 3);
+        else if (p.type === 'file')
+            t += 4000; // PDF 文件直传按固定开销估算（实际随页数浮动）
         else
             t += exports.IMAGE_TOKEN_COST; // 图片按固定开销估算
     }
@@ -77,7 +80,7 @@ class ContextManager {
         const split = safeSplitIndex(history, history.length - keep);
         if (split <= 0)
             return history;
-        // ── 阶段一：无损度较高的轻量压缩（截断旧工具结果 + 剥离旧图片）──
+        // ── 阶段一：无损度较高的轻量压缩（截断旧工具结果 + 剥离旧图片 + 剥离旧知识注入）──
         const trimmed = history.map((m, i) => {
             if (i >= split)
                 return m;
@@ -85,11 +88,21 @@ class ContextManager {
             if (m.role === 'tool' && typeof m.content === 'string' && m.content.length > TOOL_RESULT_KEEP_CHARS + 100) {
                 return { ...m, content: m.content.slice(0, TOOL_RESULT_KEEP_CHARS) + `\n…[结果已截断，原 ${m.content.length} 字符]` };
             }
-            // 旧 multipart 消息剥离图片（base64 体积大，且旧图片对后续推理价值低）
+            // 旧 user 消息中的知识库注入块剥离（自动 RAG 注入只在当轮有价值）
+            if (m.role === 'user' && typeof m.content === 'string' && m.content.includes(KnowledgeRetriever_1.KNOWLEDGE_MARK)) {
+                return { ...m, content: m.content.slice(0, m.content.indexOf(KnowledgeRetriever_1.KNOWLEDGE_MARK)).trimEnd() + '\n…[知识库检索内容已省略]' };
+            }
+            // 旧 multipart 消息剥离图片与文件（base64 体积大，且旧图/旧文件对后续推理价值低）
             if (Array.isArray(m.content)) {
                 const text = contentText(m.content);
                 const imgCount = m.content.filter((p) => p.type === 'image_url').length;
-                return { ...m, content: imgCount > 0 ? `${text}\n[${imgCount} 张图片已省略]` : text };
+                const fileCount = m.content.filter((p) => p.type === 'file').length;
+                const notes = [];
+                if (imgCount > 0)
+                    notes.push(`[${imgCount} 张图片已省略]`);
+                if (fileCount > 0)
+                    notes.push(`[${fileCount} 个 PDF 文件已省略，路径见文本]`);
+                return { ...m, content: notes.length ? `${text}\n${notes.join('\n')}` : text };
             }
             return m;
         });

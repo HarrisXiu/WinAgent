@@ -5,6 +5,8 @@ export interface GraphInput {
   title: string
   tags: string[]
   links: string[] // [[wiki link]] 目标
+  /** AI 分析发现的关系目标（relPath，来自 frontmatter aiRelations）：生成 ai 型边入图 */
+  aiRelations?: string[]
 }
 
 /**
@@ -25,10 +27,14 @@ export class GraphEngine {
 
     // 收集所有已知节点 id（全路径 + basename 裸 slug，兼容契约铁律 [[slug]] 链接格式）
     const knownIds = new Set<string>()
+    // 裸 slug → 全路径 id（link 边 target 归一用，消除悬空边）
+    const slugToFullId = new Map<string, string>()
     for (const n of inputs) {
       const id = n.path.replace(/\.md$/, '')
       knownIds.add(id)
-      knownIds.add(n.path.split('/').pop()?.replace(/\.md$/, '') || '')
+      const base = n.path.split('/').pop()?.replace(/\.md$/, '') || ''
+      knownIds.add(base)
+      if (base && !slugToFullId.has(base)) slugToFullId.set(base, id)
     }
     // 按标签分组（用于生成 tag 型边）
     const tagToNodes = new Map<string, string[]>()
@@ -61,14 +67,21 @@ export class GraphEngine {
       edges.push({ source, target, type, weight })
     }
 
-    // 2) 构建 link 边 — 直接的 [[wiki link]]
+    // 2) 构建 link 边 — 直接的 [[wiki link]]；target 归一到全路径节点 id（避免裸 slug 产生悬空边）
     for (const input of inputs) {
       const sourceId = input.path.replace(/\.md$/, '')
       for (const rawLink of input.links) {
-        const normalized = rawLink.replace(/\\/g, '/')
+        const normalized = rawLink.replace(/\\/g, '/').replace(/\.md$/, '')
         if (knownIds.has(normalized)) {
-          addEdge(sourceId, normalized, 'link', 2)
+          const targetId = slugToFullId.get(normalized) ?? normalized
+          addEdge(sourceId, targetId, 'link', 2)
         }
+      }
+      // AI 分析发现的关系（aiRelations target 为 relPath）→ ai 型边（与 [[wikilink]] 同权重）
+      for (const rel of input.aiRelations || []) {
+        const normalized = rel.replace(/\\/g, '/').replace(/\.md$/, '')
+        const targetId = knownIds.has(normalized) ? (slugToFullId.get(normalized) ?? normalized) : null
+        if (targetId) addEdge(sourceId, targetId, 'ai', 1)
       }
     }
 

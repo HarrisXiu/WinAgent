@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ConfigStore = exports.DEFAULT_PET_PROMPT = exports.DEFAULT_SYSTEM_PROMPT = void 0;
+exports.ConfigStore = exports.DEFAULT_PET_PROMPT = exports.LEGACY_SYSTEM_PROMPT = exports.DEFAULT_PERSONA_PROMPT = void 0;
 exports.defaultConfig = defaultConfig;
 exports.getDataDir = getDataDir;
 const fs_1 = require("fs");
@@ -22,7 +22,20 @@ function decryptKey(stored) {
     // 桌面版 DPAPI 密文：Node 无法解密，清空让用户重填
     return '';
 }
-exports.DEFAULT_SYSTEM_PROMPT = `你是一个自主可控的 Windows 操作助手。你可以帮助用户：
+/**
+ * 专业助手人设（默认 petPrompt）。
+ * 只承载身份/语气/行为原则，不含工具清单与执行规则——那些由系统动态拼接，
+ * 避免与动态工具列表重复、过期、互相矛盾。
+ */
+exports.DEFAULT_PERSONA_PROMPT = `你是一个自主可控的 Windows 操作助手，同时管理着用户的个人知识库（LLM Wiki）。
+- 用中文与用户交流，语气专业、高效、简洁；回复有重点，不堆砌客套话
+- 能直接操作电脑完成实际任务（文件/系统/注册表/文档/网络等），也能基于知识库回答知识性问题
+- 诚实优先：不知道就说不知道，操作失败就如实报告原因；绝不编造结果或假装成功
+- 涉及删除、改系统、模拟输入等有影响的操作，先向用户说明再执行`;
+/**
+ * 旧版默认 systemPrompt 全文（仅用于配置迁移时识别"用户从未自定义"的场景，不再注入）。
+ */
+exports.LEGACY_SYSTEM_PROMPT = `你是一个自主可控的 Windows 操作助手。你可以帮助用户：
 1. 管理文件和目录（查找、创建、读取、修改、删除、复制、移动）
 2. 操作 Windows 注册表（读取、写入、删除键和值）
 3. 管理开机启动项、查看和结束进程
@@ -91,11 +104,6 @@ exports.DEFAULT_PET_PROMPT = `你正在扮演「安洁莉娜」——《明日�
 - 名句：「信使的工作并不轻松。送件人和收件人可能都有着自己的野心，包裹里也许埋藏着惊人的秘密……如果信使光盯着脚下的路，是会因为看不见落脚点而坠落的。」
 - 聊天时像朋友一样陪伴，会关心博士（比如劝博士少熬夜、请博士喝咖啡——不过每天只有一杯哦）
 
-【能力与工具】
-- 作为信使，你乐于帮博士「跑腿」：查找文件、整理资料、下载内容、发起网络请求、制作文档等电脑上的活都可以用工具完成，做完像送完一封信那样汇报
-- 本环境没有图像生成能力，博士需要图片时，用 generate_image_prompt 生成可复用的绘图提示词交给博士
-- 操作电脑属于「替博士跑腿」，但涉及危险操作（删除、改系统、模拟输入等）仍要请示博士确认
-
 【扮演规则】
 - 全程以安洁莉娜的口吻回复，保持人设不崩塌；不要自称AI或助手，除非博士明确要求切换到助手模式
 - 回复亲切口语化、有温度，篇幅适中，别像说明书一样罗列
@@ -132,7 +140,6 @@ function defaultConfig() {
         ],
         temperature: 0.3,
         maxTokens: 4096,
-        systemPrompt: exports.DEFAULT_SYSTEM_PROMPT,
         autoApproveTools: false,
         compactThresholdTokens: 24000,
         keepRecentTurns: 6,
@@ -147,9 +154,14 @@ function defaultConfig() {
         stream: true,
         thinkingMode: 'auto',
         chatMode: 'pet',
-        // 插件版默认使用专业助手人设（不做桌宠主题）；用户可在设置中换成任意人设提示词
-        petPrompt: exports.DEFAULT_SYSTEM_PROMPT,
+        // 默认专业助手人设；工具清单与执行规则由 AgentService 动态拼接，不写进人设
+        petPrompt: exports.DEFAULT_PERSONA_PROMPT,
         vaultPath: '',
+        knowledgeRag: {
+            enabled: true,
+            topK: 3,
+            minScore: 0.12
+        },
         // 主题：默认浅色 + 品牌粉蓝（与改造前硬编码配色一致）
         theme: {
             mode: 'light',
@@ -189,6 +201,7 @@ class ConfigStore {
             // 嵌套对象需深合并，避免旧配置缺字段
             this.cfg.visionAssist = { ...defaultConfig().visionAssist, ...(parsed.visionAssist || {}) };
             this.cfg.theme = { ...defaultConfig().theme, ...(parsed.theme || {}) };
+            this.cfg.knowledgeRag = { ...defaultConfig().knowledgeRag, ...(parsed.knowledgeRag || {}) };
             // 解密 apiKey 到内存；旧版明文自动回写升级为密文
             let migrated = false;
             this.cfg.providers = this.cfg.providers.map((p) => {
@@ -196,6 +209,28 @@ class ConfigStore {
                     migrated = true;
                 return { ...p, apiKey: decryptKey(p.apiKey) };
             });
+            // ── 提示词一次性迁移（petPrompt 承载纯人设；工具/规则由系统动态拼接）──
+            // 1) petPrompt 是旧版默认全文 → 用户从未自定义 → 升级为新版人设
+            // 2) petPrompt 其他非空值 → 用户自定义 → 保留
+            // 3) 用户自定义过 systemPrompt 且 petPrompt 是默认值 → 自定义文本并入 petPrompt（别名兼容，不丢配置）
+            // 4) 迁移完成后 systemPrompt 置空（运行时不再读取）
+            {
+                const legacyDefault = parsed.petPrompt === exports.LEGACY_SYSTEM_PROMPT;
+                const customSystem = typeof parsed.systemPrompt === 'string' &&
+                    parsed.systemPrompt.trim() && parsed.systemPrompt !== exports.LEGACY_SYSTEM_PROMPT;
+                if (legacyDefault) {
+                    this.cfg.petPrompt = exports.DEFAULT_PERSONA_PROMPT;
+                    migrated = true;
+                }
+                else if (customSystem && parsed.petPrompt === exports.DEFAULT_PERSONA_PROMPT) {
+                    this.cfg.petPrompt = String(parsed.systemPrompt);
+                    migrated = true;
+                }
+                if (typeof parsed.systemPrompt === 'string') {
+                    this.cfg.systemPrompt = '';
+                    migrated = true;
+                }
+            }
             if (migrated)
                 await this.save(this.cfg);
         }

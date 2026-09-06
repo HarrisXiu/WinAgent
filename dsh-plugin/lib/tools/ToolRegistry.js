@@ -7,8 +7,7 @@ const registryTools_1 = require("./registryTools");
 const inputTools_1 = require("./inputTools");
 const windowTools_1 = require("./windowTools");
 const httpTools_1 = require("./httpTools");
-const docxTools_1 = require("./docxTools");
-const imageTools_1 = require("./imageTools");
+const officeTools_1 = require("./officeTools");
 const SkillLoader_1 = require("../skills/SkillLoader");
 const McpManager_1 = require("../mcp/McpManager");
 const Logger_1 = require("../util/Logger");
@@ -28,7 +27,7 @@ class ToolRegistry {
         this.tools.clear();
         this.mcp.dispose();
         // 内置工具（含知识库工具）
-        this.addAll([...fileTools_1.fileTools, ...systemTools_1.systemTools, ...registryTools_1.registryTools, ...inputTools_1.inputTools, ...windowTools_1.windowTools, ...httpTools_1.httpTools, ...docxTools_1.docxTools, ...imageTools_1.imageTools, ...this.wikiTools], 'builtin');
+        this.addAll([...fileTools_1.fileTools, ...systemTools_1.systemTools, ...registryTools_1.registryTools, ...inputTools_1.inputTools, ...windowTools_1.windowTools, ...httpTools_1.httpTools, ...officeTools_1.officeTools, ...this.wikiTools], 'builtin');
         void cfg;
         Logger_1.Logger.info(`[Tools] 内置工具 ${this.tools.size} 个`);
     }

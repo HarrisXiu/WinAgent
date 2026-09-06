@@ -9,12 +9,13 @@ const path_1 = __importDefault(require("path"));
 const gray_matter_1 = __importDefault(require("gray-matter"));
 const types_1 = require("./types");
 const WorkflowService_1 = require("../wiki/WorkflowService");
+const slug_1 = require("../wiki/slug");
 function createWikiTools(vaultManager, searchIndex, store) {
     return [
         {
             schema: {
                 name: 'search_knowledge_base',
-                description: '在个人知识库中全文搜索笔记。支持中英文搜索，返回标题、AI 摘要与正文片段，通常可直接据此回答；信息不足时用 read_note 读全文。当用户询问某主题是否在知识库中有相关资料时优先使用此工具。',
+                description: '在个人知识库中全文搜索笔记（中英文）。返回标题、路径、confidence、AI 摘要与正文片段，通常可直接据此回答。对话中系统已自动注入过检索结果时，本工具用于补充检索或换关键词重试；信息不足时用 retrieve_knowledge 一次取多篇全文。',
                 parameters: {
                     type: 'object',
                     properties: {
@@ -29,8 +30,50 @@ function createWikiTools(vaultManager, searchIndex, store) {
                 if (results.length === 0)
                     return '未找到匹配的笔记。可尝试换关键词（同义词/英文/缩写）重试。';
                 return results
-                    .map((r, i) => `${i + 1}. **${r.title}** (路径: \`${r.path}\`, 相关度: ${r.score.toFixed(2)})${r.summary ? `\n   AI 摘要: ${r.summary}` : ''}\n   > ${r.snippet}`)
+                    .map((r, i) => `${i + 1}. **${r.title}** (路径: \`${r.path}\`, 相关度: ${r.score.toFixed(2)}${r.confidence ? `, confidence: ${r.confidence}` : ''})${r.summary ? `\n   AI 摘要: ${r.summary}` : ''}\n   > ${r.snippet}`)
                     .join('\n\n');
+            }
+        },
+        {
+            schema: {
+                name: 'retrieve_knowledge',
+                description: '深度检索个人知识库：搜索相关笔记并自动读取其全文，一次性返回组装好的资料上下文（含路径、confidence、正文）。当自动注入的检索结果不够详细、或需要多篇笔记交叉比对时使用。',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        query: { type: 'string', description: '搜索关键词或问题主题' },
+                        limit: { type: 'integer', description: '候选检索数，默认 5' },
+                        readCount: { type: 'integer', description: '读取全文的篇数（0-3），默认 2' }
+                    },
+                    required: ['query']
+                }
+            },
+            async run(a) {
+                const query = (0, types_1.str)(a.query);
+                const limit = Math.min(Math.max((0, types_1.num)(a.limit, 5), 1), 10);
+                const readCount = Math.min(Math.max((0, types_1.num)(a.readCount, 2), 0), 3);
+                const results = searchIndex.search(query, limit);
+                if (results.length === 0)
+                    return '未找到匹配的笔记。可尝试换关键词（同义词/英文/缩写）重试。';
+                const parts = [];
+                const toRead = results.slice(0, readCount);
+                for (const r of toRead) {
+                    try {
+                        const note = await vaultManager.readNote(r.path);
+                        const body = note.rawBody.slice(0, 2500);
+                        parts.push(`【${parts.length + 1}】《${r.title}》 ${r.path}${r.confidence ? `  confidence: ${r.confidence}` : ''}${r.sourceCount !== undefined ? `（source_count: ${r.sourceCount}）` : ''}\n${body}${note.rawBody.length > 2500 ? '\n…（正文已截断，可用 read_note 读全文）' : ''}`);
+                    }
+                    catch { /* 单篇读取失败跳过 */ }
+                }
+                const rest = results.slice(readCount);
+                const lines = [];
+                if (parts.length > 0)
+                    lines.push(parts.join('\n\n---\n\n'));
+                if (rest.length > 0) {
+                    lines.push('其他相关笔记:\n' +
+                        rest.map((r) => `- **${r.title}** (\`${r.path}\`${r.confidence ? `, confidence: ${r.confidence}` : ''})${r.summary ? ` ${r.summary.slice(0, 120)}` : ''}`).join('\n'));
+                }
+                return lines.join('\n\n') || '检索到候选但读取失败，可换关键词重试。';
             }
         },
         {
@@ -162,7 +205,8 @@ function createWikiTools(vaultManager, searchIndex, store) {
                 const content = (0, types_1.str)(a.content);
                 if (!title || !content)
                     return '标题和内容不能为空';
-                const slug = title.toLowerCase().replace(/[^a-z0-9一-鿿]+/g, '-').replace(/-+/g, '-').slice(0, 40);
+                // slug 统一纯英文 kebab（契约 §0），中文标题回退时间戳
+                const slug = (0, slug_1.slugifyKebab)(title, 'output');
                 const date = new Date().toISOString().slice(0, 10);
                 const outPath = `wiki/outputs/${date}-${slug}.md`;
                 const fm = {
@@ -180,7 +224,7 @@ function createWikiTools(vaultManager, searchIndex, store) {
         {
             schema: {
                 name: 'lint_knowledge_base',
-                description: '对知识库执行健康检查（LLM Wiki LINT），运行 10 项检查：frontmatter 合法性、broken wikilinks、索引一致性、stub 页面、近重复概念、SHA-256 完整性、stale 页面、跨语言重复、wikilink 格式、系统文件被 wikilink。报告写入 wiki/outputs/lint-日期.md。',
+                description: '对知识库执行 10 项健康检查（frontmatter/wikilink/索引一致性/stub/重复/哈希完整性/stale/别名重叠/格式/系统文件保护），报告写入 wiki/outputs/。',
                 parameters: {
                     type: 'object',
                     properties: {}
@@ -205,6 +249,7 @@ function createWikiTools(vaultManager, searchIndex, store) {
                     required: ['keep', 'remove', 'area']
                 }
             },
+            dangerous: true,
             async run(a) {
                 const r = await (0, WorkflowService_1.runMerge)(vaultManager, (0, types_1.str)(a.keep), (0, types_1.str)(a.remove), (0, types_1.str)(a.area, 'concepts'));
                 return r.ok ? r.summary : r.error || '合并失败';
@@ -213,7 +258,7 @@ function createWikiTools(vaultManager, searchIndex, store) {
         {
             schema: {
                 name: 'reflect_knowledge_base',
-                description: '对知识库执行综合分析（LLM Wiki REFLECT）：Stage 0 反向检验（完整性核验 + 回音室检查）→ 模式扫描 → 深度合成 → Gap Analysis。识别跨来源模式、矛盾对、内容空白、孤立概念，生成 synthesis 报告并更新 overview.md 健康仪表盘。',
+                description: '对知识库执行综合分析（Stage 0 完整性核验 → 模式/矛盾/空白/孤立概念识别），生成 synthesis 报告并更新 overview 健康仪表盘。',
                 parameters: {
                     type: 'object',
                     properties: {}

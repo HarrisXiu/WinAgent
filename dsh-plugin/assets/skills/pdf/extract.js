@@ -160,6 +160,55 @@ async function extractPpt(filePath) {
   }
 }
 
+// === docx 嵌入图片（word/media/ 解包直取） ===
+// 仅导出视觉模型可直读的栅格格式（png/jpg/gif/webp）；emf/wmf/svg/tiff 等跳过并说明
+const IMG_MIME_BY_EXT = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp'
+}
+
+async function extractDocxImages(buf, opts = {}) {
+  const maxImages = Number(opts.max_images) || 8
+  const maxBytes = Number(opts.max_bytes) || 3 * 1024 * 1024
+  const maxTotal = Number(opts.max_total) || 12 * 1024 * 1024
+  const JSZipMod = loadModule('jszip')
+  const JSZip = JSZipMod.default || JSZipMod
+  const zip = await JSZip.loadAsync(buf)
+  const names = Object.keys(zip.files)
+    .filter((f) => /^word\/media\//.test(f) && !zip.files[f].dir)
+    .sort()
+  const images = []
+  const skipped = []
+  let totalBytes = 0
+  for (const f of names) {
+    const ext = (f.split('.').pop() || '').toLowerCase()
+    const mime = IMG_MIME_BY_EXT[ext]
+    if (!mime) {
+      skipped.push({ file: f.replace(/^word\/media\//, ''), reason: `格式 .${ext} 不支持（emf/wmf/svg/tiff 等矢量或冷门格式）` })
+      continue
+    }
+    if (images.length >= maxImages) {
+      skipped.push({ file: f.replace(/^word\/media\//, ''), reason: `超出 max_images=${maxImages}` })
+      continue
+    }
+    const data = await zip.files[f].async('nodebuffer')
+    if (data.length > maxBytes) {
+      skipped.push({ file: f.replace(/^word\/media\//, ''), reason: `单图超过 ${maxBytes} 字节` })
+      continue
+    }
+    if (totalBytes + data.length > maxTotal) {
+      skipped.push({ file: f.replace(/^word\/media\//, ''), reason: '超出总量预算' })
+      continue
+    }
+    totalBytes += data.length
+    images.push({ file: f.replace(/^word\/media\//, ''), mime, bytes: data.length, base64: data.toString('base64') })
+  }
+  return { images, skipped, total: names.length }
+}
+
 /** 按扩展名提取文档文本（format 为扩展名去点，如 'pdf'/'docx'/'xlsx'/'ppt'） */
 async function extractByFormat(absPath, fmt) {
   const buf = fs.readFileSync(absPath)
@@ -171,4 +220,4 @@ async function extractByFormat(absPath, fmt) {
   throw new Error(`不支持的格式: ${fmt}`)
 }
 
-module.exports = { extractByFormat, extractPdf, extractZipText, extractDoc, extractXls, extractPpt }
+module.exports = { extractByFormat, extractPdf, extractZipText, extractDoc, extractXls, extractPpt, extractDocxImages }
