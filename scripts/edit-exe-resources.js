@@ -1,12 +1,16 @@
 /**
- * 打包后为 exe 写入图标与版本资源（替代 electron-builder 内置 rcedit 步骤）。
+ * electron-builder afterPack hook + 独立 CLI 双模式。
  *
- * 背景：electron-builder 25.x 在打包后立即调用 rcedit 会因文件句柄时序问题
- * 稳定失败（"Fatal error: Unable to commit changes"），而稍后手动执行同一命令
- * 必然成功。因此关闭 win.signAndEditExecutable，在打包完成后由本脚本带重试地
- * 对 win-unpacked 主程序与 portable 产物执行资源写入。
+ * 背景：electron-builder 25.x 在打包后立即调用 rcedit 改写 exe 资源会因
+ * Defender 实时扫描/文件句柄时序问题稳定失败（"Unable to commit changes"）。
  *
- * 用法: node scripts/edit-exe-resources.js
+ * 模式 1（afterPack hook）：electron-builder.yml 中 afterPack: scripts/edit-exe-resources.js
+ *   打包完成后主动触碰 exe（读→触碰时间戳），促使 Defender 完成扫描并释放句柄，
+ *   使后续内置 rcedit 步骤能正常执行。
+ *
+ * 模式 2（独立 CLI）：npm run dist 流程末尾调用 node scripts/edit-exe-resources.js
+ *   对 win-unpacked 主程序与 portable 产物执行带重试的 rcedit 资源写入，
+ *   作为内置步骤失败时的兜底。
  */
 const fs = require('fs')
 const path = require('path')
@@ -19,7 +23,25 @@ const pkg = require(path.join(ROOT, 'package.json'))
 const yml = fs.readFileSync(path.join(ROOT, 'electron-builder.yml'), 'utf-8')
 const productName = (yml.match(/^productName:\s*(.+)$/m) || [])[1] || 'WinAgent'
 
-// 定位 electron-builder 缓存中的 rcedit-x64.exe（取版本号最大的 winCodeSign-* 目录）
+// ─── 模式 1：afterPack hook ───
+/** @param {import('electron-builder').AfterPackContext} context */
+exports.afterPack = async function (context) {
+  const exePath = path.join(context.appOutDir, 'WinAgent.exe')
+  if (!fs.existsSync(exePath)) return
+  for (let i = 0; i < 5; i++) {
+    try {
+      const fd = fs.openSync(exePath, 'r+')
+      fs.closeSync(fd)
+      const now = Date.now() / 1000
+      fs.utimesSync(exePath, now, now)
+      return
+    } catch {
+      await new Promise((r) => setTimeout(r, 1000))
+    }
+  }
+}
+
+// ─── 模式 2：独立 CLI ───
 function resolveRedit() {
   const cacheDir = path.join(process.env.LOCALAPPDATA || '', 'electron-builder', 'Cache', 'winCodeSign')
   if (!fs.existsSync(cacheDir)) throw new Error(`未找到 winCodeSign 缓存目录: ${cacheDir}`)
@@ -48,7 +70,6 @@ function editExe(rcedit, exe) {
     '--set-version-string', 'CompanyName', productName,
     '--set-icon', path.join(ROOT, 'build', 'icon.ico'),
   ]
-  // 打包刚结束时 exe 可能被 Defender 扫描/句柄未释放短暂锁住，带重试
   const MAX = 6
   for (let i = 1; i <= MAX; i++) {
     try {
@@ -78,9 +99,11 @@ function main() {
   }
 }
 
-try {
-  main()
-} catch (err) {
-  console.error('exe 资源写入失败:', err.message)
-  process.exit(1)
+if (require.main === module) {
+  try {
+    main()
+  } catch (err) {
+    console.error('exe 资源写入失败:', err.message)
+    process.exit(1)
+  }
 }
