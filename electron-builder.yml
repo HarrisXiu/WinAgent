@@ -15,5 +15,8 @@ win:
         - x64
   icon: build/icon.ico
   artifactName: WinAgent-${version}-win64.exe
+  # 内置 rcedit 在打包后立即改写 exe 资源会因文件句柄时序失败（"Unable to commit changes"），
+  # 跳过之，由 scripts/edit-exe-resources.js 在打包完成后带重试地完成图标/版本资源写入
+  signAndEditExecutable: false
 compression: maximum
 npmRebuild: false
