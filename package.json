@@ -11,7 +11,7 @@
     "preview": "electron-vite preview",
     "start": "electron-vite preview",
     "pack": "electron-vite build && electron-builder --dir",
-    "dist": "electron-vite build && electron-builder && node scripts/edit-exe-resources.js",
+    "dist": "electron-vite build && electron-builder",
     "build:icon": "node scripts/build-icon.js",
     "plugin:build": "tsc -p dsh-plugin"
   },

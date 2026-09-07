@@ -49,7 +49,7 @@
 
 ## 快速开始
 
-**普通用户**：从 [Releases](https://github.com/HarrisXiu/WinAgent/releases) 下载 `WinAgent-Setup-<version>-win64.exe`（安装版），双击一键安装即可。数据保存在 `%APPDATA%/com.winagent.app/`，覆盖升级直接重装新版。
+**普通用户**：从 [Releases](https://github.com/HarrisXiu/WinAgent/releases) 下载 `WinAgent-<version>-win64.exe`（便携版），双击即用——**免安装、单文件**，数据保存在 `%APPDATA%/com.winagent.app/`，覆盖升级直接用新 exe 替换旧文件即可。
 
 **开发者**（需 Node.js 18+）：
 
@@ -65,21 +65,10 @@ npm run dev
 ## 打包
 
 ```bash
-npm run dist             # electron-vite build + electron-builder（NSIS 安装包 → release/）
+npm run dist             # electron-vite build + electron-builder（便携版 exe → release/）
 npm run pack             # 仅打包目录不生成安装包（调试用）
 npm run build:icon       # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO 图标
 ```
-
-### 发版流程（GitHub Actions 自动发布）
-
-推送 `v*` 格式的 tag 即可触发 [.github/workflows/release.yml](./.github/workflows/release.yml)：自动在 Windows runner 上构建 NSIS 安装包，并以 **draft Release** 形式上传产物（含 `latest.yml`），到 [Releases](https://github.com/HarrisXiu/WinAgent/releases) 页面确认后点 Publish 即正式发布。
-
-```bash
-npm version patch        # 或 minor / major：自动改 package.json 版本号 + 打 tag + commit
-git push --follow-tags   # 推上去后 CI 自动构建并出 draft Release
-```
-
-> 工作流会校验 tag 与 `package.json` 版本一致（用 `npm version` 打 tag 天然一致）；构建产物为 draft，不会直接公开。
 
 **数据目录**：应用数据保存在 `%APPDATA%/com.winagent.app/`（即 `C:\Users\<用户名>\AppData\Roaming\com.winagent.app\`），包括 `config.json`、`wiki/`（知识库）、`skills/`、`mcp.json`。首次启动时 skills 与 mcp.json 模板自动播种。
 

@@ -10,19 +10,10 @@ files:
   - node_modules/dsh-winagent/**/*
 win:
   target:
-    - target: nsis
+    - target: portable
       arch:
         - x64
   icon: build/icon.ico
-  artifactName: WinAgent-Setup-${version}-win64.exe
-  # 内置 rcedit 在打包后立即改写 exe 资源会因 Defender 句柄时序失败，
-  # 跳过之，由 scripts/edit-exe-resources.js 在打包完成后带重试完成资源写入
-  signAndEditExecutable: false
-nsis:
-  oneClick: true
-  perMachine: false
-  allowToChangeInstallationDirectory: false
-  artifactName: WinAgent-Setup-${version}-win64.exe
+  artifactName: WinAgent-${version}-win64.exe
 compression: maximum
 npmRebuild: false
-afterPack: scripts/edit-exe-resources.js
