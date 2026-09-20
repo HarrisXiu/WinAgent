@@ -626,7 +626,7 @@ exports.officeTools = [
                 XLSX.writeFile(XLSX.readFile(inputPath), outPath);
                 return `已转换（SheetJS）: ${outPath}`;
             }
-            // 2) md → docx：pandoc 优先，内置 JS 引擎兑底
+            // 2) md → docx：pandoc 优先，内置 JS 引擎兜底
             if (src === 'md' && target === 'docx') {
                 if (caps.pandoc) {
                     pandocConvert(inputPath, 'md', 'docx', outPath);

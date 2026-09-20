@@ -60,6 +60,8 @@ export interface ThemeConfig {
   accent: string
   /** 辅色 accent2（hex，如 #6db7d9） */
   accent2: string
+  /** 外观包 id：'plain' 默认无吉祥物 | 'angelina' 内置特殊主题 | 'custom:<id>' 用户上传 */
+  skin: string
 }
 
 /** 自动 RAG 注入配置：每轮提问自动检索知识库并把结果注入上下文 */
@@ -69,6 +71,88 @@ export interface KnowledgeRagConfig {
   topK: number
   /** 注入的相关度阈值（归一化 0~1），低于该值的结果不注入 */
   minScore: number
+}
+
+/**
+ * 语音（TTS）配置：基于小米 MiMo TTS 的 OpenAI 兼容接口。
+ * voice 取值为内置音色名（如 mimo_default / 冰糖）或 'clone:<voiceId>'（本地克隆音色）。
+ */
+export interface VoiceConfig {
+  /** 是否启用语音朗读 */
+  enabled: boolean
+  /** MiMo API Key */
+  apiKey: string
+  /** API 基础地址（OpenAI 兼容，含 /v1） */
+  baseUrl: string
+  /** 音色：内置音色名 或 'clone:<voiceId>' */
+  voice: string
+  /** Agent 回复完成后自动朗读 */
+  autoPlay: boolean
+  /** 风格指令（请求中 user 角色内容，如「用开心的语气说」），空则不下发风格 */
+  stylePrompt: string
+  /** 输出音频格式（wav 可直接播放；mp3 体积更小） */
+  outputFormat: 'wav' | 'mp3'
+}
+
+/** 克隆音色元数据（样本文件存 dataDir/voices/，元数据存 voices/voices.json） */
+export interface VoiceCloneMeta {
+  id: string
+  name: string
+  /** 相对 voices 目录的文件名，如 vc_xyz123.wav */
+  file: string
+  /** 样本 MIME（audio/wav / audio/mpeg） */
+  mime: string
+  createdAt: string
+}
+
+/** TTS 合成结果：base64 音频字节 + MIME */
+export interface TtsResult {
+  audioBase64: string
+  mime: string
+}
+
+/** 分段朗读会话开启结果（合成在后台进行，逐段经 voiceSegment 事件下发） */
+export interface SessionStartResult {
+  sessionId: string
+  total: number
+}
+
+/** voiceSegment 事件：一段音频合成完毕，渲染层入队播放 */
+export interface VoiceSegmentEvent {
+  sessionId: string
+  /** 段下标（0-based） */
+  index: number
+  total: number
+  mime: string
+  audioBase64: string
+  source: 'manual' | 'auto' | 'agent' | 'test'
+}
+
+/** voiceSessionEnd 事件：会话结束（error 缺省 = 被取消或正常播完） */
+export interface VoiceSessionEndEvent {
+  sessionId: string
+  total: number
+  error?: string
+}
+
+// ==================== 主题包（外观皮肤） ====================
+
+/** 皮肤槽位：五态立绘 + 头像 */
+export type SkinSlot = 'idle' | 'think' | 'tool' | 'vision' | 'talk' | 'avatar'
+
+/** 槽位文件信息（mtime 用于 winagent-skin:// 的缓存失效） */
+export interface SkinSlotFile {
+  file: string
+  mtime: number
+}
+
+/** 主题包元数据（素材存 dataDir/skins/<id>/<slot>.<ext>，元数据存 skins/skins.json） */
+export interface SkinMeta {
+  id: string
+  name: string
+  /** 槽位可缺省：只传 idle 也能用，其余状态回退到 idle */
+  slots: Partial<Record<SkinSlot, SkinSlotFile>>
+  createdAt: string
 }
 
 export interface AppConfig {
@@ -104,6 +188,8 @@ export interface AppConfig {
   knowledgeRag: KnowledgeRagConfig
   /** 主题配置（模式 + 自定义主色，色阶自动推导） */
   theme: ThemeConfig
+  /** 语音（TTS + 克隆音色） */
+  voice: VoiceConfig
 }
 
 export interface ToolParameter {

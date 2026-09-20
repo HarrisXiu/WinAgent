@@ -3,10 +3,13 @@ import type { Tool } from './types';
 export declare class ToolRegistry {
     private tools;
     private wikiTools;
+    private voiceTools;
     private mcp;
     private addAll;
     /** 注册知识库工具（在 initialize 前调用，工具将在下次 initialize 时生效） */
     setWikiTools(tools: Tool[]): void;
+    /** 注册语音工具（speak_text 等；在 initialize 前调用） */
+    setVoiceTools(tools: Tool[]): void;
     initialize(cfg: AppConfig): Promise<void>;
     /** 分别加载 skills 与 mcp（传入已解析的绝对路径） */
     loadExternal(skillsDirAbs: string, mcpConfigAbs: string): Promise<void>;

@@ -14,6 +14,7 @@ const Logger_1 = require("../util/Logger");
 class ToolRegistry {
     tools = new Map();
     wikiTools = [];
+    voiceTools = [];
     mcp = new McpManager_1.McpManager();
     addAll(tools, source) {
         for (const t of tools)
@@ -23,11 +24,15 @@ class ToolRegistry {
     setWikiTools(tools) {
         this.wikiTools = tools;
     }
+    /** 注册语音工具（speak_text 等；在 initialize 前调用） */
+    setVoiceTools(tools) {
+        this.voiceTools = tools;
+    }
     async initialize(cfg) {
         this.tools.clear();
         this.mcp.dispose();
-        // 内置工具（含知识库工具）
-        this.addAll([...fileTools_1.fileTools, ...systemTools_1.systemTools, ...registryTools_1.registryTools, ...inputTools_1.inputTools, ...windowTools_1.windowTools, ...httpTools_1.httpTools, ...officeTools_1.officeTools, ...this.wikiTools], 'builtin');
+        // 内置工具（含知识库工具、语音工具）
+        this.addAll([...fileTools_1.fileTools, ...systemTools_1.systemTools, ...registryTools_1.registryTools, ...inputTools_1.inputTools, ...windowTools_1.windowTools, ...httpTools_1.httpTools, ...officeTools_1.officeTools, ...this.wikiTools, ...this.voiceTools], 'builtin');
         void cfg;
         Logger_1.Logger.info(`[Tools] 内置工具 ${this.tools.size} 个`);
     }

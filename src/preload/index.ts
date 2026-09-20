@@ -4,7 +4,9 @@ import type {
   NoteMeta, NoteContent, NoteData, NoteAnnotation,
   GraphData, SearchResult, TagWithCount, AISuggestion, VaultChangeEvent, IngestResult, IngestProgress,
   BatchIngestStartResult, BatchIngestDoneResult, WorkflowResult, LintWorkflowResult,
-  AnalysisTag, ImportAnalyzeResult
+  AnalysisTag, ImportAnalyzeResult,
+  SessionStartResult, SkinMeta, SkinSlot, VoiceCloneMeta,
+  VoiceSegmentEvent, VoiceSessionEndEvent
 } from '../shared/types'
 
 export interface AttachmentData {
@@ -57,6 +59,80 @@ const api = {
   },
   replyConfirm: (id: string, approved: boolean): void =>
     ipcRenderer.send('agent:confirm:reply', { id, approved }),
+
+  // ==================== Voice（TTS 分段朗读会话 + 克隆音色） ====================
+  tts: {
+    /** 开启分段朗读会话：立即返回 {sessionId, total}，各段经 onSegment 逐段下发 */
+    start: (text: string, opts?: { voice?: string; stylePrompt?: string; source?: 'manual' | 'auto' | 'agent' | 'test' }): Promise<SessionStartResult> =>
+      ipcRenderer.invoke('tts:start', text, opts),
+    /** 播到第 index 段（0-based）时回执，驱动服务端滑窗预取（单向，无往返） */
+    ack: (sessionId: string, index: number): void => { ipcRenderer.send('tts:ack', sessionId, index) },
+    /** 取消朗读会话（不带 id = 取消当前） */
+    cancel: (sessionId?: string): void => { ipcRenderer.send('tts:cancel', sessionId) },
+    /** 一段音频合成完毕（渲染层入队播放） */
+    onSegment: (cb: (d: VoiceSegmentEvent) => void): (() => void) => {
+      const listener = (_e: unknown, d: VoiceSegmentEvent): void => cb(d)
+      ipcRenderer.on('voice:segment', listener)
+      return () => ipcRenderer.removeListener('voice:segment', listener)
+    },
+    /** 会话结束（error 缺省 = 被取消或正常播完） */
+    onSessionEnd: (cb: (d: VoiceSessionEndEvent) => void): (() => void) => {
+      const listener = (_e: unknown, d: VoiceSessionEndEvent): void => cb(d)
+      ipcRenderer.on('voice:session:end', listener)
+      return () => ipcRenderer.removeListener('voice:session:end', listener)
+    }
+  },
+
+  voices: {
+    list: (): Promise<VoiceCloneMeta[]> => ipcRenderer.invoke('voice:list'),
+    /** 内置音色列表（服务层下发，渲染层不硬编码） */
+    builtinList: (): Promise<Array<{ value: string; label: string }>> =>
+      ipcRenderer.invoke('voice:builtinList'),
+    /** 弹文件对话框选择参考音频（wav/mp3）并导入，返回最新列表 */
+    add: (name?: string): Promise<VoiceCloneMeta[]> => ipcRenderer.invoke('voice:add', name),
+    /** 重命名克隆音色，返回最新列表 */
+    rename: (id: string, name: string): Promise<VoiceCloneMeta[]> =>
+      ipcRenderer.invoke('voice:rename', id, name),
+    /** 删除克隆音色，返回最新列表 */
+    remove: (id: string): Promise<VoiceCloneMeta[]> => ipcRenderer.invoke('voice:remove', id),
+    /** 克隆音色试听（走朗读会话，可取消、进全局控制条） */
+    test: (id: string, sampleText?: string): Promise<SessionStartResult> =>
+      ipcRenderer.invoke('voice:test', id, sampleText),
+    /** 音色库变更广播（任一窗口增删后同步） */
+    onChanged: (cb: (list: VoiceCloneMeta[]) => void): (() => void) => {
+      const listener = (_e: unknown, list: VoiceCloneMeta[]): void => cb(list)
+      ipcRenderer.on('voice:changed', listener)
+      return () => ipcRenderer.removeListener('voice:changed', listener)
+    }
+  },
+
+  // ==================== Skins（主题包：外观素材库） ====================
+  skins: {
+    list: (): Promise<SkinMeta[]> => ipcRenderer.invoke('skins:list'),
+    /** 新建空主题包（素材随后逐槽位上传），返回最新列表 */
+    create: (name: string): Promise<SkinMeta[]> => ipcRenderer.invoke('skins:create', name),
+    /** 弹文件对话框上传槽位图片（png/gif/jpg/webp），返回最新列表 */
+    setSlot: (id: string, slot: SkinSlot): Promise<SkinMeta[]> =>
+      ipcRenderer.invoke('skins:setSlot', id, slot),
+    /** 清空槽位，返回最新列表 */
+    clearSlot: (id: string, slot: SkinSlot): Promise<SkinMeta[]> =>
+      ipcRenderer.invoke('skins:clearSlot', id, slot),
+    /** 重命名主题包，返回最新列表 */
+    rename: (id: string, name: string): Promise<SkinMeta[]> =>
+      ipcRenderer.invoke('skins:rename', id, name),
+    /** 删除主题包，返回最新列表 */
+    remove: (id: string): Promise<SkinMeta[]> => ipcRenderer.invoke('skins:remove', id),
+    /** 主题包变更广播（任一窗口操作后同步；config:changed 同时携带当前 skin id） */
+    onChanged: (cb: (list: SkinMeta[]) => void): (() => void) => {
+      const listener = (_e: unknown, list: SkinMeta[]): void => cb(list)
+      ipcRenderer.on('skin:changed', listener)
+      return () => ipcRenderer.removeListener('skin:changed', listener)
+    }
+  },
+
+  /** 人设默认值（主题包联动切换用）：{ personaPrompt, petPrompt } */
+  getConfigPrompts: (): Promise<{ personaPrompt: string; petPrompt: string }> =>
+    ipcRenderer.invoke('config:prompts'),
 
   // ==================== Wiki API ====================
   wiki: {

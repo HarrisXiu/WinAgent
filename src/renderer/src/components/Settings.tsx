@@ -14,12 +14,22 @@ import {
   Cpu,
   Wrench,
   Palette,
-  RotateCcw
+  RotateCcw,
+  Volume2,
+  Loader2,
+  Play,
+  Pencil,
+  Check,
+  ImagePlus,
+  Bot,
+  Sparkles
 } from 'lucide-react'
-import type { AppConfig, ChatMode, ProviderConfig, ThemeConfig, ToolInfo } from '../../../shared/types'
+import type { AppConfig, ProviderConfig, ThemeConfig, SkinMeta, SkinSlot, ToolInfo, VoiceCloneMeta } from '../../../shared/types'
+import { useSpeech } from '../lib/useSpeech'
+import avatarThumb from '../assets/angelina/avatar.png'
 
-/** 默认主题（品牌粉蓝，与改造前硬编码配色一致），恢复默认配色用 */
-const DEFAULT_THEME: ThemeConfig = { mode: 'light', accent: '#f4719c', accent2: '#6db7d9' }
+/** 默认配色（品牌粉蓝，与改造前硬编码配色一致）；不含 skin——恢复配色不动主题包 */
+const DEFAULT_THEME: Omit<ThemeConfig, 'skin'> = { mode: 'light', accent: '#f4719c', accent2: '#6db7d9' }
 
 interface Props {
   onClose: () => void
@@ -43,6 +53,7 @@ function newProvider(): ProviderConfig {
 const TABS = [
   { key: 'models', label: '模型', icon: Server },
   { key: 'vision', label: '视觉辅助', icon: Eye },
+  { key: 'voice', label: '语音', icon: Volume2 },
   { key: 'generation', label: '生成参数', icon: SlidersHorizontal },
   { key: 'theme', label: '外观', icon: Palette },
   { key: 'system', label: '系统提示词', icon: MessageSquareText },
@@ -53,7 +64,20 @@ export type TabKey = (typeof TABS)[number]['key']
 
 const inputCls = 'w-full rounded-lg border border-border bg-panel px-2.5 py-1.5 text-sm text-text'
 
+/** 自定义主题包槽位（五态立绘 + 头像） */
+const SKIN_SLOT_LABELS: Array<[SkinSlot, string]> = [
+  ['idle', '待机'],
+  ['think', '思考'],
+  ['tool', '工具'],
+  ['vision', '识别'],
+  ['talk', '说话'],
+  ['avatar', '头像']
+]
+
+const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
 export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMount }: Props): JSX.Element {
+  const speech = useSpeech()
   const [cfg, setCfg] = useState<AppConfig | null>(null)
   const [tools, setTools] = useState<ToolInfo[]>([])
   const [dataDir, setDataDir] = useState('')
@@ -62,12 +86,79 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
   const [tab, setTab] = useState<TabKey>(initialTab ?? 'models')
   // 主题修改防抖计时器（必须声明在所有条件 return 之前）
   const themeDebounceRef = useRef<ReturnType<typeof setTimeout>>()
+  // 语音：内置音色 + 克隆音色库 + 试听状态
+  const [builtinVoices, setBuiltinVoices] = useState<Array<{ value: string; label: string }>>([])
+  const [clones, setClones] = useState<VoiceCloneMeta[]>([])
+  const [testingId, setTestingId] = useState('')
+  const [voiceErr, setVoiceErr] = useState('')
+  // 克隆音色行内重命名
+  const [renamingClone, setRenamingClone] = useState<{ id: string; name: string } | null>(null)
+  // 主题包：人设默认值 + 自定义包管理
+  const [prompts, setPrompts] = useState<{ personaPrompt: string; petPrompt: string } | null>(null)
+  const [skins, setSkins] = useState<SkinMeta[]>([])
+  const [skinsErr, setSkinsErr] = useState('')
+  const [newSkinName, setNewSkinName] = useState('')
+  const [renamingSkin, setRenamingSkin] = useState<{ id: string; name: string } | null>(null)
 
   useEffect(() => {
     window.winagent.getConfig().then(setCfg)
     window.winagent.listTools().then(setTools)
     window.winagent.getDataDir().then(setDataDir)
+    window.winagent.getConfigPrompts().then(setPrompts).catch(() => setPrompts(null))
+    // 失败不再静默：写入 voiceErr 而不是让音色下拉空白无解释
+    window.winagent.voices.builtinList().then(setBuiltinVoices).catch((e) => setVoiceErr(errMsg(e)))
+    window.winagent.voices.list().then(setClones).catch((e) => setVoiceErr(errMsg(e)))
+    window.winagent.skins.list().then(setSkins).catch((e) => setSkinsErr(errMsg(e)))
+    const offVoices = window.winagent.voices.onChanged(setClones)
+    const offSkins = window.winagent.skins.onChanged(setSkins)
+    return () => {
+      offVoices()
+      offSkins()
+    }
   }, [])
+
+  // 设置面板关闭/卸载时停掉试听（走全局语音会话，含控制条收尾）
+  useEffect(() => () => speech.stop(), [])
+  // 试听会话结束（含被顶掉/出错）后复位按钮
+  useEffect(() => {
+    if (speech.state === 'idle') setTestingId('')
+  }, [speech.state])
+
+  const addClone = async (): Promise<void> => {
+    setVoiceErr('')
+    try {
+      setClones(await window.winagent.voices.add())
+    } catch (e) {
+      setVoiceErr(errMsg(e))
+    }
+  }
+
+  const renameClone = async (id: string, name: string): Promise<void> => {
+    setVoiceErr('')
+    try {
+      setClones(await window.winagent.voices.rename(id, name))
+      setRenamingClone(null)
+    } catch (e) {
+      setVoiceErr(errMsg(e))
+    }
+  }
+
+  const removeClone = async (clone: VoiceCloneMeta): Promise<void> => {
+    if (!window.confirm(`确定删除克隆音色「${clone.name}」吗？删除后不可恢复。`)) return
+    setVoiceErr('')
+    try {
+      setClones(await window.winagent.voices.remove(clone.id))
+    } catch (e) {
+      setVoiceErr(errMsg(e))
+    }
+  }
+
+  /** 试听走全局语音会话：可取消、进控制条 */
+  const testClone = (id: string): void => {
+    setVoiceErr('')
+    setTestingId(id)
+    speech.speak('你好，这是我的克隆音色试听~', { source: 'test', voice: `clone:${id}` })
+  }
 
   // 挂载后自动选择 Skills 文件夹：选好后直接填入并保存，不关闭面板
   useEffect(() => {
@@ -126,6 +217,88 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
     themeDebounceRef.current = setTimeout(() => {
       void window.winagent.saveConfig(next).then(onSaved)
     }, 300)
+  }
+
+  // ── 主题包（外观皮肤） ─────────────────────────────
+  const skinSlotUrl = (s: SkinMeta, slot: SkinSlot): string | null => {
+    const f = s.slots[slot]
+    return f ? `winagent-skin://${s.id}/${slot}?v=${f.mtime}` : null
+  }
+
+  /** 切换主题包：人设联动（B5）——已知默认值静默替换；被手改过则确认后覆盖 */
+  const applySkin = async (skinId: string): Promise<void> => {
+    setSkinsErr('')
+    let petPrompt = cfg.petPrompt
+    const target =
+      skinId === 'plain' ? prompts?.personaPrompt ?? null : skinId === 'angelina' ? prompts?.petPrompt ?? null : null
+    if (target && petPrompt !== target) {
+      const knownDefaults = [prompts?.personaPrompt, prompts?.petPrompt].filter(Boolean) as string[]
+      if (knownDefaults.includes(petPrompt)) {
+        petPrompt = target
+      } else if (
+        window.confirm(
+          '切换主题包会同时切换人设提示词。\n当前提示词已被修改过，是否一并覆盖为该主题包的人设？\n（取消 = 只换外观，保留你调好的提示词）'
+        )
+      ) {
+        petPrompt = target
+      }
+    }
+    const next = { ...cfg, theme: { ...cfg.theme, skin: skinId }, petPrompt }
+    setCfg(next)
+    try {
+      setCfg(await window.winagent.saveConfig(next))
+    } catch (e) {
+      setSkinsErr(errMsg(e))
+    }
+  }
+
+  const createSkin = async (): Promise<void> => {
+    setSkinsErr('')
+    try {
+      setSkins(await window.winagent.skins.create(newSkinName))
+      setNewSkinName('')
+    } catch (e) {
+      setSkinsErr(errMsg(e))
+    }
+  }
+
+  const uploadSkinSlot = async (id: string, slot: SkinSlot): Promise<void> => {
+    setSkinsErr('')
+    try {
+      setSkins(await window.winagent.skins.setSlot(id, slot))
+    } catch (e) {
+      setSkinsErr(errMsg(e))
+    }
+  }
+
+  const clearSkinSlot = async (id: string, slot: SkinSlot): Promise<void> => {
+    setSkinsErr('')
+    try {
+      setSkins(await window.winagent.skins.clearSlot(id, slot))
+    } catch (e) {
+      setSkinsErr(errMsg(e))
+    }
+  }
+
+  const renameSkin = async (id: string, name: string): Promise<void> => {
+    setSkinsErr('')
+    try {
+      setSkins(await window.winagent.skins.rename(id, name))
+      setRenamingSkin(null)
+    } catch (e) {
+      setSkinsErr(errMsg(e))
+    }
+  }
+
+  const removeSkin = async (meta: SkinMeta): Promise<void> => {
+    if (!window.confirm(`确定删除主题包「${meta.name}」吗？正在使用时界面会回退到普通主题。`)) return
+    setSkinsErr('')
+    try {
+      setSkins(await window.winagent.skins.remove(meta.id))
+      if (cfg.theme.skin === `custom:${meta.id}`) await applySkin('plain')
+    } catch (e) {
+      setSkinsErr(errMsg(e))
+    }
   }
 
   // 视觉辅助实际生效的接口与模型
@@ -370,6 +543,221 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
               </section>
             )}
 
+            {/* ---------- 语音（TTS + 克隆音色） ---------- */}
+            {tab === 'voice' && (
+              <section className="space-y-4">
+                <p className="text-[11.5px] leading-relaxed text-muted">
+                  语音合成与声音克隆由小米 MiMo TTS 提供（OpenAI 兼容接口，当前限时免费），需在
+                  platform.xiaomimimo.com 申请 API Key。克隆零样本：上传一段 ≤7.5MB 的 wav/mp3
+                  参考音频即可复刻音色，样本仅保存在本地数据目录 voices/ 下。
+                </p>
+
+                <label className="flex cursor-pointer items-center gap-2.5 text-sm font-medium text-text">
+                  <input
+                    type="checkbox"
+                    className={checkboxCls}
+                    checked={cfg.voice.enabled}
+                    onChange={(e) => update({ voice: { ...cfg.voice, enabled: e.target.checked } })}
+                  />
+                  <span>启用语音朗读（回复气泡出现「朗读」按钮）</span>
+                </label>
+
+                {cfg.voice.enabled && (
+                  <>
+                    <div className="space-y-3.5 pl-6">
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="block text-sm">
+                        <span className="mb-1.5 block text-xs text-muted">MiMo API Key</span>
+                        <input
+                          type="password"
+                          className={inputCls}
+                          placeholder="在 platform.xiaomimimo.com 申请"
+                          value={cfg.voice.apiKey}
+                          onChange={(e) => update({ voice: { ...cfg.voice, apiKey: e.target.value } })}
+                        />
+                      </label>
+                      <label className="block text-sm">
+                        <span className="mb-1.5 block text-xs text-muted">接口地址</span>
+                        <input
+                          className={inputCls}
+                          value={cfg.voice.baseUrl}
+                          onChange={(e) => update({ voice: { ...cfg.voice, baseUrl: e.target.value } })}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="block text-sm">
+                        <span className="mb-1.5 block text-xs text-muted">音色</span>
+                        <select
+                          className={inputCls}
+                          value={cfg.voice.voice}
+                          onChange={(e) => update({ voice: { ...cfg.voice, voice: e.target.value } })}
+                        >
+                          {builtinVoices.map((v) => (
+                            <option key={v.value} value={v.value}>
+                              {v.label}
+                            </option>
+                          ))}
+                          {clones.map((c) => (
+                            <option key={c.id} value={`clone:${c.id}`}>
+                              {c.name}（克隆）
+                            </option>
+                          ))}
+                          {!builtinVoices.some((v) => v.value === cfg.voice.voice) &&
+                            !clones.some((c) => `clone:${c.id}` === cfg.voice.voice) && (
+                              <option value={cfg.voice.voice}>{cfg.voice.voice}（音色已失效）</option>
+                            )}
+                        </select>
+                      </label>
+                      <label className="block text-sm">
+                        <span className="mb-1.5 block text-xs text-muted">输出格式</span>
+                        <select
+                          className={inputCls}
+                          value={cfg.voice.outputFormat}
+                          onChange={(e) =>
+                            update({
+                              voice: { ...cfg.voice, outputFormat: e.target.value as 'wav' | 'mp3' }
+                            })
+                          }
+                        >
+                          <option value="wav">wav（无损，可直接播放）</option>
+                          <option value="mp3">mp3（体积更小）</option>
+                        </select>
+                      </label>
+                    </div>
+
+                    <label className="flex cursor-pointer items-center gap-2.5 text-sm">
+                      <input
+                        type="checkbox"
+                        className={checkboxCls}
+                        checked={cfg.voice.autoPlay}
+                        onChange={(e) => update({ voice: { ...cfg.voice, autoPlay: e.target.checked } })}
+                      />
+                      <span>自动朗读（Agent 回复完成后自动发声）</span>
+                    </label>
+
+                    <label className="block text-sm">
+                      <span className="mb-1.5 block text-xs text-muted">
+                        风格指令（可选，如「用开心的语气说」）
+                      </span>
+                      <input
+                        className={inputCls}
+                        placeholder="留空则用自然语气朗读"
+                        value={cfg.voice.stylePrompt}
+                        onChange={(e) => update({ voice: { ...cfg.voice, stylePrompt: e.target.value } })}
+                      />
+                    </label>
+                    </div>
+
+                    {/* ----- 克隆音色管理（移入语音开关门控内：禁用时无从上传/试听） ----- */}
+                    <div className="pl-6">
+                      <div className="rounded-xl border border-border/70 bg-surface/40 p-4">
+                  <div className="mb-2.5 flex items-center justify-between">
+                    <span className="text-sm font-medium text-text">克隆音色</span>
+                    <button
+                      onClick={() => void addClone()}
+                      className="flex items-center gap-1.5 rounded-lg bg-gradient-to-br from-accent to-accent2 px-3 py-1.5 text-xs font-medium text-accent-fg shadow-card transition-opacity hover:opacity-90"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      上传参考音频（wav / mp3）
+                    </button>
+                  </div>
+                  {clones.length === 0 ? (
+                    <p className="text-[11.5px] text-muted">
+                      还没有克隆音色。上传一段 10~20 秒、清晰无杂音的 wav/mp3 人声即可创建。
+                    </p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {clones.map((c) => (
+                        <div
+                          key={c.id}
+                          className="flex items-center gap-2.5 rounded-lg border border-border/60 bg-panel px-3 py-2"
+                        >
+                          <div className="min-w-0 flex-1">
+                            {renamingClone?.id === c.id ? (
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  autoFocus
+                                  className="w-full rounded-md border border-border bg-panel px-2 py-1 text-[13px] text-text"
+                                  value={renamingClone.name}
+                                  maxLength={30}
+                                  onChange={(e) => setRenamingClone({ id: c.id, name: e.target.value })}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') void renameClone(c.id, renamingClone.name)
+                                    if (e.key === 'Escape') setRenamingClone(null)
+                                  }}
+                                />
+                                <button
+                                  aria-label="保存重命名"
+                                  title="保存"
+                                  onClick={() => void renameClone(c.id, renamingClone.name)}
+                                  className="rounded-md p-1 text-muted transition-colors hover:bg-surface-hover/70 hover:text-accent"
+                                >
+                                  <Check className="h-4 w-4" />
+                                </button>
+                                <button
+                                  aria-label="取消重命名"
+                                  title="取消"
+                                  onClick={() => setRenamingClone(null)}
+                                  className="rounded-md p-1 text-muted transition-colors hover:bg-surface-hover/70 hover:text-muted"
+                                >
+                                  <X className="h-4 w-4" />
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="truncate text-[13px] text-text">{c.name}</div>
+                                <div className="text-[10.5px] text-muted">
+                                  {c.file} · {new Date(c.createdAt).toLocaleString()}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                          {renamingClone?.id !== c.id && (
+                            <>
+                              <button
+                                aria-label={`重命名音色 ${c.name}`}
+                                title="重命名"
+                                onClick={() => setRenamingClone({ id: c.id, name: c.name })}
+                                className="rounded-md p-1.5 text-muted transition-colors hover:bg-surface-hover/70 hover:text-accent"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </button>
+                              <button
+                                aria-label={`试听音色 ${c.name}`}
+                                title="试听（走朗读会话，可在控制条取消）"
+                                onClick={() => testClone(c.id)}
+                                className="rounded-md p-1.5 text-muted transition-colors hover:bg-surface-hover/70 hover:text-accent"
+                              >
+                                {testingId === c.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Play className="h-4 w-4" />
+                                )}
+                              </button>
+                              <button
+                                aria-label={`删除音色 ${c.name}`}
+                                title="删除"
+                                onClick={() => void removeClone(c)}
+                                className="rounded-md p-1.5 text-muted transition-colors hover:bg-danger/10 hover:text-danger"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {voiceErr && <p className="mt-2 text-[11.5px] text-danger">{voiceErr}</p>}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </section>
+            )}
+
             {/* ---------- 生成参数 ---------- */}
             {tab === 'generation' && (
               <section className="space-y-4">
@@ -438,9 +826,199 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
               </section>
             )}
 
-            {/* ---------- 外观（主题） ---------- */}
+            {/* ---------- 外观（主题包 + 配色） ---------- */}
             {tab === 'theme' && (
               <section className="space-y-4">
+                {/* ===== 主题包：普通（默认）/ 安洁莉娜 / 自定义包 ===== */}
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <span className="text-xs text-muted">主题包（外观形象 + 名字 + 人设联动）</span>
+                    {skinsErr && <span className="text-[11px] text-danger">{skinsErr}</span>}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {/* 普通（默认） */}
+                    <button
+                      onClick={() => void applySkin('plain')}
+                      aria-pressed={cfg.theme.skin === 'plain'}
+                      className={`flex flex-col items-center gap-1.5 rounded-xl border p-3 text-xs transition-colors ${
+                        cfg.theme.skin === 'plain'
+                          ? 'border-accent bg-accent/10 text-accent'
+                          : 'border-border bg-panel text-text-secondary hover:bg-surface'
+                      }`}
+                    >
+                      <Bot className="h-8 w-8" />
+                      <span className="font-medium">普通（默认）</span>
+                      <span className="text-[10.5px] leading-tight text-muted">无吉祥物的纯净界面</span>
+                    </button>
+                    {/* 安洁莉娜（内置特殊主题） */}
+                    <button
+                      onClick={() => void applySkin('angelina')}
+                      aria-pressed={cfg.theme.skin === 'angelina'}
+                      className={`flex flex-col items-center gap-1.5 rounded-xl border p-3 text-xs transition-colors ${
+                        cfg.theme.skin === 'angelina'
+                          ? 'border-accent bg-accent/10 text-accent'
+                          : 'border-border bg-panel text-text-secondary hover:bg-surface'
+                      }`}
+                    >
+                      <img src={avatarThumb} alt="安洁莉娜" className="h-8 w-8 rounded-full object-cover shadow-glow" />
+                      <span className="font-medium">安洁莉娜</span>
+                      <span className="text-[10.5px] leading-tight text-muted">五态立绘 · 角色人设</span>
+                    </button>
+                    {/* 自定义包 */}
+                    {skins.map((s) => {
+                      const thumb = skinSlotUrl(s, 'idle') || skinSlotUrl(s, 'avatar')
+                      const active = cfg.theme.skin === `custom:${s.id}`
+                      return (
+                        <button
+                          key={s.id}
+                          onClick={() => void applySkin(`custom:${s.id}`)}
+                          aria-pressed={active}
+                          className={`flex flex-col items-center gap-1.5 rounded-xl border p-3 text-xs transition-colors ${
+                            active
+                              ? 'border-accent bg-accent/10 text-accent'
+                              : 'border-border bg-panel text-text-secondary hover:bg-surface'
+                          }`}
+                        >
+                          {thumb ? (
+                            <img src={thumb} alt={s.name} className="h-8 w-8 rounded-full border border-border object-cover" />
+                          ) : (
+                            <Sparkles className="h-8 w-8" />
+                          )}
+                          <span className="max-w-full truncate font-medium">{s.name}</span>
+                          <span className="text-[10.5px] leading-tight text-muted">自定义包</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  {/* 新建自定义包 */}
+                  <div className="mt-2.5 flex items-center gap-2">
+                    <input
+                      className={`${inputCls} max-w-52`}
+                      placeholder="新主题包名称（如：我的猫）"
+                      maxLength={30}
+                      value={newSkinName}
+                      onChange={(e) => setNewSkinName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && newSkinName.trim()) void createSkin()
+                      }}
+                    />
+                    <button
+                      onClick={() => void createSkin()}
+                      disabled={!newSkinName.trim()}
+                      className="flex items-center gap-1 rounded-lg bg-accent/15 px-2.5 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/25 disabled:opacity-40"
+                    >
+                      <Plus className="h-3.5 w-3.5" /> 新建主题包
+                    </button>
+                  </div>
+
+                  {/* 自定义包管理：逐槽位上传 / 重命名 / 删除 */}
+                  {skins.length > 0 && (
+                    <div className="mt-2.5 space-y-2">
+                      {skins.map((s) => (
+                        <div key={s.id} className="rounded-xl border border-border/70 bg-surface/40 p-3">
+                          <div className="flex items-center gap-2">
+                            {renamingSkin?.id === s.id ? (
+                              <>
+                                <input
+                                  autoFocus
+                                  className="w-40 rounded-md border border-border bg-panel px-2 py-1 text-[13px] text-text"
+                                  value={renamingSkin.name}
+                                  maxLength={30}
+                                  onChange={(e) => setRenamingSkin({ id: s.id, name: e.target.value })}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') void renameSkin(s.id, renamingSkin.name)
+                                    if (e.key === 'Escape') setRenamingSkin(null)
+                                  }}
+                                />
+                                <button
+                                  aria-label="保存重命名"
+                                  title="保存"
+                                  onClick={() => void renameSkin(s.id, renamingSkin.name)}
+                                  className="rounded-md p-1 text-muted transition-colors hover:bg-surface-hover/70 hover:text-accent"
+                                >
+                                  <Check className="h-4 w-4" />
+                                </button>
+                                <button
+                                  aria-label="取消重命名"
+                                  title="取消"
+                                  onClick={() => setRenamingSkin(null)}
+                                  className="rounded-md p-1 text-muted transition-colors hover:bg-surface-hover/70"
+                                >
+                                  <X className="h-4 w-4" />
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <span className="text-[13px] font-medium text-text">{s.name}</span>
+                                <button
+                                  aria-label={`重命名主题包 ${s.name}`}
+                                  title="重命名"
+                                  onClick={() => setRenamingSkin({ id: s.id, name: s.name })}
+                                  className="rounded-md p-1 text-muted transition-colors hover:bg-surface-hover/70 hover:text-accent"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                              </>
+                            )}
+                            <div className="ml-auto">
+                              <button
+                                aria-label={`删除主题包 ${s.name}`}
+                                title="删除（正在使用会回退普通主题）"
+                                onClick={() => void removeSkin(s)}
+                                className="rounded-md p-1 text-muted transition-colors hover:bg-danger/10 hover:text-danger"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {SKIN_SLOT_LABELS.map(([slot, label]) => {
+                              const url = skinSlotUrl(s, slot)
+                              return (
+                                <div key={slot} className="relative">
+                                  <button
+                                    aria-label={`上传${label}图片`}
+                                    title={url ? `替换「${label}」图片` : `上传「${label}」图片`}
+                                    onClick={() => void uploadSkinSlot(s.id, slot)}
+                                    className={`flex h-16 w-16 flex-col items-center justify-center gap-0.5 overflow-hidden rounded-lg border text-[10px] transition-colors ${
+                                      url
+                                        ? 'border-border bg-panel hover:border-accent/50'
+                                        : 'border-dashed border-border bg-panel/60 text-muted hover:border-accent/50 hover:text-accent'
+                                    }`}
+                                  >
+                                    {url ? (
+                                      <img src={url} alt={label} className="h-full w-full object-cover" />
+                                    ) : (
+                                      <>
+                                        <ImagePlus className="h-4 w-4" />
+                                        {label}
+                                      </>
+                                    )}
+                                  </button>
+                                  {url && (
+                                    <button
+                                      aria-label={`清空${label}槽位`}
+                                      title="清空该槽位"
+                                      onClick={() => void clearSkinSlot(s.id, slot)}
+                                      className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-border bg-panel text-muted shadow-sm transition-colors hover:text-danger"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </button>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                      <p className="text-[11px] leading-relaxed text-muted/70">
+                        自定义包只需上传一张「待机」动图/图片即可使用，其余状态未上传时回退待机图；名字会显示在立绘下方，状态文案保持中性。单图 ≤5MB（png / gif / jpg / webp）。
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 <div>
                   <span className="mb-1.5 block text-xs text-muted">主题模式</span>
                   <div className="flex gap-2">
@@ -559,11 +1137,25 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
             {/* ---------- 系统提示词 ---------- */}
             {tab === 'system' && (
               <section>
-                <h3 className="mb-3 text-[15px] font-medium text-text">提示词</h3>
-                <p className="mb-3 text-[11.5px] text-muted">
-                  模式已合并：AI 以安洁莉娜的人设陪伴聊天，同时保留完整工具能力为你「跑腿」。此提示词可自由修改或扩写；工具清单与执行规则会在运行时自动附加。
-                </p>
-                <h3 className="mb-1.5 text-[15px] font-medium text-text">桌宠人设（安洁莉娜）</h3>
+                {(() => {
+                  const skinName =
+                    cfg.theme.skin === 'angelina'
+                      ? '安洁莉娜'
+                      : cfg.theme.skin.startsWith('custom:')
+                        ? skins.find((s) => `custom:${s.id}` === cfg.theme.skin)?.name || '自定义主题包'
+                        : '普通主题'
+                  return (
+                    <>
+                      <h3 className="mb-3 text-[15px] font-medium text-text">提示词</h3>
+                      <p className="mb-3 text-[11.5px] text-muted">
+                        模式已合并：AI 以当前主题包「{skinName}」的形象与人设陪伴聊天，同时保留完整工具能力为你「跑腿」。此提示词可自由修改或扩写；工具清单与执行规则会在运行时自动附加。切换主题包时会在外观设置里询问是否联动切换人设。
+                      </p>
+                      <h3 className="mb-1.5 text-[15px] font-medium text-text">
+                        {cfg.theme.skin === 'plain' ? '助手人设' : `主题包人设（${skinName}）`}
+                      </h3>
+                    </>
+                  )
+                })()}
                 <textarea
                   className="h-52 w-full rounded-xl border border-border bg-panel px-3 py-2.5 text-sm leading-relaxed text-text"
                   value={cfg.petPrompt}

@@ -12,6 +12,10 @@ import { AgentService } from './agent/AgentService'
 import { WikiHost } from './wiki/wiki-host'
 import { KnowledgeRetriever } from './wiki/KnowledgeRetriever'
 import { createWikiTools } from './tools/wikiTools'
+import { VoiceStore } from './voice/VoiceStore'
+import { VoiceService } from './voice/VoiceService'
+import { createVoiceTools } from './voice/voiceTools'
+import { SkinStore } from './theme/SkinStore'
 import { Logger } from './util/Logger'
 import { getCapabilities } from './util/capabilities'
 import { PACKAGE_ROOT } from './platform'
@@ -23,6 +27,10 @@ export interface WinAgentCore {
   registry: ToolRegistry
   agent: AgentService
   wikiHost: WikiHost
+  /** 语音（TTS + 克隆音色）服务 */
+  voice: VoiceService
+  /** 主题包（外观皮肤）库 */
+  skins: SkinStore
   /** 重新加载内置工具 + skills + MCP（配置保存后调用） */
   reloadTools(): Promise<void>
   dispose(): void
@@ -102,6 +110,13 @@ export async function createWinAgentCore(): Promise<WinAgentCore> {
     await registry.loadExternal(skillsDir, mcpPath)
   }
 
+  // 语音：克隆音色库 + TTS 门面（speak_text 工具读取配置，随 reloadTools 刷新）
+  const voiceStore = new VoiceStore(getDataDir())
+  const voice = new VoiceService(store, voiceStore, bus)
+  registry.setVoiceTools(createVoiceTools(voice))
+  // 主题包：用户上传的外观素材库
+  const skins = new SkinStore(getDataDir())
+
   await seedDataDir()
   // 预热能力探测缓存（pandoc/soffice/Office COM/pdfjs/PyMuPDF）：避免首轮对话卡在同步探测
   getCapabilities()
@@ -117,7 +132,7 @@ export async function createWinAgentCore(): Promise<WinAgentCore> {
   Logger.info('WinAgent 服务核心装配完成，数据目录: ' + getDataDir())
 
   return {
-    bus, store, registry, agent, wikiHost,
+    bus, store, registry, agent, wikiHost, voice, skins,
     reloadTools,
     dispose(): void {
       wikiHost.dispose()

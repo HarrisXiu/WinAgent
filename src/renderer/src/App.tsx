@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  Bot,
   Settings as SettingsIcon,
   Send,
   Square,
@@ -14,40 +15,19 @@ import {
   Wrench,
   Puzzle,
   Server,
-  BookOpen
+  BookOpen,
+  Sparkles
 } from 'lucide-react'
-import type { AppConfig, ChatMode, AnalysisTag } from '../../shared/types'
+import type { AppConfig, AnalysisTag } from '../../shared/types'
 import { useAgent } from './lib/useAgent'
+import { SpeechProvider, useSpeech } from './lib/useSpeech'
+import SpeechBar from './components/SpeechBar'
 import Message from './components/Message'
 import Settings, { type TabKey } from './components/Settings'
 import ConfirmHighDialog, { type ConfirmHighItem } from './components/wiki/ConfirmHighDialog'
 import ImportAnalyzeDialog, { type ImportAnalyzeFile } from './components/wiki/ImportAnalyzeDialog'
-import avatarImg from './assets/angelina/avatar.png'
-import zuozuoGif from './assets/angelina/zuozuo.gif'
-import kanshuGif from './assets/angelina/kanshu.gif'
-import tanxianGif from './assets/angelina/tanxian.gif'
-import paizhaoGif from './assets/angelina/paizhao.gif'
-import cloudImg from './assets/angelina/cloud.png'
-import wandImg from './assets/angelina/wand.png'
-import bubbleImg from './assets/angelina/bubble.png'
-import heartImg from './assets/angelina/heart.png'
-
-/** Angelina 实时状态：空闲 / 思考 / 执行工具 / 图片识别 / 回答中 */
-export type AiState = 'idle' | 'think' | 'tool' | 'vision' | 'talk'
-export const AI_STATE_GIF: Record<AiState, string> = {
-  idle: zuozuoGif,
-  think: kanshuGif,
-  tool: tanxianGif,
-  vision: paizhaoGif,
-  talk: zuozuoGif
-}
-export const AI_STATE_LABEL: Record<AiState, string> = {
-  idle: '待命中',
-  think: '思考中',
-  tool: '执行工具中',
-  vision: '识别图片中',
-  talk: '回答中'
-}
+import { useSkin } from './theme/SkinProvider'
+import type { AiState } from './theme/skins'
 
 interface PendingAttachment {
   name: string
@@ -57,9 +37,20 @@ interface PendingAttachment {
   textContent?: string
 }
 
-export default function App(): JSX.Element {
-  const { turns, busy, status, confirm, usage, lastUsage, send, stop, reset, compact, respondConfirm } = useAgent()
+function AppShell(): JSX.Element {
+  const speech = useSpeech()
+  const skin = useSkin()
+  const { turns, busy, status, confirm, usage, lastUsage, visionActive, send, stop, reset, compact, respondConfirm } = useAgent({
+    // 自动朗读：回复完成后（未出错）走全局语音会话（气泡播放态/控制条/取消链路统一）
+    onTurnComplete: (content, turnId) => {
+      const v = cfgRef.current?.voice
+      if (!v?.enabled || !v.autoPlay || !v.apiKey) return
+      speech.speak(content, { messageId: turnId, source: 'auto' })
+    }
+  })
   const [cfg, setCfg] = useState<AppConfig | null>(null)
+  // 事件回调里读配置用（避免闭包读到旧 cfg）
+  const cfgRef = useRef<AppConfig | null>(null)
   const [models, setModels] = useState<string[]>([])
   const [showSettings, setShowSettings] = useState(false)
   const [settingsTab, setSettingsTab] = useState<TabKey>('models')
@@ -78,9 +69,19 @@ export default function App(): JSX.Element {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const loadCfg = (): void => {
-    window.winagent.getConfig().then(setCfg)
+    window.winagent.getConfig().then((c) => {
+      cfgRef.current = c
+      setCfg(c)
+    })
   }
-  useEffect(loadCfg, [])
+  useEffect(() => {
+    loadCfg()
+    // 设置面板/另一窗口改配置后实时同步（含自动朗读开关、主题包、人设）
+    return window.winagent.onConfigChanged((c) => {
+      cfgRef.current = c
+      setCfg(c)
+    })
+  }, [])
 
   // 订阅 INGEST 进度（拖拽编译进度条）
   useEffect(() => {
@@ -120,6 +121,18 @@ export default function App(): JSX.Element {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [turns])
 
+  // Esc 停止朗读（Agent 生成由「停止生成」按钮控制）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && speech.state !== 'idle') {
+        e.stopPropagation()
+        speech.stop()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [speech])
+
   const activeProvider = cfg?.providers.find((p) => p.id === cfg.activeProviderId)
 
   const fmtTokens = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
@@ -150,6 +163,7 @@ export default function App(): JSX.Element {
   const switchProvider = async (id: string): Promise<void> => {
     if (!cfg) return
     const next = { ...cfg, activeProviderId: id }
+    cfgRef.current = next
     setCfg(next)
     await window.winagent.saveConfig(next)
   }
@@ -158,6 +172,7 @@ export default function App(): JSX.Element {
     if (!cfg || !activeProvider) return
     const providers = cfg.providers.map((p) => (p.id === cfg.activeProviderId ? { ...p, model } : p))
     const next = { ...cfg, providers }
+    cfgRef.current = next
     setCfg(next)
     await window.winagent.saveConfig(next)
   }
@@ -217,6 +232,12 @@ export default function App(): JSX.Element {
     }
   }
 
+  /** 停止生成：同时掐断语音（Agent 停了，朗读也要停） */
+  const stopAll = (): void => {
+    stop()
+    speech.stop()
+  }
+
   const iconBtn =
     'flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-hover/70 hover:text-accent'
 
@@ -226,12 +247,12 @@ export default function App(): JSX.Element {
     setShowSettings(true)
   }
 
-  // 根据对话实时状态计算 Angelina 动作
+  // 根据对话实时状态计算 AI 动作（vision 按事件类型判定，见 useAgent）
   const aiState: AiState = (() => {
     if (!busy) return 'idle'
     const lastTurn = turns[turns.length - 1]
     if (lastTurn?.toolCalls.some((tc) => tc.running)) return 'tool'
-    if (/视觉|识别/.test(status)) return 'vision'
+    if (visionActive) return 'vision'
     if (lastTurn?.streaming && lastTurn.content) return 'talk'
     return 'think'
   })()
@@ -279,7 +300,16 @@ export default function App(): JSX.Element {
       {/* ================= 顶栏 ================= */}
       <header className="relative z-10 flex items-center gap-2.5 border-b border-border bg-panel/70 px-4 py-2 backdrop-blur">
         <div className="mr-1.5 flex items-center gap-2.5">
-          <img src={avatarImg} alt="Angelina" className="h-8 w-8 rounded-full object-cover shadow-glow" />
+          {skin.avatar ? (
+            <img src={skin.avatar} alt={skin.name || 'WinAgent'} className="h-8 w-8 rounded-full object-cover shadow-glow" />
+          ) : (
+            <div
+              aria-hidden="true"
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-accent to-accent2 shadow-glow"
+            >
+              <Bot className="h-4 w-4 text-accent-fg" />
+            </div>
+          )}
           <span className="text-[15px] font-semibold tracking-tight text-text">
             Win
             <span className="bg-gradient-to-r from-accent to-accent2 bg-clip-text text-transparent">Agent</span>
@@ -349,21 +379,25 @@ export default function App(): JSX.Element {
         </div>
       </header>
 
-      {/* ================= 主区域：左侧立绘 + 右侧对话 ================= */}
+      {/* ================= 主区域：左侧立绘（仅吉祥物主题） + 右侧对话 ================= */}
         <div className="flex min-h-0 flex-1">
-        {/* 左侧：Angelina 大立绘，实时随对话状态切换 */}
-        {turns.length > 0 && (
+        {/* 左侧：大立绘，实时随对话状态切换；普通主题整栏不渲染（聊天区多出横向空间） */}
+        {turns.length > 0 && skin.art && (
           <aside className="flex w-52 shrink-0 flex-col items-center border-r border-border/60 bg-panel/40 py-6 backdrop-blur">
             <div className="relative">
               <div className="absolute inset-8 rounded-full bg-gradient-to-br from-accent/25 to-accent2/25 blur-2xl" />
               <img
-                src={AI_STATE_GIF[aiState]}
-                alt="Angelina"
+                src={skin.art[aiState]}
+                alt={skin.name || ''}
                 className="relative h-44 w-44 object-contain drop-shadow-xl"
               />
-              <img src={bubbleImg} alt="" className="absolute -left-7 top-3 h-9 w-9 animate-bounce object-contain" />
-              <img src={heartImg} alt="" className="absolute -right-5 top-8 h-6 w-6 animate-pulse object-contain" />
-              <img src={cloudImg} alt="" className="absolute -left-8 bottom-2 h-8 w-8 object-contain opacity-90" />
+              {skin.decorations && (
+                <>
+                  <img src={skin.decorations.bubble} alt="" className="absolute -left-7 top-3 h-9 w-9 animate-bounce object-contain" />
+                  <img src={skin.decorations.heart} alt="" className="absolute -right-5 top-8 h-6 w-6 animate-pulse object-contain" />
+                  <img src={skin.decorations.cloud} alt="" className="absolute -left-8 bottom-2 h-8 w-8 object-contain opacity-90" />
+                </>
+              )}
             </div>
 
             <div className="mt-4 flex items-center gap-2">
@@ -371,12 +405,12 @@ export default function App(): JSX.Element {
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
                 <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-success" />
               </span>
-              <span className="text-sm font-semibold text-text">Angelina</span>
+              <span className="text-sm font-semibold text-text">{skin.name}</span>
             </div>
 
             <div className="mt-2.5 flex items-center gap-2 rounded-full border border-border bg-panel/80 px-3.5 py-1.5 shadow-card">
               {aiState === 'idle' ? (
-                <span className="text-xs text-muted">待命中</span>
+                <span className="text-xs text-muted">{skin.stateLabel.idle}</span>
               ) : (
                 <>
                   <span className="flex gap-0.5">
@@ -384,7 +418,7 @@ export default function App(): JSX.Element {
                     <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:150ms]" />
                     <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:300ms]" />
                   </span>
-                  <span className="text-xs font-medium text-accent">{AI_STATE_LABEL[aiState]}</span>
+                  <span className="text-xs font-medium text-accent">{skin.stateLabel[aiState]}</span>
                 </>
               )}
             </div>
@@ -397,22 +431,33 @@ export default function App(): JSX.Element {
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {turns.length === 0 ? (
           <div className="relative flex h-full flex-col items-center justify-center text-center">
-            {/* 角色动图 + 漂浮装饰 */}
-            <div className="relative mb-3">
-              <div className="absolute inset-4 rounded-full bg-gradient-to-br from-accent/30 to-accent2/30 blur-2xl" />
-              <img src={zuozuoGif} alt="Angelina" className="relative h-52 w-52 object-contain drop-shadow-xl" />
-              <img src={bubbleImg} alt="" className="absolute -left-12 top-3 h-10 w-10 animate-bounce object-contain" />
-              <img src={heartImg} alt="" className="absolute -right-9 top-8 h-7 w-7 animate-pulse object-contain" />
-              <img src={wandImg} alt="" className="absolute -right-14 bottom-5 h-12 w-12 animate-bounce object-contain [animation-delay:300ms]" />
-              <img src={cloudImg} alt="" className="absolute -left-14 bottom-1 h-9 w-9 object-contain opacity-90" />
-            </div>
+            {/* 吉祥物主题：角色动图 + 漂浮装饰；普通主题：主色图标 + 渐变光环 */}
+            {skin.art ? (
+              <div className="relative mb-3">
+                <div className="absolute inset-4 rounded-full bg-gradient-to-br from-accent/30 to-accent2/30 blur-2xl" />
+                <img src={skin.art.idle} alt={skin.name || ''} className="relative h-52 w-52 object-contain drop-shadow-xl" />
+                {skin.decorations && (
+                  <>
+                    <img src={skin.decorations.bubble} alt="" className="absolute -left-12 top-3 h-10 w-10 animate-bounce object-contain" />
+                    <img src={skin.decorations.heart} alt="" className="absolute -right-9 top-8 h-7 w-7 animate-pulse object-contain" />
+                    <img src={skin.decorations.wand} alt="" className="absolute -right-14 bottom-5 h-12 w-12 animate-bounce object-contain [animation-delay:300ms]" />
+                    <img src={skin.decorations.cloud} alt="" className="absolute -left-14 bottom-1 h-9 w-9 object-contain opacity-90" />
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="relative mb-3">
+                <div className="absolute inset-0 mx-auto h-32 w-32 rounded-full bg-gradient-to-br from-accent/30 to-accent2/30 blur-2xl" />
+                <div className="relative mx-auto flex h-32 w-32 items-center justify-center rounded-full border border-border bg-panel/80 shadow-glow">
+                  <Sparkles className="h-14 w-14 text-accent" />
+                </div>
+              </div>
+            )}
 
             <h1 className="mb-2 text-[28px] font-semibold tracking-tight">
               <span className="bg-gradient-to-r from-accent to-accent2 bg-clip-text text-transparent">WinAgent</span>
             </h1>
-            <p className="mb-8 max-w-md text-sm leading-relaxed text-muted">
-              安洁莉娜的陪伴空间~ 来自罗德岛的信使陪你聊天，也能替你跑腿处理电脑上的全部杂活（完整 Windows 工具集 + 知识库）。
-            </p>
+            <p className="mb-8 max-w-md text-sm leading-relaxed text-muted">{skin.welcome}</p>
 
             <div className="grid grid-cols-3 gap-3">
               {features.map((f) => (
@@ -436,8 +481,8 @@ export default function App(): JSX.Element {
           </div>
         ) : (
           <div className="mx-auto flex max-w-3xl flex-col gap-1 px-4 pb-6 pt-4">
-            {turns.map((t, i) => (
-              <Message key={i} turn={t} aiState={aiState} />
+            {turns.map((t) => (
+              <Message key={t.id} turn={t} aiState={aiState} voiceOn={!!(cfg?.voice.enabled && cfg?.voice.apiKey)} />
             ))}
           </div>
         )}
@@ -476,7 +521,7 @@ export default function App(): JSX.Element {
             ref={taRef}
             className="max-h-40 w-full resize-none bg-transparent px-4 pt-3.5 text-sm leading-relaxed text-text outline-none placeholder:text-muted"
             rows={1}
-            placeholder="和安洁莉娜聊聊天，或者让她帮你跑跑腿…"
+            placeholder={skin.placeholder}
             value={input}
             onChange={(e) => {
               setInput(e.target.value)
@@ -505,7 +550,7 @@ export default function App(): JSX.Element {
             <div className="ml-auto">
               {busy ? (
                 <button
-                  onClick={stop}
+                  onClick={stopAll}
                   title="停止生成"
                   className="flex h-8 w-8 items-center justify-center rounded-lg bg-danger text-white shadow-lg shadow-danger/40 transition-all hover:bg-danger/90"
                 >
@@ -527,6 +572,9 @@ export default function App(): JSX.Element {
         </div>
 
       </div>
+
+    {/* 全局语音控制条（朗读中/暂停/错误时浮现） */}
+    <SpeechBar />
 
     {/* 拖拽导入遮罩 */}
     {dragOver && (
@@ -594,6 +642,7 @@ export default function App(): JSX.Element {
         <Settings
           onClose={() => setShowSettings(false)}
           onSaved={(saved) => {
+            cfgRef.current = saved
             setCfg(saved)
             setShowSettings(false)
           }}
@@ -671,5 +720,14 @@ export default function App(): JSX.Element {
         </div>
       )}
     </div>
+  )
+}
+
+export default function App(): JSX.Element {
+  // SpeechProvider 包住整个主窗口：气泡朗读 / 自动朗读 / Agent 开口 / 试听共用同一状态机
+  return (
+    <SpeechProvider>
+      <AppShell />
+    </SpeechProvider>
   )
 }

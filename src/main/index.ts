@@ -9,7 +9,8 @@
  *   4. ipcMain 通道注册（与 preload 的 window.winagent API 一一对应）
  *   5. 主窗口 + 知识库窗口
  */
-import { app, BrowserWindow, ipcMain, shell, dialog, nativeTheme } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, nativeTheme, protocol } from 'electron'
+import { promises as fs } from 'fs'
 import path from 'path'
 
 // ── 1. 数据目录：必须先于服务层加载设置（服务层 Logger 单例在 import 时按数据目录构造）──
@@ -38,6 +39,67 @@ let core: import('dsh-winagent/services').WinAgentCore | null = null
 // 待处理的危险操作确认（agent:confirm → 渲染进程 → agent:confirm:reply）
 const pendingConfirms = new Map<string, (approved: boolean) => void>()
 let confirmSeq = 0
+
+// ── winagent-skin:// 自定义协议（主题包素材） ───────────────
+// 必须在 app ready 之前声明特权（standard/secure/supportFetchAPI/stream），
+// 渲染层 <img> 才能直接引用；素材从 {dataDir}/skins/ 读取，带 ?v=<mtime> 缓存失效。
+const SKIN_SCHEME = 'winagent-skin'
+const SKIN_SLOT_NAMES = new Set(['idle', 'think', 'tool', 'vision', 'talk', 'avatar'])
+const SKIN_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp'
+}
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: SKIN_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true }
+  }
+])
+
+function skinsRoot(): string {
+  return path.resolve(services.getDataDir(), 'skins')
+}
+
+/** 解析 winagent-skin://<skinId>/<slot> → 磁盘文件；做白名单 + 路径穿越校验，越界返回 null */
+async function resolveSkinUrl(url: string): Promise<string | null> {
+  try {
+    const u = new URL(url)
+    const skinId = u.hostname
+    const slot = decodeURIComponent(u.pathname).replace(/^\/+/, '').split('/')[0]
+    // skinId / slot 只允许白名单字符（id 由 SkinStore 生成，字符集可枚举）
+    if (!/^[a-z0-9_-]{1,64}$/i.test(skinId)) return null
+    if (!SKIN_SLOT_NAMES.has(slot)) return null
+    const skinDir = path.resolve(skinsRoot(), skinId)
+    // 双保险：skinDir 必须仍在 skins 根目录内
+    if (skinDir !== skinsRoot() && !skinDir.startsWith(skinsRoot() + path.sep)) return null
+    const entries = await fs.readdir(skinDir)
+    const entry = entries.find((f) => f.toLowerCase().startsWith(`${slot}.`))
+    if (!entry) return null
+    const file = path.resolve(skinDir, entry)
+    if (!file.startsWith(skinDir + path.sep)) return null
+    return file
+  } catch {
+    return null
+  }
+}
+
+function registerSkinProtocol(): void {
+  protocol.handle(SKIN_SCHEME, async (request) => {
+    const file = await resolveSkinUrl(request.url)
+    if (!file) return new Response(null, { status: 404 })
+    try {
+      const buf = await fs.readFile(file)
+      const mime = SKIN_MIME[path.extname(file).toLowerCase()] || 'application/octet-stream'
+      return new Response(new Uint8Array(buf), { headers: { 'content-type': mime } })
+    } catch {
+      return new Response(null, { status: 404 })
+    }
+  })
+}
 
 // ── 2. 主题 / 窗口 ──────────────────────────────────────────
 
@@ -171,15 +233,17 @@ const BUS_TO_IPC: Record<string, string> = {
   configChanged: 'config:changed',
   vaultChanged: 'wiki:vault:changed',
   ingestProgress: 'wiki:ingest:progress',
-  customProgress: 'wiki:custom:progress'
+  customProgress: 'wiki:custom:progress',
+  voiceSegment: 'voice:segment',
+  voiceSessionEnd: 'voice:session:end'
 }
 
 function startBusForwarding(): void {
   core!.bus.subscribe((e: BusEvent) => {
     const channel = BUS_TO_IPC[e.type]
     if (!channel) return
-    // agent 事件只发主窗口；其余广播（主题切换/wiki 进度需双窗口同步）
-    if (e.type === 'agentEvent' || e.type === 'confirm') {
+    // agent 事件与语音分段只发主窗口（语音播放态在主窗口消费）；其余广播（主题切换/wiki 进度需双窗口同步）
+    if (e.type === 'agentEvent' || e.type === 'confirm' || e.type === 'voiceSegment' || e.type === 'voiceSessionEnd') {
       mainWindow?.webContents.send(channel, e.data)
     } else {
       sendToWindows(channel, e.data)
@@ -291,6 +355,101 @@ function registerIpc(): void {
     }
   })
 
+  // === Voice（TTS + 克隆音色库） ===
+  // 分段朗读会话：start 立即返回 {sessionId, total}，逐段经 voice:segment 事件下发；
+  // 渲染层播到某段时用 ack 回执（单向 send）驱动滑窗预取；cancel 终止会话。
+  ipcMain.handle('tts:start', (_e, text: string, opts?: { voice?: string; stylePrompt?: string; source?: 'manual' | 'auto' | 'agent' | 'test' }) => {
+    return core!.voice.startSession(text, opts)
+  })
+  ipcMain.on('tts:ack', (_e, sessionId: string, index: number) => {
+    core!.voice.ack(sessionId, index)
+  })
+  ipcMain.on('tts:cancel', (_e, sessionId?: string) => {
+    core!.voice.cancelSession(sessionId)
+  })
+
+  const voiceStore = () => core!.voice.voiceStore
+  const broadcastVoices = async (): Promise<void> => {
+    sendToWindows('voice:changed', await voiceStore().list())
+  }
+  ipcMain.handle('voice:list', async () => voiceStore().list())
+  // 内置音色列表（服务层单一事实来源，渲染层不硬编码）
+  ipcMain.handle('voice:builtinList', () => services.BUILTIN_VOICES)
+  ipcMain.handle('voice:add', async (_e, name?: string) => {
+    if (!mainWindow) throw new Error('窗口未就绪')
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择参考音频（wav / mp3）',
+      filters: [{ name: '音频（wav / mp3）', extensions: ['wav', 'mp3'] }],
+      properties: ['openFile']
+    })
+    if (result.canceled || result.filePaths.length === 0) return voiceStore().list()
+    await voiceStore().add(name || '', result.filePaths[0])
+    await broadcastVoices()
+    return voiceStore().list()
+  })
+  ipcMain.handle('voice:rename', async (_e, id: string, name: string) => {
+    const list = await voiceStore().rename(id, name)
+    await broadcastVoices()
+    return list
+  })
+  ipcMain.handle('voice:remove', async (_e, id: string) => {
+    await voiceStore().remove(id)
+    await broadcastVoices()
+    return voiceStore().list()
+  })
+  // 克隆音色试听：走朗读会话（返回 {sessionId, total}，可取消、进控制条）
+  ipcMain.handle('voice:test', async (_e, id: string, sampleText?: string) => {
+    return core!.voice.testClone(id, sampleText)
+  })
+
+  // === Skins（主题包：外观素材库） ===
+  const skins = () => {
+    if (!core) throw new Error('服务未初始化')
+    return core.skins
+  }
+  const broadcastSkins = async (): Promise<void> => {
+    sendToWindows('skin:changed', await skins().list())
+  }
+  ipcMain.handle('skins:list', async () => skins().list())
+  ipcMain.handle('skins:create', async (_e, name: string) => {
+    await skins().create(name)
+    await broadcastSkins()
+    return skins().list()
+  })
+  ipcMain.handle('skins:setSlot', async (_e, id: string, slot: string) => {
+    if (!mainWindow) throw new Error('窗口未就绪')
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择图片（png / gif / jpg / webp）',
+      filters: [{ name: '图片（png / gif / jpg / webp）', extensions: ['png', 'gif', 'jpg', 'jpeg', 'webp'] }],
+      properties: ['openFile']
+    })
+    if (result.canceled || result.filePaths.length === 0) return skins().list()
+    await skins().setSlot(id, slot as import('dsh-winagent/services').SkinSlot, result.filePaths[0])
+    await broadcastSkins()
+    return skins().list()
+  })
+  ipcMain.handle('skins:clearSlot', async (_e, id: string, slot: string) => {
+    await skins().clearSlot(id, slot as import('dsh-winagent/services').SkinSlot)
+    await broadcastSkins()
+    return skins().list()
+  })
+  ipcMain.handle('skins:rename', async (_e, id: string, name: string) => {
+    const list = await skins().rename(id, name)
+    await broadcastSkins()
+    return list
+  })
+  ipcMain.handle('skins:remove', async (_e, id: string) => {
+    await skins().remove(id)
+    await broadcastSkins()
+    return skins().list()
+  })
+
+  // === Prompts（人设默认值：主题包联动切换用） ===
+  ipcMain.handle('config:prompts', () => ({
+    personaPrompt: services.DEFAULT_PERSONA_PROMPT,
+    petPrompt: services.DEFAULT_PET_PROMPT
+  }))
+
   // === Wiki — 窗口 / Vault ===
   ipcMain.handle('wiki:window:open', () => createWikiWindow())
   ipcMain.handle('wiki:vault:path', () => wiki().getVaultPath())
@@ -396,6 +555,8 @@ if (!gotSingleInstanceLock) {
   })
 
   app.whenReady().then(async () => {
+    // 自定义协议（主题包素材）须在窗口加载前就绪
+    registerSkinProtocol()
     try {
       core = await services.createWinAgentCore()
       startBusForwarding()

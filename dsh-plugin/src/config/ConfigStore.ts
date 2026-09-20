@@ -161,11 +161,21 @@ export function defaultConfig(): AppConfig {
       topK: 3,
       minScore: 0.12
     },
-    // 主题：默认浅色 + 品牌粉蓝（与改造前硬编码配色一致）
+    // 主题：默认浅色 + 品牌粉蓝（与改造前硬编码配色一致）+ 无吉祥物的普通主题
     theme: {
       mode: 'light',
       accent: '#f4719c',
-      accent2: '#6db7d9'
+      accent2: '#6db7d9',
+      skin: 'plain'
+    },
+    voice: {
+      enabled: false,
+      apiKey: '',
+      baseUrl: 'https://api.xiaomimimo.com/v1',
+      voice: 'mimo_default',
+      autoPlay: false,
+      stylePrompt: '',
+      outputFormat: 'wav'
     }
   }
 }
@@ -205,17 +215,17 @@ export class ConfigStore {
       this.cfg.visionAssist = { ...defaultConfig().visionAssist, ...(parsed.visionAssist || {}) }
       this.cfg.theme = { ...defaultConfig().theme, ...(parsed.theme || {}) }
       this.cfg.knowledgeRag = { ...defaultConfig().knowledgeRag, ...(parsed.knowledgeRag || {}) }
-      // 解密 apiKey 到内存；旧版明文自动回写升级为密文
-      let migrated = false
-      this.cfg.providers = this.cfg.providers.map((p) => {
-        if (p.apiKey && !p.apiKey.startsWith(ENC_PREFIX)) migrated = true
-        return { ...p, apiKey: decryptKey(p.apiKey) }
-      })
+      this.cfg.voice = { ...defaultConfig().voice, ...(parsed.voice || {}) }
+      // 解密 apiKey 到内存（当前 encryptKey/decryptKey 为空实现，实为明文存储）
+      this.cfg.providers = this.cfg.providers.map((p) => ({ ...p, apiKey: decryptKey(p.apiKey) }))
+      // 语音 apiKey 与 providers 走同一存储约定
+      this.cfg.voice = { ...this.cfg.voice, apiKey: decryptKey(this.cfg.voice.apiKey || '') }
       // ── 提示词一次性迁移（petPrompt 承载纯人设；工具/规则由系统动态拼接）──
       // 1) petPrompt 是旧版默认全文 → 用户从未自定义 → 升级为新版人设
       // 2) petPrompt 其他非空值 → 用户自定义 → 保留
       // 3) 用户自定义过 systemPrompt 且 petPrompt 是默认值 → 自定义文本并入 petPrompt（别名兼容，不丢配置）
       // 4) 迁移完成后 systemPrompt 置空（运行时不再读取）
+      let migrated = false
       {
         const legacyDefault = parsed.petPrompt === LEGACY_SYSTEM_PROMPT
         const customSystem = typeof parsed.systemPrompt === 'string' &&
@@ -246,10 +256,12 @@ export class ConfigStore {
 
   async save(cfg: AppConfig): Promise<void> {
     this.cfg = cfg
-    // 磁盘上 apiKey 存密文（DPAPI），内存中保持明文
+    // encryptKey/decryptKey 当前为空实现（DSH 插件运行在 Node.js，无 DPAPI），
+    // apiKey 实为明文落盘于用户私有目录；providers 与 voice 同一约定。加密属独立议题。
     const diskCfg: AppConfig = {
       ...cfg,
-      providers: cfg.providers.map((p) => ({ ...p, apiKey: encryptKey(p.apiKey) }))
+      providers: cfg.providers.map((p) => ({ ...p, apiKey: encryptKey(p.apiKey) })),
+      voice: { ...defaultConfig().voice, ...cfg.voice, apiKey: encryptKey(cfg.voice?.apiKey || '') }
     }
     await fs.mkdir(path.dirname(this.configPath), { recursive: true })
     await fs.writeFile(this.configPath, JSON.stringify(diskCfg, null, 2), 'utf-8')

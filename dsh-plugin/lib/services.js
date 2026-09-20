@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Logger = exports.seedDataDir = exports.createWinAgentCore = exports.chatStream = exports.fetchModels = exports.createWikiTools = exports.runQuery = exports.runReflect = exports.runMerge = exports.runLint = exports.AiPipeline = exports.GraphEngine = exports.VaultManager = exports.SearchIndex = exports.KNOWLEDGE_MARK = exports.KnowledgeRetriever = exports.WikiHost = exports.estimateTokens = exports.ContextManager = exports.AgentService = exports.ToolRegistry = exports.LEGACY_SYSTEM_PROMPT = exports.DEFAULT_PET_PROMPT = exports.DEFAULT_PERSONA_PROMPT = exports.getDataDir = exports.defaultConfig = exports.ConfigStore = exports.EventBus = void 0;
+exports.Logger = exports.seedDataDir = exports.createWinAgentCore = exports.SKIN_SLOTS = exports.SkinStore = exports.TTS_CANCELLED = exports.isCancelled = exports.speak = exports.plainTextForSpeech = exports.BUILTIN_VOICES = exports.splitForSpeech = exports.SpeechSessionManager = exports.VoiceStore = exports.VoiceService = exports.chatStream = exports.fetchModels = exports.createWikiTools = exports.runQuery = exports.runReflect = exports.runMerge = exports.runLint = exports.AiPipeline = exports.GraphEngine = exports.VaultManager = exports.SearchIndex = exports.KNOWLEDGE_MARK = exports.KnowledgeRetriever = exports.WikiHost = exports.estimateTokens = exports.ContextManager = exports.AgentService = exports.ToolRegistry = exports.LEGACY_SYSTEM_PROMPT = exports.DEFAULT_PET_PROMPT = exports.DEFAULT_PERSONA_PROMPT = exports.getDataDir = exports.defaultConfig = exports.ConfigStore = exports.EventBus = void 0;
 /**
  * dsh-winagent 服务层导出：供 Electron 桌面版主进程（或其他宿主）直接导入复用。
  * 与插件入口 index.ts 的区别：这里不依赖 DSH webServer，纯服务对象装配。
@@ -45,6 +45,23 @@ Object.defineProperty(exports, "createWikiTools", { enumerable: true, get: funct
 var OpenAIClient_1 = require("./llm/OpenAIClient");
 Object.defineProperty(exports, "fetchModels", { enumerable: true, get: function () { return OpenAIClient_1.fetchModels; } });
 Object.defineProperty(exports, "chatStream", { enumerable: true, get: function () { return OpenAIClient_1.chatStream; } });
+var VoiceService_1 = require("./voice/VoiceService");
+Object.defineProperty(exports, "VoiceService", { enumerable: true, get: function () { return VoiceService_1.VoiceService; } });
+var VoiceStore_1 = require("./voice/VoiceStore");
+Object.defineProperty(exports, "VoiceStore", { enumerable: true, get: function () { return VoiceStore_1.VoiceStore; } });
+var SpeechSession_1 = require("./voice/SpeechSession");
+Object.defineProperty(exports, "SpeechSessionManager", { enumerable: true, get: function () { return SpeechSession_1.SpeechSessionManager; } });
+var segment_1 = require("./voice/segment");
+Object.defineProperty(exports, "splitForSpeech", { enumerable: true, get: function () { return segment_1.splitForSpeech; } });
+var MimoTtsClient_1 = require("./voice/MimoTtsClient");
+Object.defineProperty(exports, "BUILTIN_VOICES", { enumerable: true, get: function () { return MimoTtsClient_1.BUILTIN_VOICES; } });
+Object.defineProperty(exports, "plainTextForSpeech", { enumerable: true, get: function () { return MimoTtsClient_1.plainTextForSpeech; } });
+Object.defineProperty(exports, "speak", { enumerable: true, get: function () { return MimoTtsClient_1.speak; } });
+Object.defineProperty(exports, "isCancelled", { enumerable: true, get: function () { return MimoTtsClient_1.isCancelled; } });
+Object.defineProperty(exports, "TTS_CANCELLED", { enumerable: true, get: function () { return MimoTtsClient_1.TTS_CANCELLED; } });
+var SkinStore_1 = require("./theme/SkinStore");
+Object.defineProperty(exports, "SkinStore", { enumerable: true, get: function () { return SkinStore_1.SkinStore; } });
+Object.defineProperty(exports, "SKIN_SLOTS", { enumerable: true, get: function () { return SkinStore_1.SKIN_SLOTS; } });
 var bootstrap_1 = require("./bootstrap");
 Object.defineProperty(exports, "createWinAgentCore", { enumerable: true, get: function () { return bootstrap_1.createWinAgentCore; } });
 Object.defineProperty(exports, "seedDataDir", { enumerable: true, get: function () { return bootstrap_1.seedDataDir; } });

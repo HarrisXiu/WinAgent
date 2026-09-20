@@ -19,6 +19,7 @@ interface Entry {
 export class ToolRegistry {
   private tools = new Map<string, Entry>()
   private wikiTools: Tool[] = []
+  private voiceTools: Tool[] = []
   private mcp = new McpManager()
 
   private addAll(tools: Tool[], source: ToolSource): void {
@@ -30,12 +31,17 @@ export class ToolRegistry {
     this.wikiTools = tools
   }
 
+  /** 注册语音工具（speak_text 等；在 initialize 前调用） */
+  setVoiceTools(tools: Tool[]): void {
+    this.voiceTools = tools
+  }
+
   async initialize(cfg: AppConfig): Promise<void> {
     this.tools.clear()
     this.mcp.dispose()
-    // 内置工具（含知识库工具）
+    // 内置工具（含知识库工具、语音工具）
     this.addAll(
-      [...fileTools, ...systemTools, ...registryTools, ...inputTools, ...windowTools, ...httpTools, ...officeTools, ...this.wikiTools],
+      [...fileTools, ...systemTools, ...registryTools, ...inputTools, ...windowTools, ...httpTools, ...officeTools, ...this.wikiTools, ...this.voiceTools],
       'builtin'
     )
     void cfg

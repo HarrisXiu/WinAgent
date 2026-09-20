@@ -1,20 +1,31 @@
 import { useState } from 'react'
-import { Brain, ChevronRight, FileText, ImageIcon } from 'lucide-react'
+import { Bot, Brain, ChevronRight, FileText, ImageIcon, Loader2, Square, Volume2 } from 'lucide-react'
 import type { ChatTurn } from '../lib/useAgent'
+import { useSpeech } from '../lib/useSpeech'
 import { renderMarkdown } from '../lib/markdown'
 import ToolCard from './ToolCard'
-import { AI_STATE_GIF, type AiState } from '../App'
+import { useSkin } from '../theme/SkinProvider'
+import type { AiState } from '../theme/skins'
 
-const STATE_TEXT: Partial<Record<AiState, string>> = {
-  think: 'Angelina 正在思考…',
-  tool: 'Angelina 正在执行工具…',
-  vision: 'Angelina 正在识别图片…',
-  talk: 'Angelina 正在回答…'
-}
-
-export default function Message({ turn, aiState = 'idle' }: { turn: ChatTurn; aiState?: AiState }): JSX.Element {
+export default function Message({ turn, aiState = 'idle', voiceOn = false }: { turn: ChatTurn; aiState?: AiState; voiceOn?: boolean }): JSX.Element {
   const [showReason, setShowReason] = useState(false)
+  // 语音播放态读全局 context：手动/自动/Agent 三条来源统一，
+  // 只有正在朗读「本条」时才显示播放态（修自动朗读与气泡脱节的 bug）
+  const speech = useSpeech()
+  const skin = useSkin()
   const isUser = turn.role === 'user'
+  /** 本条消息是否正处于播放会话中（loading/playing/paused） */
+  const mine = speech.messageId === turn.id
+  const speechActive = mine && speech.state !== 'idle'
+
+  const toggleSpeech = (): void => {
+    // 合成中点击 = 取消；播放中点击 = 停止
+    if (speechActive) {
+      speech.stop()
+      return
+    }
+    speech.speak(turn.content, { messageId: turn.id, source: 'manual' })
+  }
 
   const attachments = turn.attachments && turn.attachments.length > 0 && (
     <div className="mb-1.5 flex flex-wrap justify-end gap-1.5">
@@ -52,7 +63,13 @@ export default function Message({ turn, aiState = 'idle' }: { turn: ChatTurn; ai
           aiState === 'idle' ? 'shadow-card' : 'shadow-glow'
         }`}
       >
-        <img src={AI_STATE_GIF[aiState]} alt="Angelina" className="h-9 w-9 rounded-full object-cover" />
+        {skin.avatar ? (
+          <img src={skin.avatar} alt={skin.name || '助手头像'} className="h-9 w-9 rounded-full object-cover" />
+        ) : (
+          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-panel" aria-hidden="true">
+            <Bot className="h-5 w-5 text-accent" />
+          </div>
+        )}
       </div>
       <div className="min-w-0 flex-1 pt-0.5">
         {turn.reasoning && (
@@ -80,6 +97,38 @@ export default function Message({ turn, aiState = 'idle' }: { turn: ChatTurn; ai
           />
         )}
 
+        {/* 语音朗读：回复完成后显示（需在设置中启用语音）；播放态/错误读全局状态 */}
+        {!turn.streaming && turn.content && voiceOn && (
+          <div className="mt-1.5 flex items-center gap-2">
+            <button
+              aria-label={speechActive ? '停止朗读' : '朗读本条回复'}
+              aria-pressed={speechActive}
+              className="flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-muted transition-colors hover:bg-surface-hover/60 hover:text-accent"
+              onClick={toggleSpeech}
+            >
+              {mine && speech.state === 'loading' ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : speechActive ? (
+                <Square className="h-3 w-3" />
+              ) : (
+                <Volume2 className="h-3 w-3" />
+              )}
+              {mine && speech.state === 'loading'
+                ? '取消合成…'
+                : speechActive
+                  ? speech.state === 'paused'
+                    ? '已暂停 · 停止'
+                    : '停止'
+                  : '朗读'}
+            </button>
+            {mine && speech.error && (
+              <span role="alert" className="text-xs text-danger">
+                {speech.error}
+              </span>
+            )}
+          </div>
+        )}
+
         {turn.streaming && !turn.content && turn.toolCalls.length === 0 && (
           <div className="flex items-center gap-2 text-[13px] text-muted">
             <span className="flex gap-0.5">
@@ -87,7 +136,7 @@ export default function Message({ turn, aiState = 'idle' }: { turn: ChatTurn; ai
               <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:150ms]" />
               <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:300ms]" />
             </span>
-            {STATE_TEXT[aiState] || 'Angelina 正在思考…'}
+            {skin.stateText[aiState] || '正在思考…'}
           </div>
         )}
 

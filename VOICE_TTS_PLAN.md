@@ -1,5 +1,11 @@
 # WinAgent 语音功能 + 语音克隆（基于 MiMo TTS）
 
+> **状态：已实施（2026-09-19）。** 以下为原方案存档；实际落地按细化计划执行，落点略有调整：
+> TTS 客户端为函数式 `speak()`（`dsh-plugin/src/voice/MimoTtsClient.ts`，`BUILTIN_VOICES`/`plainTextForSpeech`/`buildTtsBody`），
+> 门面为 `VoiceService`（含 `clone:<id>` 解析与未配置友好报错），装配进 `WinAgentCore.voice`；
+> Agent 工具为 `speak_text`（`voiceTools.ts`，合成结果经 bus `voiceSpeak` 事件转发渲染层播放）；
+> 鉴权采用 `Authorization: Bearer`（与 OpenAIClient 一致）；阶段 5（speak_text）已一并实现；流式 pcm16 仍留二期。
+
 为 WinAgent 增加语音输出能力：Agent 回复可朗读（内置音色/克隆音色），用户可上传参考音频克隆任意声音；全部走小米 MiMo TTS 的 OpenAI 兼容接口。
 
 ## 背景与 API 事实

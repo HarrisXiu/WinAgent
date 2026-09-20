@@ -19,6 +19,10 @@ const AgentService_1 = require("./agent/AgentService");
 const wiki_host_1 = require("./wiki/wiki-host");
 const KnowledgeRetriever_1 = require("./wiki/KnowledgeRetriever");
 const wikiTools_1 = require("./tools/wikiTools");
+const VoiceStore_1 = require("./voice/VoiceStore");
+const VoiceService_1 = require("./voice/VoiceService");
+const voiceTools_1 = require("./voice/voiceTools");
+const SkinStore_1 = require("./theme/SkinStore");
 const Logger_1 = require("./util/Logger");
 const capabilities_1 = require("./util/capabilities");
 const platform_1 = require("./platform");
@@ -93,6 +97,12 @@ async function createWinAgentCore() {
         const mcpPath = path_1.default.isAbsolute(mp) ? mp : path_1.default.join((0, ConfigStore_1.getDataDir)(), mp);
         await registry.loadExternal(skillsDir, mcpPath);
     };
+    // 语音：克隆音色库 + TTS 门面（speak_text 工具读取配置，随 reloadTools 刷新）
+    const voiceStore = new VoiceStore_1.VoiceStore((0, ConfigStore_1.getDataDir)());
+    const voice = new VoiceService_1.VoiceService(store, voiceStore, bus);
+    registry.setVoiceTools((0, voiceTools_1.createVoiceTools)(voice));
+    // 主题包：用户上传的外观素材库
+    const skins = new SkinStore_1.SkinStore((0, ConfigStore_1.getDataDir)());
     await seedDataDir();
     // 预热能力探测缓存（pandoc/soffice/Office COM/pdfjs/PyMuPDF）：避免首轮对话卡在同步探测
     (0, capabilities_1.getCapabilities)();
@@ -106,7 +116,7 @@ async function createWinAgentCore() {
     agent.setKnowledgeRetriever(new KnowledgeRetriever_1.KnowledgeRetriever(wikiHost.vault, wikiHost.search, store));
     Logger_1.Logger.info('WinAgent 服务核心装配完成，数据目录: ' + (0, ConfigStore_1.getDataDir)());
     return {
-        bus, store, registry, agent, wikiHost,
+        bus, store, registry, agent, wikiHost, voice, skins,
         reloadTools,
         dispose() {
             wikiHost.dispose();

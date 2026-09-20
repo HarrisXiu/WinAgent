@@ -3,6 +3,8 @@ import { ConfigStore } from './config/ConfigStore';
 import { ToolRegistry } from './tools/ToolRegistry';
 import { AgentService } from './agent/AgentService';
 import { WikiHost } from './wiki/wiki-host';
+import { VoiceService } from './voice/VoiceService';
+import { SkinStore } from './theme/SkinStore';
 /** WinAgent 服务核心：一次装配，宿主按需使用 */
 export interface WinAgentCore {
     bus: EventBus;
@@ -10,6 +12,10 @@ export interface WinAgentCore {
     registry: ToolRegistry;
     agent: AgentService;
     wikiHost: WikiHost;
+    /** 语音（TTS + 克隆音色）服务 */
+    voice: VoiceService;
+    /** 主题包（外观皮肤）库 */
+    skins: SkinStore;
     /** 重新加载内置工具 + skills + MCP（配置保存后调用） */
     reloadTools(): Promise<void>;
     dispose(): void;
