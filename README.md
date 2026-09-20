@@ -1,6 +1,6 @@
 # WinAgent
 
- **Windows 桌面 AI 助手**（基于 **Electron**，业务逻辑复用 dsh-winagent 插件服务层）。兼容 **OpenAI 格式 API** 与 **本地 Ollama**，以《明日方舟》安洁莉娜的桌宠形象陪伴聊天，同时内置**完整 Windows 工具集**（53+ 个工具）与 **LLM Wiki 个人知识库**——你只负责剪藏，AI 负责理解和沉淀。支持 **skills（含 SKILL.md 格式）** 与 **MCP** 扩展挂载，可打包为**免安装便携版**。
+ **Windows 桌面 AI 助手**（基于 **Electron**，业务逻辑复用 dsh-winagent 插件服务层）。兼容 **OpenAI 格式 API** 与 **本地 Ollama**，内置**完整 Windows 工具集**（53+ 个工具）与 **LLM Wiki 个人知识库**——你只负责剪藏，AI 负责理解和沉淀。支持 **MiMo TTS 语音朗读与声音克隆**（Agent 可以真的开口说话）、**可换装主题包**（默认简洁主题，可选《明日方舟》安洁莉娜桌宠形象或上传自制立绘）、**skills（含 SKILL.md 格式）** 与 **MCP** 扩展挂载，可打包为**免安装便携版**。
 
 欢迎各位大佬的评论和指导，所有评论和邮件我都会认真阅读和回复，期待与大家交流！如有兴趣也欢迎加入此项目。
 邮箱(email):530313@qq.com;
@@ -17,6 +17,10 @@
 - **深度思考开关**：自动 / 开启 / 关闭三态，接口不认识参数时自动去参重试
 - **Token 消耗统计**：顶栏实时显示会话累计 token，悬停查看输入/输出细分与最近一次用量
 - **流式对话**：Markdown 渲染、代码高亮、思维链折叠、工具调用可视化
+- **语音朗读（MiMo TTS）**：每条回复可 🔊 朗读；Markdown 清洗（剥离代码块/思维链/emoji/裸链接）→ 按句分段 → 后台逐段合成 + 滑窗预取；全局控制条显示进度，支持暂停/继续/跳过/停止（Esc 停止）
+- **声音克隆**：上传 wav/mp3 参考音频即可克隆音色（`mimo-v2.5-tts-voiceclone` 零样本克隆，无服务端注册，样本只存本地）；克隆音色库支持试听/重命名/删除；另有 9 个内置音色（冰糖/茉莉/苏打/白桦/Mia/Chloe/Milo/Dean/mimo_default）
+- **Agent 主动说话**：内置 `speak_text` 工具，Agent 可自行决定朗读——配合桌宠人设，安洁莉娜真的能"开口"
+- **主题包（外观皮肤）**：默认 plain 简洁主题（无吉祥物）；内置安洁莉娜全套立绘（代码分割懒加载，普通主题不为 5.5MB GIF 买单）；可上传自制主题包——五态立绘（待机/思考/工具/识别/说话）+ 头像逐槽位上传，缺省槽位自动回退 idle；素材经 `winagent-skin://` 自定义协议送达渲染层（白名单 + 路径穿越校验）
 - **完整 Windows 工具集（53+ 个）**：
   - 文件：`list_directory`、`read_file`、`write_file`、`edit_file`、`multi_edit_file`、`delete_file`、`copy_file`、`move_file`、`search_files`、`find_files`、`get_file_info`、`create_directory`、`grep`
   - 系统：`list_processes`、`kill_process`、`run_command`、`get_system_info`、`take_screenshot`、`list_startup_items`、`add_startup_item`、`remove_startup_item`
@@ -37,7 +41,7 @@
 - **API Key 存储**：`config.json` 中的 `apiKey` 以明文存于用户私有目录（`%APPDATA%/com.winagent.app/`），请勿分享该目录；旧版 DPAPI 密文（`enc:v1:` 前缀）加载时自动清空，重填一次即可
 - **上下文压缩（两阶段）**：阶段一免 LLM 轻量压缩（截断旧工具结果、剥离旧图片 base64），阶段二 LLM 摘要旧消息；摘要失败自动降级，不中断对话
 - **便携**：数据（`config.json`、`wiki/`）保存在 `%APPDATA%/com.winagent.app/`，遵循 Windows 应用数据规范
-- **Angelina 可爱主题**：《明日方舟》安洁莉娜主题界面——奶油色系 UI、动态角色立绘（左侧常驻，随对话状态切换「思考/执行工具/识别图片/回答」动作动画）、空状态 GIF 动图
+- **Angelina 可爱主题（可选皮肤）**：《明日方舟》安洁莉娜主题界面——奶油色系 UI、动态角色立绘（左侧常驻，随对话状态切换「思考/执行工具/识别图片/回答」动作动画）、空状态 GIF 动图；在「设置 → 外观」中切换主题包，默认为无吉祥物的简洁主题
 - **单一桌宠模式（Agent 能力合并）**：AI 以安洁莉娜的角色人设陪伴聊天（人设提示词可编辑），同时拥有专业 Agent 的**完整工具能力**——读文件、操作 Windows、检索知识库，系统提示词运行时自动附加工具清单，不会"拒绝访问本地文件"
 - **LLM Wiki 个人知识库（Karpathy 模式）**：基于 Andrej Karpathy `llm-wiki` 思路——**你只负责剪藏，LLM 负责理解和沉淀**。三层架构（raw 原始文件只读 / wiki 编译层 / outputs 输出），拖拽文件弹出分析要求弹窗（AI 编译 + 按你的要求定制分析，要求自动归纳为可复用 tag），支持概念对齐、confidence 体系、QUESTIONS 队列、LINT/REFLECT/MERGE
 - **对话自动 RAG**：每轮提问自动检索知识库并把相关笔记（标题/路径/confidence/摘要）注入上下文——回答知识类问题优先依据库内知识、注明来源；未命中时明确告知「知识库中没有相关内容」再自答并标注，绝不冒充库内知识
@@ -91,6 +95,30 @@ npm run build:icon       # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO
 
 - OpenAI：`https://api.openai.com/v1`
 - DeepSeek：`https://api.deepseek.com/v1`
+
+## 语音朗读与声音克隆（MiMo TTS）
+
+基于小米 MiMo TTS 的 OpenAI 兼容接口（默认 `https://api.xiaomimimo.com/v1`，用 chat/completions 结构承载 TTS 请求）。在「设置 → 语音」中填写 MiMo API Key 并开启后可用；未启用/未填 Key 时语音入口优雅降级并引导去设置。
+
+- **朗读回复**：assistant 消息气泡上的 🔊 按钮手动朗读；或开启「自动朗读」让每条回复完成后自动播放
+- **分段管线**：Markdown 清洗成可朗读纯文本 → 按句切分 → 后台逐段合成（播放进度经 ack 回执驱动滑窗预取）；底部全局控制条显示「第 n/N 段」，支持暂停/继续/跳过本段/停止，Esc 快捷停止
+- **内置音色**：`mimo_default` / 冰糖 / 茉莉 / 苏打 / 白桦 / Mia / Chloe / Milo / Dean 共 9 个，下拉即选
+- **声音克隆**：「设置 → 语音 → 克隆音色」上传 wav/mp3 参考音频即得克隆音色——克隆是无状态的（`clone:<id>` 解析为样本 dataURL 随请求下发），样本只存本地 `dataDir/voices/`，支持试听（走朗读会话、可取消）、行内重命名、删除
+- **风格指令**：`stylePrompt` 以 user 消息下发（如「用开心的语气说」），留空用内置默认
+- **Agent 开口**：`speak_text` 内置工具让 Agent 主动朗读——用户说「读出来/说给我听」，或桌宠人设下安洁莉娜主动说话
+- 输出格式可选 `wav`（直接播放）/ `mp3`（体积更小）；克隆音色试听与自动朗读统一走全局会话，控制条同源管理
+
+> 语音 API Key 与模型 Provider 的 apiKey 走同一存储约定：明文存于用户私有数据目录（`%APPDATA%/com.winagent.app/config.json`），请勿分享。
+
+## 主题包（外观皮肤）
+
+「设置 → 外观」中切换主题包（`theme.skin`）：
+
+- `plain`（默认）：无吉祥物、中性文案的简洁主题
+- `angelina`：内置安洁莉娜主题——五态立绘 + 头像 + 漂浮装饰 + 角色文案；素材经动态 import 代码分割，不选它不加载
+- `custom:<id>`：自制主题包。新建后逐槽位上传图片（png/gif/jpg/webp，单张 ≤5MB）：待机 / 思考 / 工具 / 识别 / 说话五态立绘 + 头像，**只需上传 idle 也能用**（缺省槽位自动回退）；支持重命名、清空单槽、整包删除
+
+素材存 `dataDir/skins/`，经 `winagent-skin://` 自定义协议供渲染层 `<img>` 直接引用（id/slot 白名单 + 路径穿越双校验，`?v=mtime` 缓存失效）。切换主题包时可一键应用配套人设提示词默认值；自定义包被删除自动回退 plain，不会空白。
 
 ## 文件/图片附件
 
@@ -271,7 +299,22 @@ PDF 附件（≤15MB）优先**文件直传**（provider 支持时，拒收自�
     "prompt": ""             // 识别指令，留空用内置默认
   },
   "stream": true,            // 流式输出
-  "thinkingMode": "auto"     // 深度思考：auto / on / off
+  "thinkingMode": "auto",    // 深度思考：auto / on / off
+  "theme": {
+    "mode": "light",             // light / dark / auto
+    "accent": "#f4719c",
+    "accent2": "#6db7d9",
+    "skin": "plain"              // plain 默认 | angelina 内置 | custom:<id> 自制主题包
+  },
+  "voice": {
+    "enabled": false,            // 语音功能总开关
+    "apiKey": "",                // MiMo API Key（与 providers 同一存储约定）
+    "baseUrl": "https://api.xiaomimimo.com/v1",
+    "voice": "mimo_default",     // 内置音色名 或 "clone:<voiceId>"
+    "autoPlay": false,           // 回复完成后自动朗读
+    "stylePrompt": "",           // 朗读风格指令，如「用开心的语气说」
+    "outputFormat": "wav"        // wav / mp3
+  }
 }
 ```
 
@@ -330,6 +373,22 @@ npx tsc -p tsconfig.json   # 或仓库根目录 npm run plugin:build
 > 说明：桌面版的个性化桌宠主题不在插件范围内；人设提示词仍可在插件设置中自由修改。插件运行在 dsh web 进程内，以当前 Windows 用户权限执行工具，危险操作默认弹窗确认。
 
 ## 更新日志
+
+### v0.5.0（未发布）
+
+**语音朗读与声音克隆（MiMo TTS）**
+- 新增 `dsh-plugin/src/voice/` 语音子系统：`MimoTtsClient`（OpenAI 兼容 chat/completions 承载 TTS；内置音色走 `mimo-v2.5-tts`，样本 dataURL 自动切 `mimo-v2.5-tts-voiceclone`）、`plainTextForSpeech` Markdown 清洗、`VoiceStore` 克隆音色库、`VoiceService` 门面（`clone:<id>` 解析 + 未配置友好报错）、`SpeechSession` 分段会话（按句切分 + ack 回执驱动滑窗预取 + 可取消）
+- 渲染层：`SpeechBar` 全局控制条（第 n/N 段进度 / 暂停 / 继续 / 跳过 / 停止 / 错误展示）、`useSpeech` + `player.ts` 播放管线、assistant 气泡 🔊 朗读按钮、Esc 停止朗读、回复完成自动朗读（可选）
+- `speak_text` 内置工具：Agent 可主动朗读（经 bus 广播 voiceSegment 事件到渲染层播放）
+- 设置 → 语音：总开关、MiMo API Key、内置音色（9 个）+ 克隆音色统一下拉、自动朗读、风格指令、wav/mp3 输出；克隆音色管理（上传 wav/mp3 / 试听 / 行内重命名 / 删除），变更经 `voice:changed` 广播双窗口同步
+- 音色库样本仅存本地 `dataDir/voices/`；语音 apiKey 与 providers 同一存储约定
+
+**主题包（外观皮肤）系统**
+- `ThemeConfig.skin`：`plain`（默认，无吉祥物简洁主题）/ `angelina`（内置，素材经动态 import 懒加载）/ `custom:<id>`（用户自制）
+- `SkinStore`（`dsh-plugin/src/theme/`）：素材存 `dataDir/skins/<id>/<slot>.<ext>`（png/gif/jpg/webp ≤5MB），槽位 idle/think/tool/vision/talk/avatar 可缺省（回退 idle）
+- `winagent-skin://` 自定义协议：特权注册（standard/secure/stream），id/slot 白名单 + 路径穿越双校验，`?v=mtime` 缓存失效
+- 渲染层 `SkinProvider` + `skins.ts` 解析层（立绘/头像/装饰/状态文案/欢迎语按包取值）；自定义包被删自动回退 plain
+- 设置 → 外观：主题包选择/新建/逐槽位上传（文件对话框）/清空/重命名/删除，`skin:changed` 广播同步；切换主题包可联动应用人设默认值（`config:prompts` 下发内置默认）
 
 ### v0.4.0（2026-09-06）
 
