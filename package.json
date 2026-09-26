@@ -1,6 +1,6 @@
 {
   "name": "winagent",
-  "version": "0.4.0",
+  "version": "4.5.0",
   "description": "Windows AI Agent（OpenAI 兼容 + 本地 Ollama，内置完整 Windows 工具集，支持 skills 与 MCP 挂载，LLM Wiki 知识库）",
   "author": "WinAgent",
   "license": "MIT",
@@ -13,7 +13,8 @@
     "pack": "electron-vite build && electron-builder --dir",
     "dist": "electron-vite build && electron-builder",
     "build:icon": "node scripts/build-icon.js",
-    "plugin:build": "tsc -p dsh-plugin"
+    "plugin:build": "tsc -p dsh-plugin",
+    "test:speech": "node scripts/test-speech.cjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

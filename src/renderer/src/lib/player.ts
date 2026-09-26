@@ -10,7 +10,7 @@
 export interface AudioQueueCallbacks {
   /** 某段开始播放（0-based 下标） */
   onSegmentStart?: (index: number) => void
-  /** 全部段落播完（队列自然排空） */
+  /** 当前已入队的段落播完；流式合成可能仍有后续段落 */
   onAllEnd?: () => void
   /** 某段播放出错（已跳过该段继续；持续失败会逐段回调） */
   onError?: (message: string) => void
@@ -18,6 +18,7 @@ export interface AudioQueueCallbacks {
 
 interface QueueItem {
   url: string
+  index: number
   audio?: HTMLAudioElement
 }
 
@@ -27,6 +28,8 @@ export class AudioQueue {
   /** 正在播放的下标；-1 = 空闲 */
   private current = -1
   private paused = false
+  /** 队列短暂排空后仍保持会话段号，只有 stopAll 才重置 */
+  private nextSegmentIndex = 0
 
   constructor(cb: AudioQueueCallbacks = {}) {
     this.cb = cb
@@ -39,7 +42,7 @@ export class AudioQueue {
 
   /** 追加一段；若队列空闲则立即开播 */
   enqueue(url: string): void {
-    this.items.push({ url })
+    this.items.push({ url, index: this.nextSegmentIndex++ })
     if (this.current < 0) {
       this.paused = false
       this.playIndex(0)
@@ -64,6 +67,7 @@ export class AudioQueue {
     this.items = []
     this.current = -1
     this.paused = false
+    this.nextSegmentIndex = 0
   }
 
   pause(): void {
@@ -118,7 +122,7 @@ export class AudioQueue {
       // 自动播放被拒等场景：按该段结束处理，避免 UI 卡在「播放中」
       if (this.items[this.current] === item) this.advance(index)
     })
-    this.cb.onSegmentStart?.(index)
+    this.cb.onSegmentStart?.(item.index)
   }
 
   /** 该段结束（自然播完 / 出错 / 跳过）→ 推进 */

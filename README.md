@@ -1,5 +1,7 @@
 # WinAgent
 
+当前版本：**v4.5**（项目版本号 `4.5.0`）。
+
  **Windows 桌面 AI 助手**（基于 **Electron**，业务逻辑复用 dsh-winagent 插件服务层）。兼容 **OpenAI 格式 API** 与 **本地 Ollama**，内置**完整 Windows 工具集**（53+ 个工具）与 **LLM Wiki 个人知识库**——你只负责剪藏，AI 负责理解和沉淀。支持 **MiMo TTS 语音朗读与声音克隆**（Agent 可以真的开口说话）、**可换装主题包**（默认简洁主题，可选《明日方舟》安洁莉娜桌宠形象或上传自制立绘）、**skills（含 SKILL.md 格式）** 与 **MCP** 扩展挂载，可打包为**免安装便携版**。
 
 欢迎各位大佬的评论和指导，所有评论和邮件我都会认真阅读和回复，期待与大家交流！如有兴趣也欢迎加入此项目。
@@ -69,10 +71,15 @@ npm run dev
 ## 打包
 
 ```bash
+npm run plugin:build     # 先编译桌面版复用的插件服务层
 npm run dist             # electron-vite build + electron-builder（便携版 exe → release/）
 npm run pack             # 仅打包目录不生成安装包（调试用）
 npm run build:icon       # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO 图标
 ```
+
+v4.5 构建产物为 `release/WinAgent-4.5.0-win64.exe`（Windows x64 便携版）。
+
+开发验证：`npx tsc --noEmit` 检查类型，`npm run test:speech` 在隐藏的 Electron 窗口中验证分段播放与缓存重播；回归测试使用模拟音频和语音接口，不调用真实 TTS API。
 
 **数据目录**：应用数据保存在 `%APPDATA%/com.winagent.app/`（即 `C:\Users\<用户名>\AppData\Roaming\com.winagent.app\`），包括 `config.json`、`wiki/`（知识库）、`skills/`、`mcp.json`。首次启动时 skills 与 mcp.json 模板自动播种。
 
@@ -101,6 +108,7 @@ npm run build:icon       # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO
 基于小米 MiMo TTS 的 OpenAI 兼容接口（默认 `https://api.xiaomimimo.com/v1`，用 chat/completions 结构承载 TTS 请求）。在「设置 → 语音」中填写 MiMo API Key 并开启后可用；未启用/未填 Key 时语音入口优雅降级并引导去设置。
 
 - **朗读回复**：assistant 消息气泡上的 🔊 按钮手动朗读；或开启「自动朗读」让每条回复完成后自动播放
+- **缓存重播**：同一条回复的音频全部合成后，再次点击直接播放缓存，不重复请求 TTS；即使合成完成后提前停止，也能从头重播。缓存保留当前运行期间最近使用的 20 条完整音频，重启后清空；文本、音色、风格指令或输出格式改变时重新合成。未完成或失败的合成不会作为完整音频重播。
 - **分段管线**：Markdown 清洗成可朗读纯文本 → 按句切分 → 后台逐段合成（播放进度经 ack 回执驱动滑窗预取）；底部全局控制条显示「第 n/N 段」，支持暂停/继续/跳过本段/停止，Esc 快捷停止
 - **内置音色**：`mimo_default` / 冰糖 / 茉莉 / 苏打 / 白桦 / Mia / Chloe / Milo / Dean 共 9 个，下拉即选
 - **声音克隆**：「设置 → 语音 → 克隆音色」上传 wav/mp3 参考音频即得克隆音色——克隆是无状态的（`clone:<id>` 解析为样本 dataURL 随请求下发），样本只存本地 `dataDir/voices/`，支持试听（走朗读会话、可取消）、行内重命名、删除
@@ -374,7 +382,14 @@ npx tsc -p tsconfig.json   # 或仓库根目录 npm run plugin:build
 
 ## 更新日志
 
-### v0.5.0（未发布）
+### v4.5（2026-09-26）
+
+**朗读修复与缓存重播**
+- 修复点击朗读或试听时出现 `MEDIA_ELEMENT_ERROR: Media load rejected by URL safety check`：页面媒体策略允许语音使用的 `data:` 音频地址。
+- 修复两段音频之间等待合成时提前结束整条朗读的问题，保留会话并等待后续音频，完整合成后写入缓存。
+- 修复播放队列暂时排空后段号重置的问题，保持播放进度与服务端预取回执连续。
+- 再次朗读同一条回复直接重播已有音频；完整合成后停止播放也保留缓存。缓存按最近使用顺序保留 20 条，内容或音色参数变化时重新合成。
+- 新增 `npm run test:speech`，覆盖慢速分段、重复重播、停止后重播、不完整或失败结果以及文本和音色参数变化。
 
 **语音朗读与声音克隆（MiMo TTS）**
 - 新增 `dsh-plugin/src/voice/` 语音子系统：`MimoTtsClient`（OpenAI 兼容 chat/completions 承载 TTS；内置音色走 `mimo-v2.5-tts`，样本 dataURL 自动切 `mimo-v2.5-tts-voiceclone`）、`plainTextForSpeech` Markdown 清洗、`VoiceStore` 克隆音色库、`VoiceService` 门面（`clone:<id>` 解析 + 未配置友好报错）、`SpeechSession` 分段会话（按句切分 + ack 回执驱动滑窗预取 + 可取消）

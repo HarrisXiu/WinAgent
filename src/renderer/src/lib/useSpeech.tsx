@@ -5,7 +5,7 @@
  * speak() → tts:start → 服务端逐段合成 → voice:segment 事件入队播放 → 播到该段时 tts:ack
  * 回执驱动服务端滑窗预取 → 播完/出错/取消统一在此收尾。
  *
- * 合成缓存：键为 messageId + voiceSig（voice|stylePrompt|outputFormat），改音色后自动失效；
+ * 合成缓存：键包含 messageId、文本和音色参数，内容或音色变化后重新合成；
  * LRU 封顶 20 条（缓存的是 base64 音频 dataURL，不封顶会持续涨内存）。
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
@@ -66,7 +66,7 @@ interface CurrentSession {
   total: number
   messageId: string | null
   source: SpeechSource
-  /** 缓存键（messageId|voiceSig）；null = 不缓存（Agent 开口/试听） */
+  /** 缓存键；null = 不缓存（Agent 开口/试听） */
   key: string | null
   urls: string[]
   error: string
@@ -87,20 +87,22 @@ export function SpeechProvider({ children }: { children: React.ReactNode }): JSX
     return window.winagent.onConfigChanged((c) => (cfgRef.current = c))
   }, [])
 
-  const finish = useCallback((): void => {
-    const cur = currentRef.current
-    currentRef.current = null
-    // 完整且无错才写缓存（部分段落缓存重播会缺内容）
-    if (cur && cur.key && !cur.error && !errRef.current && cur.total > 0 && cur.urls.length === cur.total) {
+  const cacheComplete = useCallback((cur: CurrentSession): void => {
+    // 合成完整即缓存，不要求用户听完；部分内容和失败结果不能用于重播。
+    if (cur.key && !cur.error && !errRef.current && cur.total > 0 && cur.urls.length === cur.total) {
       const cache = cacheRef.current
       cache.delete(cur.key)
-      cache.set(cur.key, cur.urls)
+      cache.set(cur.key, [...cur.urls])
       while (cache.size > CACHE_MAX) {
         const oldest = cache.keys().next().value
         if (oldest === undefined) break
         cache.delete(oldest)
       }
     }
+  }, [])
+
+  const finish = useCallback((): void => {
+    currentRef.current = null
     const error = errRef.current
     errRef.current = ''
     setView({ state: 'idle', messageId: null, source: null, index: 0, total: 0, error })
@@ -115,9 +117,20 @@ export function SpeechProvider({ children }: { children: React.ReactNode }): JSX
           // 缓存重播没有服务端会话，无需 ack
           if (cur && cur.id !== 'cache') window.winagent.tts.ack(cur.id, i)
         },
-        onAllEnd: () => finish(),
+        onAllEnd: () => {
+          const cur = currentRef.current
+          if (!cur) return
+          if (cur.id === 'cache' || cur.error || cur.urls.length === cur.total) {
+            finish()
+          } else {
+            // 当前音频播完不等于全文合成完：保留会话，等待下一段。
+            setView((v) => ({ ...v, state: 'loading' }))
+          }
+        },
         onError: (msg) => {
           if (!errRef.current) errRef.current = msg
+          const key = currentRef.current?.key
+          if (key) cacheRef.current.delete(key)
           setView((v) => ({ ...v, error: v.error || msg }))
         }
       })
@@ -140,8 +153,9 @@ export function SpeechProvider({ children }: { children: React.ReactNode }): JSX
     const cfg = cfgRef.current
     const source = opts.source ?? 'manual'
     const voice = opts.voice || cfg?.voice.voice || 'mimo_default'
-    const sig = `${voice}|${cfg?.voice.stylePrompt || ''}|${cfg?.voice.outputFormat || 'wav'}`
-    const key = opts.messageId ? `${opts.messageId}|${sig}` : null
+    const key = opts.messageId
+      ? JSON.stringify([opts.messageId, text, voice, cfg?.voice.stylePrompt || '', cfg?.voice.outputFormat || 'wav'])
+      : null
 
     // 停掉进行中的会话（单会话模型）
     const prev = currentRef.current
@@ -157,7 +171,9 @@ export function SpeechProvider({ children }: { children: React.ReactNode }): JSX
     if (key) {
       const urls = cacheRef.current.get(key)
       if (urls && urls.length > 0) {
-        currentRef.current = { id: 'cache', total: urls.length, messageId, source, key: null, urls: [], error: '' }
+        cacheRef.current.delete(key)
+        cacheRef.current.set(key, urls)
+        currentRef.current = { id: 'cache', total: urls.length, messageId, source, key, urls, error: '' }
         setView({ state: 'loading', ...baseView, index: 0, total: urls.length })
         const queue = getQueue()
         for (const u of urls) queue.enqueue(u)
@@ -192,6 +208,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }): JSX
       if (!cur || cur.id !== d.sessionId) return
       const url = `data:${d.mime};base64,${d.audioBase64}`
       cur.urls.push(url)
+      cacheComplete(cur)
       setView((v) => (v.total === d.total ? v : { ...v, total: d.total }))
       getQueue().enqueue(url)
     })
@@ -213,7 +230,7 @@ export function SpeechProvider({ children }: { children: React.ReactNode }): JSX
       offSegment()
       offEnd()
     }
-  }, [finish, getQueue])
+  }, [cacheComplete, finish, getQueue])
 
   // 卸载时停掉音频（dev 热重载等场景）
   useEffect(() => () => queueRef.current?.stopAll(), [])
