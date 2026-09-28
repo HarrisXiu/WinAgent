@@ -56,6 +56,7 @@ test('Wiki document analysis uses the desktop fetcher instead of Node fetch',asy
   const body=JSON.parse(init.body)
   assert.equal(body.messages[0].role,'system')
   assert.match(body.messages[1].content,/APA文献引用书写格式\.doc/)
+  assert.deepEqual(body.thinking,{type:'disabled'})
   return Response.json({choices:[{message:{content:JSON.stringify({title:'APA',overview:'引用规范',markdown:'引用需保留作者和年份',quotes:['作者和年份']})},finish_reason:'stop'}]})
  })
  try{

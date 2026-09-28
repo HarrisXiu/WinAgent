@@ -29,7 +29,7 @@ async function analyzeDetailed(provider, title, text, options = {}) {
 输出严格 JSON：{"title":"本段主题","overview":"简短导航摘要","markdown":"详细中文知识正文","quotes":["逐字原文证据"]}。
 markdown 按内容实际需要组织：定义和详细解释、因果或论证链、操作步骤、数值/单位/公式/表格、实例、适用前提、例外、局限。保留限定词和关键细节。不强行补齐不存在的字段；原文未说明时明确标注。不要编造例子、结论或参数，不把推断当成事实。quotes 必须逐字复制原文中支撑主要结论的片段。不得将知识压缩成一句话概念或空白模板。` },
                     { role: 'user', content: `资料：${title}\n片段 ${chunk.id}，提取文本行 ${chunk.lineStart}–${chunk.lineEnd}\n\n${piece}` }
-                ], { temperature: 0.2, maxTokens: Math.min(6500, provider.outputLimit?.value || 6500), stream: false, signal: options.signal });
+                ], { temperature: 0.2, maxTokens: Math.min(6500, provider.outputLimit?.value || 6500), stream: false, thinking: 'off', signal: options.signal });
                 if (result.finishReason === 'length') {
                     if (piece.length < 350 || depth >= 6)
                         throw new Error(`${chunk.id} 的模型输出过短，无法生成有效知识；请切换输出能力更高的模型`);
