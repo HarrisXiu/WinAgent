@@ -3,6 +3,7 @@ import type { ToolRegistry } from '../tools/ToolRegistry'
 import type { ConfigStore } from '../config/ConfigStore'
 import { promises as fs } from 'fs'
 import { chatStream } from '../llm/OpenAIClient'
+import { taskChat } from '../llm/TaskChat'
 import { RuleService, rulesPrompt } from '../wiki/RuleService'
 import type { RuleSet, KnowledgeContext, KnowledgeReference } from '../shared/types'
 import { ContextManager, estimateTokens, IMAGE_TOKEN_COST } from './ContextManager'
@@ -321,7 +322,10 @@ export class AgentService {
       cb.onEvent({ type: 'vision', status: 'start', model: visionProvider.model })
       Logger.info(`[VisionAssist] 识别 "${img.name}" ← ${visionProvider.model}`)
       try {
-        const res = await chatStream(
+        // ⚠️ 防回归（v0.5.1）：视觉辅助是后台任务，必须走 taskChat。旧实现沿用用户的 thinkingMode，
+        // 思考模型耗尽预算时返回空描述却报「识别完成」，主模型随后对着空描述作答。
+        // taskChat 关闭思考，截断/空正文会抛错 → 下方 catch 如实报「识别失败」并附诊断。
+        const res = await taskChat(
           visionProvider,
           [
             {
@@ -333,11 +337,11 @@ export class AgentService {
             }
           ],
           {
+            purpose: '图片识别',
             temperature: 0.2,
             maxTokens: cfg.maxTokens,
             signal: this.abort?.signal,
-            stream: cfg.stream,
-            thinking: cfg.thinkingMode
+            stream: cfg.stream
           }
         )
         const text = res.content.trim()

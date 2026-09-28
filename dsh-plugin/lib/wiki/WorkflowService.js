@@ -13,7 +13,7 @@ const fs_1 = require("fs");
 const crypto_1 = require("crypto");
 const path_1 = __importDefault(require("path"));
 const gray_matter_1 = __importDefault(require("gray-matter"));
-const OpenAIClient_1 = require("../llm/OpenAIClient");
+const TaskChat_1 = require("../llm/TaskChat");
 const contract_1 = require("./contract");
 const AiPipeline_1 = require("./AiPipeline");
 const slug_1 = require("./slug");
@@ -384,7 +384,16 @@ async function runReflect(vm, store, signal) {
             content: `知识库概念（${concepts.length}）:\n${concepts.join('\n---\n')}\n\n实体（${entities.length}）:\n${entities.join('\n')}\n\n来源（${sources.length}）:\n${sources.join('\n')}`
         }
     ];
-    const result = await (0, OpenAIClient_1.chatStream)(provider, messages, { temperature: 0.3, maxTokens: 1500, stream: false, signal });
+    // ⚠️ 必须走 taskChat（思考模型会耗尽预算，见 llm/TaskChat.ts）；截断/空正文作为失败结果返回，不写 synthesis 页
+    let result;
+    try {
+        result = await (0, TaskChat_1.taskChat)(provider, messages, { purpose: 'REFLECT 分析', temperature: 0.3, maxTokens: 1500, signal });
+    }
+    catch (e) {
+        if (e instanceof TaskChat_1.ModelOutputError)
+            return { ok: false, reportPath: '', summary: '', error: e.message };
+        throw e;
+    }
     const parsed = (0, AiPipeline_1.parseJsonObject)(result.content);
     if (!parsed) {
         return { ok: false, reportPath: '', summary: '', error: `REFLECT 分析失败：LLM 输出无法解析（${result.content.slice(0, 200)}）` };
@@ -558,7 +567,16 @@ async function runQuery(vm, searchIndex, store, query, signal) {
             content: `问题：${q}\n\n=== 候选笔记 ===\n${contextBlocks.join('\n\n---\n\n')}`
         }
     ];
-    const result = await (0, OpenAIClient_1.chatStream)(provider, messages, { temperature: 0.3, maxTokens: 2000, stream: false, signal });
+    // ⚠️ 必须走 taskChat：旧实现在思考模型下拿到空答案仍会写入 wiki/outputs，产生空白问答页
+    let result;
+    try {
+        result = await (0, TaskChat_1.taskChat)(provider, messages, { purpose: 'AI 问答', temperature: 0.3, maxTokens: 2000, signal });
+    }
+    catch (e) {
+        if (e instanceof TaskChat_1.ModelOutputError)
+            return { ok: false, reportPath: '', summary: '', error: e.message };
+        throw e;
+    }
     const answer = result.content.trim();
     // 4. 落盘 wiki/outputs/（type: query-output, graph-excluded）；slug 统一纯英文 kebab（契约 §0）
     const slug = (0, slug_1.slugifyKebab)(q, 'query');

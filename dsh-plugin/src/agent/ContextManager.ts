@@ -1,5 +1,5 @@
 import type { AppConfig, ChatMessage, ProviderConfig } from '../shared/types'
-import { chatStream } from '../llm/OpenAIClient'
+import { taskChat } from '../llm/TaskChat'
 import { KNOWLEDGE_MARK } from '../wiki/KnowledgeRetriever'
 
 /** 估算每张图片的 token 开销 */
@@ -117,14 +117,16 @@ export class ContextManager {
     const capped = transcript.length > 40000 ? '…[更早内容已省略]\n' + transcript.slice(-40000) : transcript
 
     try {
-      const res = await chatStream(
+      // ⚠️ 防回归（v0.5.1）：旧实现用 thinking:'auto' + 1024 tokens，思考模型把预算耗尽后返回空正文，
+      // 空字符串被当成「历史摘要」替换掉旧消息 → 对话历史静默丢失。
+      // taskChat 关闭思考，截断/空正文会抛错，落到下方 catch 降级为阶段一结果（保留原消息）。
+      const res = await taskChat(
         provider,
         [
           { role: 'system', content: COMPACT_SYSTEM },
           { role: 'user', content: capped }
         ],
-        // 摘要不需要思考过程，固定 auto 交由模型默认行为，避免额外 token 开销
-        { temperature: 0.2, maxTokens: 1024, stream: this.cfg.stream, thinking: 'auto' }
+        { purpose: '上下文压缩', temperature: 0.2, maxTokens: 1024, stream: this.cfg.stream }
       )
       const summary: ChatMessage = {
         role: 'system',

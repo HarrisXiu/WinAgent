@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AiPipeline = void 0;
 exports.parseJsonObject = parseJsonObject;
-const OpenAIClient_1 = require("../llm/OpenAIClient");
+const TaskChat_1 = require("../llm/TaskChat");
 const Logger_1 = require("../util/Logger");
 const DetailedAnalysis_1 = require("./DetailedAnalysis");
 const WorkspaceStore_1 = require("./WorkspaceStore");
@@ -117,12 +117,8 @@ ${others.map((c) => `- ${c.path}（标题: ${c.title}）`).join('\n') || '（暂
             }
         ];
         try {
-            const result = await (0, OpenAIClient_1.chatStream)(provider, messages, {
-                temperature: 0.3,
-                maxTokens: 1200,
-                stream: false,
-                signal
-            });
+            // ⚠️ 必须走 taskChat：1200 tokens 的预算在思考模型下会被思考过程整个吃掉（见 llm/TaskChat.ts）
+            const result = await (0, TaskChat_1.taskChat)(provider, messages, { purpose: 'AI 分析', temperature: 0.3, maxTokens: 1200, signal });
             assertNotTruncated(result, 'AI 分析');
             const parsed = parseJsonObject(result.content);
             if (!parsed || typeof parsed !== 'object') {
@@ -210,12 +206,8 @@ ${others.map((c) => `- ${c.path}（标题: ${c.title}）`).join('\n') || '（暂
             }
         ];
         try {
-            const result = await (0, OpenAIClient_1.chatStream)(provider, messages, {
-                temperature: 0.3,
-                maxTokens: 2000,
-                stream: false,
-                signal
-            });
+            // ⚠️ 必须走 taskChat（同上：思考模型会耗尽预算）
+            const result = await (0, TaskChat_1.taskChat)(provider, messages, { purpose: '定制分析', temperature: 0.3, maxTokens: 2000, signal });
             assertNotTruncated(result, '定制分析');
             const parsed = parseJsonObject(result.content);
             if (!parsed || typeof parsed !== 'object') {

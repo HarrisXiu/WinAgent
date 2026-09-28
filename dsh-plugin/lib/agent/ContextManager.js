@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ContextManager = exports.IMAGE_TOKEN_COST = void 0;
 exports.estimateTokens = estimateTokens;
-const OpenAIClient_1 = require("../llm/OpenAIClient");
+const TaskChat_1 = require("../llm/TaskChat");
 const KnowledgeRetriever_1 = require("../wiki/KnowledgeRetriever");
 /** 估算每张图片的 token 开销 */
 exports.IMAGE_TOKEN_COST = 800;
@@ -126,12 +126,13 @@ class ContextManager {
         // 超长时保留尾部（越接近现在的信息越重要）
         const capped = transcript.length > 40000 ? '…[更早内容已省略]\n' + transcript.slice(-40000) : transcript;
         try {
-            const res = await (0, OpenAIClient_1.chatStream)(provider, [
+            // ⚠️ 防回归（v0.5.1）：旧实现用 thinking:'auto' + 1024 tokens，思考模型把预算耗尽后返回空正文，
+            // 空字符串被当成「历史摘要」替换掉旧消息 → 对话历史静默丢失。
+            // taskChat 关闭思考，截断/空正文会抛错，落到下方 catch 降级为阶段一结果（保留原消息）。
+            const res = await (0, TaskChat_1.taskChat)(provider, [
                 { role: 'system', content: COMPACT_SYSTEM },
                 { role: 'user', content: capped }
-            ], 
-            // 摘要不需要思考过程，固定 auto 交由模型默认行为，避免额外 token 开销
-            { temperature: 0.2, maxTokens: 1024, stream: this.cfg.stream, thinking: 'auto' });
+            ], { purpose: '上下文压缩', temperature: 0.2, maxTokens: 1024, stream: this.cfg.stream });
             const summary = {
                 role: 'system',
                 content: `【历史摘要】\n${res.content}`

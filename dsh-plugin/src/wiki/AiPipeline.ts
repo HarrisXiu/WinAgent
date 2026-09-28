@@ -1,5 +1,5 @@
 import type { ProviderConfig, ChatMessage, IngestAnalysis, NoteRelation, CustomAnalysisOutput } from '../shared/types'
-import { chatStream } from '../llm/OpenAIClient'
+import { taskChat } from '../llm/TaskChat'
 import { Logger } from '../util/Logger'
 import { analyzeDetailed } from './DetailedAnalysis'
 import { splitSource } from './WorkspaceStore'
@@ -165,12 +165,8 @@ ${others.map((c) => `- ${c.path}（标题: ${c.title}）`).join('\n') || '（暂
     ]
 
     try {
-      const result = await chatStream(provider, messages, {
-        temperature: 0.3,
-        maxTokens: 1200,
-        stream: false,
-        signal
-      })
+      // ⚠️ 必须走 taskChat：1200 tokens 的预算在思考模型下会被思考过程整个吃掉（见 llm/TaskChat.ts）
+      const result = await taskChat(provider, messages, { purpose: 'AI 分析', temperature: 0.3, maxTokens: 1200, signal })
       assertNotTruncated(result, 'AI 分析')
       const parsed = parseJsonObject(result.content)
       if (!parsed || typeof parsed !== 'object') {
@@ -268,12 +264,8 @@ ${others.map((c) => `- ${c.path}（标题: ${c.title}）`).join('\n') || '（暂
     ]
 
     try {
-      const result = await chatStream(provider, messages, {
-        temperature: 0.3,
-        maxTokens: 2000,
-        stream: false,
-        signal
-      })
+      // ⚠️ 必须走 taskChat（同上：思考模型会耗尽预算）
+      const result = await taskChat(provider, messages, { purpose: '定制分析', temperature: 0.3, maxTokens: 2000, signal })
       assertNotTruncated(result, '定制分析')
       const parsed = parseJsonObject(result.content)
       if (!parsed || typeof parsed !== 'object') {

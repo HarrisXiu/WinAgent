@@ -59,7 +59,23 @@ class WorkspaceStore {
         await fs_1.promises.mkdir(path_1.default.dirname(file), { recursive: true });
         const tmp = `${file}.${(0, crypto_1.randomUUID)()}.tmp`;
         await fs_1.promises.writeFile(tmp, JSON.stringify(value, null, 2), 'utf8');
-        await fs_1.promises.rename(tmp, file);
+        // Windows 上目标文件被杀毒/索引/另一读取方短暂占用时，rename 会报 EPERM/EBUSY/EACCES，稍后即可成功。
+        // 旧实现失败即抛出且不清理，.winagent 下残留大量 *.tmp（2026-09-28 实测）。
+        for (let attempt = 0;; attempt++) {
+            try {
+                await fs_1.promises.rename(tmp, file);
+                return;
+            }
+            catch (e) {
+                const code = e.code;
+                if (attempt < 5 && (code === 'EPERM' || code === 'EBUSY' || code === 'EACCES')) {
+                    await new Promise(r => setTimeout(r, 50 * 2 ** attempt));
+                    continue;
+                }
+                await fs_1.promises.rm(tmp, { force: true }).catch(() => { });
+                throw e;
+            }
+        }
     }
     async remove(kind, id) {
         await fs_1.promises.rm(this.file(kind, id), { force: true });

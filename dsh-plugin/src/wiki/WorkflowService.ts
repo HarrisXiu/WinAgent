@@ -6,7 +6,7 @@ import type { VaultManager } from './VaultManager'
 import type { SearchIndex } from './SearchIndex'
 import type { ConfigStore } from '../config/ConfigStore'
 import type { WorkflowResult } from '../shared/types'
-import { chatStream } from '../llm/OpenAIClient'
+import { taskChat, ModelOutputError } from '../llm/TaskChat'
 import { readContract } from './contract'
 import { parseJsonObject } from './AiPipeline'
 import { slugifyKebab } from './slug'
@@ -411,7 +411,10 @@ export async function runReflect(vm: VaultManager, store: ConfigStore, signal?: 
       content: `知识库概念（${concepts.length}）:\n${concepts.join('\n---\n')}\n\n实体（${entities.length}）:\n${entities.join('\n')}\n\n来源（${sources.length}）:\n${sources.join('\n')}`
     }
   ]
-  const result = await chatStream(provider, messages as any, { temperature: 0.3, maxTokens: 1500, stream: false, signal })
+  // ⚠️ 必须走 taskChat（思考模型会耗尽预算，见 llm/TaskChat.ts）；截断/空正文作为失败结果返回，不写 synthesis 页
+  let result
+  try { result = await taskChat(provider, messages as any, { purpose: 'REFLECT 分析', temperature: 0.3, maxTokens: 1500, signal }) }
+  catch (e) { if (e instanceof ModelOutputError) return { ok: false, reportPath: '', summary: '', error: e.message }; throw e }
   const parsed = parseJsonObject(result.content)
   if (!parsed) {
     return { ok: false, reportPath: '', summary: '', error: `REFLECT 分析失败：LLM 输出无法解析（${result.content.slice(0, 200)}）` }
@@ -610,7 +613,10 @@ export async function runQuery(
       content: `问题：${q}\n\n=== 候选笔记 ===\n${contextBlocks.join('\n\n---\n\n')}`
     }
   ]
-  const result = await chatStream(provider, messages as any, { temperature: 0.3, maxTokens: 2000, stream: false, signal })
+  // ⚠️ 必须走 taskChat：旧实现在思考模型下拿到空答案仍会写入 wiki/outputs，产生空白问答页
+  let result
+  try { result = await taskChat(provider, messages as any, { purpose: 'AI 问答', temperature: 0.3, maxTokens: 2000, signal }) }
+  catch (e) { if (e instanceof ModelOutputError) return { ok: false, reportPath: '', summary: '', error: e.message }; throw e }
   const answer = result.content.trim()
 
   // 4. 落盘 wiki/outputs/（type: query-output, graph-excluded）；slug 统一纯英文 kebab（契约 §0）

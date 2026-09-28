@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AgentService = void 0;
 const fs_1 = require("fs");
 const OpenAIClient_1 = require("../llm/OpenAIClient");
+const TaskChat_1 = require("../llm/TaskChat");
 const RuleService_1 = require("../wiki/RuleService");
 const ContextManager_1 = require("./ContextManager");
 const Logger_1 = require("../util/Logger");
@@ -292,7 +293,10 @@ class AgentService {
             cb.onEvent({ type: 'vision', status: 'start', model: visionProvider.model });
             Logger_1.Logger.info(`[VisionAssist] 识别 "${img.name}" ← ${visionProvider.model}`);
             try {
-                const res = await (0, OpenAIClient_1.chatStream)(visionProvider, [
+                // ⚠️ 防回归（v0.5.1）：视觉辅助是后台任务，必须走 taskChat。旧实现沿用用户的 thinkingMode，
+                // 思考模型耗尽预算时返回空描述却报「识别完成」，主模型随后对着空描述作答。
+                // taskChat 关闭思考，截断/空正文会抛错 → 下方 catch 如实报「识别失败」并附诊断。
+                const res = await (0, TaskChat_1.taskChat)(visionProvider, [
                     {
                         role: 'user',
                         content: [
@@ -301,11 +305,11 @@ class AgentService {
                         ]
                     }
                 ], {
+                    purpose: '图片识别',
                     temperature: 0.2,
                     maxTokens: cfg.maxTokens,
                     signal: this.abort?.signal,
-                    stream: cfg.stream,
-                    thinking: cfg.thinkingMode
+                    stream: cfg.stream
                 });
                 const text = res.content.trim();
                 // 视觉模型的开销也计入会话总量

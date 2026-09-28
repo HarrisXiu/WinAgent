@@ -1,6 +1,6 @@
 {
   "name": "winagent",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Windows AI Agent（OpenAI 兼容 + 本地 Ollama，内置完整 Windows 工具集，支持 skills 与 MCP 挂载，LLM Wiki 知识库）",
   "author": "WinAgent",
   "license": "MIT",
@@ -20,7 +20,9 @@
     "test:wiki-ui": "npm run build && node scripts/test-wiki-ui.cjs",
     "test:workbench-ui": "npm run build && node scripts/test-workbench-ui.cjs",
     "test:output-limit": "npm run plugin:build && node --test tests/output-limit.test.cjs",
-    "test:conversations": "npm run plugin:build && node --test tests/conversations.test.cjs"
+    "test:conversations": "npm run plugin:build && node --test tests/conversations.test.cjs",
+    "test:task-chat": "npm run plugin:build && node --test tests/task-chat.test.cjs",
+    "diagnose:model": "npm run plugin:build && node scripts/diagnose-model.cjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

@@ -5,6 +5,8 @@
 import type { WinAgentApi } from '../../preload/index'
 
 declare global {
+  /** 应用版本号：构建时由 electron.vite.config.ts 从 package.json 注入 */
+  const __APP_VERSION__: string
   interface Window {
     winagent: WinAgentApi
   }

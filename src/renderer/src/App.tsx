@@ -349,7 +349,7 @@ function AppShell(): JSX.Element {
   return (
     <div className={`wb-shell ${sidebarCollapsed?'wb-collapsed':''}`}>
       <aside ref={sidebar.element} style={sidebar.style} className="wb-sidebar" aria-label="主导航">
-        <div className="wb-brand"><Bot size={21}/><strong>WinAgent</strong><span>0.5.0</span><button title="收起侧栏 Ctrl+B" onClick={()=>setSidebarCollapsed(true)}><PanelLeftClose size={17}/></button></div>
+        <div className="wb-brand"><Bot size={21}/><strong>WinAgent</strong><span>{__APP_VERSION__}</span><button title="收起侧栏 Ctrl+B" onClick={()=>setSidebarCollapsed(true)}><PanelLeftClose size={17}/></button></div>
         <button className="wb-new-task" title="新建专题任务 Ctrl+Shift+N" disabled={busy} onClick={()=>setCreatingTopic(true)}><Plus size={17}/><span>新建专题任务</span><kbd>Ctrl ⇧ N</kbd></button>
         {creatingTopic&&<form className="wb-topic-form" onSubmit={e=>{e.preventDefault();void submitTopic()}}><input autoFocus aria-label="专题任务名称" placeholder="例如：毕业论文" value={topicDraft} onChange={e=>setTopicDraft(e.target.value)}/><button disabled={busy||!topicDraft.trim()} type="submit">创建专题与标签</button><button type="button" onClick={()=>setCreatingTopic(false)}>取消</button></form>}
         <nav className="wb-primary-nav">

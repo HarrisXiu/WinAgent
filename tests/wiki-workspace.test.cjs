@@ -10,6 +10,7 @@ const {RuleService,rulesPrompt}=require('../dsh-plugin/lib/wiki/RuleService')
 const {SearchIndex}=require('../dsh-plugin/lib/wiki/SearchIndex')
 const {KnowledgeRetriever}=require('../dsh-plugin/lib/wiki/KnowledgeRetriever')
 const llm=require('../dsh-plugin/lib/llm/OpenAIClient')
+const {resetTaskChatMemory}=require('../dsh-plugin/lib/llm/TaskChat')
 const provider={id:'offline',label:'test',baseUrl:'http://localhost',model:'fixture',apiKey:''}
 const store={activeProvider:()=>provider,get:()=>({knowledgeRag:{enabled:true,topK:4,minScore:0.01}})}
 const complete=content=>({content:JSON.stringify(content),toolCalls:[],finishReason:'stop'})
@@ -17,7 +18,7 @@ const originalChat=llm.chatStream
 async function temporary(fn){
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'winagent-wiki-test-'))
  try{return await fn(dir,new WorkspaceStore(()=>dir))}
- finally{llm.chatStream=originalChat;assert.equal(path.dirname(dir),path.resolve(os.tmpdir()));assert.ok(path.basename(dir).startsWith('winagent-wiki-test-'));await fs.rm(dir,{recursive:true,force:true})}
+ finally{llm.chatStream=originalChat;resetTaskChatMemory();assert.equal(path.dirname(dir),path.resolve(os.tmpdir()));assert.ok(path.basename(dir).startsWith('winagent-wiki-test-'));await fs.rm(dir,{recursive:true,force:true})}
 }
 function analysisReply(_provider,messages){
  const text=messages[1].content.split('\n\n').slice(1).join('\n\n')
@@ -59,6 +60,25 @@ test('truncated document analysis splits the section and keeps verifiable eviden
  assert.ok(truncated>0)
  assert.equal(result.coverage.completed,splitSource(raw,2400).length)
  assert.ok(result.sections.every(s=>s.quotes.length&&s.markdown.includes('APA引用')))
+}))
+
+// 回归（2026-09-28）：deepseek-flash 默认深度思考，思考 token 耗尽 max_tokens → finish_reason=length。
+// 旧实现对此二分重试最多 6 层（127 次请求）烧光额度，最后报误导性的「输出过短」。
+test('truncation caused by reasoning fails fast with a diagnostic instead of splitting',()=>temporary(async(_dir,ws)=>{
+ let calls=0
+ llm.chatStream=async()=>{calls++;return {content:'',reasoning:'思考'.repeat(4000),toolCalls:[],finishReason:'length',usage:{prompt:1500,completion:6500,total:8000}}}
+ await assert.rejects(()=>analyzeDetailed(provider,'APA规范.doc','APA引用规则。\n'.repeat(200),{workspace:ws}),e=>{
+  assert.match(e.message,/深度思考耗尽/); assert.match(e.message,/finish_reason=length/); assert.doesNotMatch(e.message,/过短/); return true })
+ // 1 次原预算 + 1 次思考余量重试（taskChat），不做二分
+ assert.equal(calls,2)
+}))
+
+test('persistent truncation is bounded to a few split levels and reports truncation, not short output',()=>temporary(async(_dir,ws)=>{
+ let calls=0
+ llm.chatStream=async()=>{calls++;return {content:'{"title":"未完',reasoning:'',toolCalls:[],finishReason:'length'}}
+ await assert.rejects(()=>analyzeDetailed(provider,'长片段.doc','APA引用的作者、年份、标题和来源必须按顺序书写。\n'.repeat(90),{workspace:ws}),e=>{
+  assert.match(e.message,/被截断/); assert.doesNotMatch(e.message,/过短/); return true })
+ assert.ok(calls<=4,`截断应在少量请求内失败，实际 ${calls} 次`)
 }))
 
 test('topic retrieval excludes untagged Wiki files and assistant sees the full library',()=>temporary(async(_dir,ws)=>{
