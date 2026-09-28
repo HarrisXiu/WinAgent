@@ -82,7 +82,31 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
   const [tools, setTools] = useState<ToolInfo[]>([])
   const [dataDir, setDataDir] = useState('')
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, string[]>>({})
+  const [modelErrors, setModelErrors] = useState<Record<string, string>>({})
+  const [modelsLoading, setModelsLoading] = useState<Record<string, boolean>>({})
+  const modelRequests = useRef<Record<string, number>>({})
   const [saving, setSaving] = useState(false)
+  const [limitStatus, setLimitStatus] = useState('')
+  const [limitBusy, setLimitBusy] = useState(false)
+  const limitRequest = useRef(0)
+  const limitProvider = cfg?.providers.find(p => p.id === cfg.activeProviderId)
+  const detectLimit = async (force = false): Promise<void> => {
+    if (!limitProvider?.model) return
+    const seq = ++limitRequest.current
+    setLimitBusy(true); setLimitStatus('正在检测当前模型的输出上限…')
+    try {
+      const result = await window.winagent.detectOutputLimit(limitProvider, force)
+      if (seq !== limitRequest.current) return
+      setCfg(current => current ? { ...current, maxTokens: result.value || 0, providers: current.providers.map(p => p.id === limitProvider.id ? { ...p, outputLimit: result } : p) } : current)
+      setLimitStatus(`${result.value ? `已检测：${result.value.toLocaleString()} tokens` : '未检测到明确上限'} · ${result.source}`)
+    } catch (e) { if (seq === limitRequest.current) { setLimitStatus(errMsg(e)); setCfg(c => c ? { ...c, maxTokens: 0 } : c) } }
+    finally { if (seq === limitRequest.current) setLimitBusy(false) }
+  }
+  useEffect(() => {
+    if (cfg?.autoMaxTokens === false || !limitProvider?.model) return
+    const timer = setTimeout(() => { void detectLimit() }, 700)
+    return () => { clearTimeout(timer); limitRequest.current++ }
+  }, [cfg?.autoMaxTokens, limitProvider?.id, limitProvider?.model, limitProvider?.baseUrl, limitProvider?.apiKey])
   const [tab, setTab] = useState<TabKey>(initialTab ?? 'models')
   // 主题修改防抖计时器（必须声明在所有条件 return 之前）
   const themeDebounceRef = useRef<ReturnType<typeof setTimeout>>()
@@ -188,15 +212,31 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
   const updateProvider = (i: number, patch: Partial<ProviderConfig>): void => {
     const providers = [...cfg.providers]
     providers[i] = { ...providers[i], ...patch }
+    if ('baseUrl' in patch || 'apiKey' in patch || 'type' in patch) {
+      const id = providers[i].id
+      modelRequests.current[id] = (modelRequests.current[id] || 0) + 1
+      setModelsByProvider((m) => { const next = { ...m }; delete next[id]; return next })
+      setModelErrors((m) => ({ ...m, [id]: '' }))
+      setModelsLoading((m) => ({ ...m, [id]: false }))
+    }
     update({ providers })
   }
 
   const fetchModels = async (p: ProviderConfig): Promise<void> => {
+    const request = (modelRequests.current[p.id] || 0) + 1
+    modelRequests.current[p.id] = request
+    setModelsLoading((m) => ({ ...m, [p.id]: true }))
+    setModelErrors((m) => ({ ...m, [p.id]: '' }))
+    setModelsByProvider((m) => { const next = { ...m }; delete next[p.id]; return next })
     try {
-      const models = await window.winagent.fetchModels(p.id)
+      const models = await window.winagent.fetchModels(p)
+      if (modelRequests.current[p.id] !== request) return
       setModelsByProvider((m) => ({ ...m, [p.id]: models }))
     } catch (e) {
-      setModelsByProvider((m) => ({ ...m, [p.id]: [`拉取失败: ${e instanceof Error ? e.message : e}`] }))
+      if (modelRequests.current[p.id] !== request) return
+      setModelErrors((m) => ({ ...m, [p.id]: errMsg(e) }))
+    } finally {
+      if (modelRequests.current[p.id] === request) setModelsLoading((m) => ({ ...m, [p.id]: false }))
     }
   }
 
@@ -453,11 +493,18 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                         </datalist>
                         <button
                           onClick={() => fetchModels(p)}
+                          disabled={modelsLoading[p.id]}
                           className="flex shrink-0 items-center gap-1 rounded-lg border border-border px-3 py-1.5 text-xs text-muted transition-colors hover:text-accent"
                         >
-                          <RefreshCw className="h-3.5 w-3.5" /> 拉取模型
+                          <RefreshCw className={`h-3.5 w-3.5 ${modelsLoading[p.id] ? 'animate-spin' : ''}`} />
+                          {modelsLoading[p.id] ? '正在拉取…' : '拉取模型'}
                         </button>
                       </div>
+                      {modelErrors[p.id] && (
+                        <div role="alert" className="mt-1.5 text-[11px] text-danger">
+                          拉取失败：{modelErrors[p.id]}
+                        </div>
+                      )}
                       {modelsByProvider[p.id] && (
                         <div className="mt-1.5 text-[11px] text-muted">
                           可用: {modelsByProvider[p.id].join(', ') || '（空）'}
@@ -775,15 +822,21 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                     />
                   </label>
                   <label className="block text-sm">
-                    <span className="mb-1.5 block text-xs text-muted">Max Tokens</span>
+                    <span className="mb-1.5 block text-xs text-muted">最大输出 Tokens</span>
                     <input
                       type="number"
                       className={inputCls}
                       value={cfg.maxTokens}
+                      min={0}
+                      step={1}
+                      disabled={cfg.autoMaxTokens !== false}
                       onChange={(e) => update({ maxTokens: Number(e.target.value) })}
                     />
                   </label>
                 </div>
+
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={cfg.autoMaxTokens !== false} onChange={e => update({ autoMaxTokens: e.target.checked })}/>自动检测 API / 模型输出上限并填入</label>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted"><span role="status">{limitStatus || '0 表示由服务端决定；输出上限与上下文长度不同。'}</span><button className="rounded border border-border px-2 py-1" disabled={limitBusy || !limitProvider?.model} onClick={() => void detectLimit(true)}>{limitBusy ? '检测中…' : '重新检测'}</button></div>
 
                 <label className="flex cursor-pointer items-center gap-2.5 text-sm">
                   <input

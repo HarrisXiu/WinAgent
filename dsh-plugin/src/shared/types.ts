@@ -2,6 +2,11 @@
 
 export type ProviderType = 'openai' | 'ollama'
 
+export interface OutputLimit { key: string; value: number | null; source: string; detectedAt: string }
+export interface AgentSessionState { history: ChatMessage[]; activeRules: RuleSet[]; usage: TokenUsage }
+export interface ConversationSummary { id: string; title: string; updated: string; kind?: 'assistant' | 'topic'; topicTag?: string }
+export interface SavedConversation extends ConversationSummary { turns: unknown[]; state: AgentSessionState; context?: KnowledgeContext; draft?: string }
+
 export interface ProviderConfig {
   id: string
   label: string
@@ -14,6 +19,7 @@ export interface ProviderConfig {
   supportsVision?: boolean
   /** 是否支持文件直传（PDF 等 document 输入）：undefined=自动尝试（失败自动降级工具读取），true=强制，false=禁用 */
   supportsFiles?: boolean
+  outputLimit?: OutputLimit
 }
 
 /**
@@ -160,6 +166,8 @@ export interface AppConfig {
   providers: ProviderConfig[]
   temperature: number
   maxTokens: number
+  autoMaxTokens?: boolean
+  skillsDirs?: string[]
   /** @deprecated 旧版字段，仅兼容旧 config.json；运行时使用 petPrompt，load 时一次性迁移后置空 */
   systemPrompt?: string
   /** 危险工具是否自动放行（不弹确认） */
@@ -251,7 +259,9 @@ export type AgentEvent =
   | { type: 'compact'; before: number; after: number }
   | { type: 'vision'; status: 'start' | 'done' | 'error'; model: string; text?: string }
   /** 自动 RAG：本轮提问已检索知识库（count=0 表示未命中） */
-  | { type: 'knowledge'; query: string; count: number }
+  | { type: 'knowledge'; query: string; count: number; references?: KnowledgeReference[]; error?: string }
+  | { type: 'rules'; sets: Array<{ id: string; title: string; version: string; count: number }> }
+  | { type: 'rule_report'; report: TaskRuleReport }
   | { type: 'usage'; last: TokenUsage; session: TokenUsage }
   | { type: 'error'; message: string }
   | { type: 'done' }
@@ -401,6 +411,8 @@ export interface IngestEntity {
 }
 
 export interface IngestAnalysis {
+  sections?: KnowledgeSection[]
+  coverage?: { completed: number; total: number }
   slug: string              // 英文小写连字符，如 attention-is-all-you-need
   title: string             // 中文标题
   summary: string           // 2-4 句摘要
@@ -414,6 +426,34 @@ export interface IngestAnalysis {
   /** 若本来源是译文/转述，填原始出处（URL 或标题）；原创来源省略 */
   canonicalSource?: string
 }
+
+export interface SourceChunk { id: string; text: string; lineStart: number; lineEnd: number }
+export interface KnowledgeSection { chunkId: string; title: string; overview: string; markdown: string; quotes: string[] }
+export interface KnowledgeSource {
+  id: string; title: string; rawPath: string; hash: string; sourcePath: string; created: string
+  status: 'indexed' | 'analyzing' | 'ready' | 'limited' | 'error'
+  chunks: SourceChunk[]; sections: KnowledgeSection[]; error?: string
+}
+export interface WikiJob {
+  id: string; rawPath: string; title: string; status: 'running' | 'done' | 'error' | 'cancelled' | 'interrupted'
+  stage: string; completed: number; total: number; updated: string; error?: string; sourcePath?: string
+}
+export type RuleTask = 'paper' | 'report' | 'code' | 'all' | 'custom'
+export interface TaskRule {
+  id: string; requirement: string; level: 'mandatory' | 'recommended' | 'optional'
+  condition: string; exceptions: string; quote: string; chunkId: string
+}
+export interface RuleSet {
+  id: string; title: string; sourcePath: string; sourceId?: string; sourceHash: string; version: string
+  task: RuleTask; keywords: string[]; enabled: boolean; created: string; rules: TaskRule[]
+}
+export interface TaskRuleReport {
+  id: string; created: string; sets: Array<{ id: string; title: string; version: string }>
+  checks: Array<{ ruleId: string; requirement: string; status: 'pass' | 'fail' | 'review'; reason: string; method: 'model' | 'manual' }>
+  scope: string
+}
+export interface KnowledgeReference { path: string; title: string; chunkId?: string; sourceId?: string; lineStart?: number; lineEnd?: number; excerpt: string }
+export interface KnowledgeContext { mode?: 'auto' | 'selected' | 'off'; paths?: string[]; topicTag?: string }
 
 /** INGEST 完成后的结果（返回前端展示） */
 export interface IngestResult {

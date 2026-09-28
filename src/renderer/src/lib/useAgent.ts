@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { AgentEvent, TokenUsage, ToolSource } from '../../../shared/types'
+import type { AgentEvent, TokenUsage, ToolSource, KnowledgeContext, KnowledgeReference, TaskRuleReport, ConversationSummary, SavedConversation } from '../../../shared/types'
 
 export interface ToolCallView {
   id: string
@@ -20,6 +20,8 @@ export interface ChatTurn {
   toolCalls: ToolCallView[]
   streaming?: boolean
   attachments?: Array<{ name: string; isImage: boolean; dataUrl?: string; path: string; mime?: string }>
+  references?: KnowledgeReference[]
+  ruleReport?: TaskRuleReport
 }
 
 export interface ConfirmRequest {
@@ -31,6 +33,7 @@ export interface ConfirmRequest {
 /** Agent 回复完成回调（自动朗读等衍生动作在此挂钩；出错不触发） */
 export interface UseAgentCallbacks {
   onTurnComplete?: (content: string, turnId: string) => void
+  onConversationLoaded?: (record: SavedConversation) => void
 }
 
 export function useAgent(callbacks?: UseAgentCallbacks) {
@@ -41,6 +44,26 @@ export function useAgent(callbacks?: UseAgentCallbacks) {
   const [usage, setUsage] = useState<TokenUsage | null>(null)
   const [lastUsage, setLastUsage] = useState<TokenUsage | null>(null)
   const [visionActive, setVisionActive] = useState(false)
+  const [activeRules, setActiveRules] = useState<Array<{ id: string; title: string; version: string; count: number }>>([])
+  const [knowledgeError, setKnowledgeError] = useState('')
+  const [conversations, setConversations] = useState<ConversationSummary[]>([])
+  const [conversationId, setConversationId] = useState('')
+  const [conversationKind, setConversationKind] = useState<'assistant'|'topic'>('assistant')
+  const [topicTag, setTopicTag] = useState('')
+  const [switching, setSwitching] = useState(true)
+  const saveTimer = useRef<ReturnType<typeof setTimeout>>()
+  const conversationContext = useRef<KnowledgeContext>({mode:'auto',paths:[]})
+  const draft = useRef('')
+  const [draftRevision,setDraftRevision] = useState(0)
+  const applyConversation = (record: SavedConversation): void => {
+    setConversationId(record.id); setConversationKind(record.kind === 'topic' ? 'topic' : 'assistant'); setTopicTag(record.topicTag || ''); setTurns(record.turns as ChatTurn[])
+    setActiveRules(record.state.activeRules.map(r=>({id:r.id,title:r.title,version:r.version,count:r.rules.length})))
+    setUsage(record.state.usage); setLastUsage(null); setKnowledgeError(''); setStatus('')
+    currentAssistant.current=-1; referencesRef.current=[]; lastContentRef.current=''
+    conversationContext.current=record.context || {mode:'auto',paths:[]}; draft.current=record.draft || ''
+    callbacksRef.current?.onConversationLoaded?.(record)
+  }
+  const referencesRef = useRef<KnowledgeReference[]>([])
   const currentAssistant = useRef<number>(-1)
   // 回调用 ref 承接，避免事件订阅因闭包过期而读到旧函数
   const callbacksRef = useRef(callbacks)
@@ -50,7 +73,40 @@ export function useAgent(callbacks?: UseAgentCallbacks) {
   const lastTurnIdRef = useRef('')
   // turn 稳定 id 计数器
   const seqRef = useRef(0)
-  const nextTurnId = (): string => `t_${++seqRef.current}`
+  const sessionId = useRef(crypto.randomUUID())
+  const nextTurnId = (): string => `t_${sessionId.current}_${++seqRef.current}`
+  useEffect(()=>{
+    let cancelled=false
+    window.winagent.chats.list().then(async records=>{
+      if(cancelled)return
+      const record=await window.winagent.chats.open('assistant')
+      if(!cancelled){applyConversation(record);setConversations(await window.winagent.chats.list())}
+    }).catch(e=>{if(!cancelled)setKnowledgeError(String(e))}).finally(()=>{if(!cancelled)setSwitching(false)})
+    return()=>{cancelled=true;clearTimeout(saveTimer.current)}
+  },[])
+  const saveConversation = async (): Promise<void> => {
+    if(!conversationId || busy)return
+    await window.winagent.chats.save(conversationId,turns,conversationContext.current,draft.current)
+    setConversations(await window.winagent.chats.list())
+  }
+  useEffect(()=>{
+    clearTimeout(saveTimer.current)
+    if(!busy && !switching && conversationId && (turns.length||draft.current.trim())) saveTimer.current=setTimeout(()=>{void saveConversation().catch(e=>setKnowledgeError(String(e)))},300)
+    return()=>clearTimeout(saveTimer.current)
+  },[turns,busy,switching,conversationId,draftRevision])
+  const switchConversation = async (id='assistant'): Promise<void> => {
+    if(busy || switching || (id && id===conversationId))return
+    clearTimeout(saveTimer.current);setSwitching(true)
+    try { await saveConversation(); applyConversation(await window.winagent.chats.open(id));setConversations(await window.winagent.chats.list()) }
+    catch(e){setKnowledgeError(String(e))} finally{setSwitching(false)}
+  }
+  const createTopic = async (title: string): Promise<void> => {
+    if (busy || switching) return
+    clearTimeout(saveTimer.current);setSwitching(true)
+    try { await saveConversation();applyConversation(await window.winagent.chats.createTopic(title));setConversations(await window.winagent.chats.list()) }
+    catch(e){setKnowledgeError(String(e));throw e}finally{setSwitching(false)}
+  }
+  const setDraftContext = (text: string, context: KnowledgeContext): void => {draft.current=text;conversationContext.current=context;setDraftRevision(n=>n+1)}
 
   const patchAssistant = useCallback((fn: (t: ChatTurn) => void) => {
     setTurns((prev) => {
@@ -74,7 +130,7 @@ export function useAgent(callbacks?: UseAgentCallbacks) {
           // 每一轮开新的 assistant 气泡
           setTurns((prev) => {
             const next = [...prev]
-            next.push({ id: nextTurnId(), role: 'assistant', content: '', reasoning: '', toolCalls: [], streaming: true })
+            next.push({ id: nextTurnId(), role: 'assistant', content: '', reasoning: '', toolCalls: [], streaming: true, references: referencesRef.current })
             currentAssistant.current = next.length - 1
             lastTurnIdRef.current = next[next.length - 1].id
             return next
@@ -117,9 +173,17 @@ export function useAgent(callbacks?: UseAgentCallbacks) {
           setStatus(`已压缩上下文：${e.before} → ${e.after} tokens`)
           break
         case 'knowledge':
+          referencesRef.current = e.references || []
+          setKnowledgeError(e.error || '')
           setStatus(e.count > 0
             ? `📚 已检索知识库：注入 ${e.count} 条相关笔记`
             : '📚 已检索知识库：未找到相关内容')
+          break
+        case 'rules':
+          setActiveRules(e.sets)
+          break
+        case 'rule_report':
+          patchAssistant(t => { t.ruleReport = e.report })
           break
         case 'vision':
           // 立绘 vision 态按事件类型判定；不再正则匹配 status 文案
@@ -134,6 +198,7 @@ export function useAgent(callbacks?: UseAgentCallbacks) {
           setUsage(e.session)
           break
         case 'error':
+          setKnowledgeError(e.message)
           patchAssistant((t) => {
             t.content += `\n\n**⚠ 错误：** ${e.message}`
             t.streaming = false
@@ -160,30 +225,38 @@ export function useAgent(callbacks?: UseAgentCallbacks) {
     }
   }, [patchAssistant])
 
-  const send = useCallback(async (text: string, attachments?: Array<{ name: string; isImage: boolean; dataUrl?: string; path: string; mime?: string }>) => {
+  const send = useCallback(async (text: string, attachments?: Array<{ name: string; isImage: boolean; dataUrl?: string; path: string; mime?: string }>, context?: KnowledgeContext) => {
     if (!text.trim() || busy) return
+    conversationContext.current = context || {mode:'auto',paths:[]}; draft.current=''
     setTurns((prev) => [...prev, { id: nextTurnId(), role: 'user', content: text, toolCalls: [], attachments }])
     setBusy(true)
+    currentAssistant.current = -1
+    referencesRef.current = []
+    setKnowledgeError('')
     setStatus('思考中…')
-    await window.winagent.send(text, attachments as any)
+    try { await window.winagent.send(text, attachments as any, context) }
+    catch (e) { setBusy(false); setKnowledgeError(e instanceof Error ? e.message : String(e)); setStatus('发送失败') }
+    finally { setBusy(false) }
   }, [busy])
 
   const stop = useCallback(() => {
     window.winagent.stop()
-    setBusy(false)
     setVisionActive(false)
-    setStatus('已停止')
+    setStatus('正在停止…')
   }, [])
 
   const reset = useCallback(async () => {
     await window.winagent.reset()
+    if(conversationId)await window.winagent.chats.save(conversationId,[],conversationContext.current,'')
     setTurns([])
+    setActiveRules([])
+    setKnowledgeError('')
     setStatus('')
     setUsage(null)
     setLastUsage(null)
     setVisionActive(false)
     lastContentRef.current = ''
-  }, [])
+  }, [conversationId])
 
   const compact = useCallback(async () => {
     setStatus('压缩中…')
@@ -195,5 +268,5 @@ export function useAgent(callbacks?: UseAgentCallbacks) {
     setConfirm(null)
   }, [confirm])
 
-  return { turns, busy, status, confirm, usage, lastUsage, visionActive, send, stop, reset, compact, respondConfirm }
+  return { turns, busy: busy || switching, status, confirm, usage, lastUsage, visionActive, activeRules, knowledgeError, send, stop, reset, compact, respondConfirm, conversations, conversationId, conversationKind, topicTag, switchConversation, createTopic, setDraftContext }
 }

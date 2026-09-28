@@ -20,7 +20,17 @@ function loadModule(name) {
 async function extractPdf(buf) {
   const pdfParseMod = loadModule('pdf-parse')
   const parseFn = pdfParseMod.default || pdfParseMod
-  const data = await parseFn(buf)
+  // Own the exact byte range; older PDF.js must not see a pooled Buffer's backing slab.
+  const data = await parseFn(new Uint8Array(buf), { pagerender: async (page) => {
+    const content = await page.getTextContent({ normalizeWhitespace: false, disableCombineTextItems: false })
+    let lastY, text = ''
+    for (const item of content.items) {
+      const y = item.transform[5]
+      text += (lastY !== undefined && y !== lastY ? '\n' : text ? ' ' : '') + item.str
+      lastY = y
+    }
+    return `【PDF 第 ${page.pageNumber} 页】\n${text.trim() || '【本页未提取到文字，需要 OCR 或核对原页】'}`
+  } })
   return String(data.text || '').trim()
 }
 

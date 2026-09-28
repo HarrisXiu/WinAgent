@@ -1,10 +1,10 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
-  AgentEvent, AppConfig, ToolInfo,
+  AgentEvent, AppConfig, ToolInfo, ProviderConfig,
   NoteMeta, NoteContent, NoteData, NoteAnnotation,
   GraphData, SearchResult, TagWithCount, AISuggestion, VaultChangeEvent, IngestResult, IngestProgress,
   BatchIngestStartResult, BatchIngestDoneResult, WorkflowResult, LintWorkflowResult,
-  AnalysisTag, ImportAnalyzeResult,
+  AnalysisTag, ImportAnalyzeResult, KnowledgeContext, KnowledgeSource, RuleSet, RuleTask, WikiJob,
   SessionStartResult, SkinMeta, SkinSlot, VoiceCloneMeta,
   VoiceSegmentEvent, VoiceSessionEndEvent
 } from '../shared/types'
@@ -34,17 +34,35 @@ const api = {
 
   listTools: (): Promise<ToolInfo[]> => ipcRenderer.invoke('tools:list'),
   reloadTools: (): Promise<ToolInfo[]> => ipcRenderer.invoke('tools:reload'),
+  getMcpConfig: (): Promise<string> => ipcRenderer.invoke('tools:mcp:get'),
+  saveMcpConfig: (text: string): Promise<ToolInfo[]> => ipcRenderer.invoke('tools:mcp:save', text),
 
-  fetchModels: (providerId: string): Promise<string[]> => ipcRenderer.invoke('models:fetch', providerId),
+  fetchModels: async (provider: string | ProviderConfig): Promise<string[]> => {
+    const result: { models?: string[]; error?: string } = await ipcRenderer.invoke('models:fetch', provider)
+    if (result.error) throw new Error(result.error)
+    return result.models || []
+  },
+  detectOutputLimit: async (provider: ProviderConfig, force = false): Promise<import('../shared/types').OutputLimit> => {
+    const result = await ipcRenderer.invoke('models:outputLimit', provider, force)
+    if (result.error) throw new Error(result.error)
+    return result.limit
+  },
 
   readFile: (filePath: string): Promise<AttachmentData> =>
     ipcRenderer.invoke('file:read', filePath),
+  filePath: (file: File): string => webUtils.getPathForFile(file),
 
-  send: (text: string, attachments?: AttachmentData[]): Promise<void> =>
-    ipcRenderer.invoke('agent:send', text, attachments),
+  send: (text: string, attachments?: AttachmentData[], context?: KnowledgeContext): Promise<void> =>
+    ipcRenderer.invoke('agent:send', text, attachments, context),
   stop: (): Promise<void> => ipcRenderer.invoke('agent:stop'),
   reset: (): Promise<void> => ipcRenderer.invoke('agent:reset'),
   compact: (): Promise<void> => ipcRenderer.invoke('agent:compact'),
+  chats: {
+    list: (): Promise<import('../shared/types').ConversationSummary[]> => ipcRenderer.invoke('chats:list'),
+    open: (id = ''): Promise<import('../shared/types').SavedConversation> => ipcRenderer.invoke('chats:open', id),
+    createTopic: (title: string): Promise<import('../shared/types').SavedConversation> => ipcRenderer.invoke('chats:createTopic', title),
+    save: (id: string, turns: unknown[], context?: KnowledgeContext, draft?: string): Promise<void> => ipcRenderer.invoke('chats:save', id, turns, context, draft)
+  },
 
   onEvent: (cb: (e: AgentEvent) => void): (() => void) => {
     const listener = (_e: unknown, ev: AgentEvent): void => cb(ev)
@@ -136,6 +154,21 @@ const api = {
 
   // ==================== Wiki API ====================
   wiki: {
+    returnToChat: (value: {path:string;title:string;text?:string}): Promise<void> => ipcRenderer.invoke('wiki:workspace:chat',value),
+    onChatContext: (cb:(value:{path:string;title:string;text?:string})=>void): (()=>void) => {
+      const listener=(_e:unknown,value:{path:string;title:string;text?:string}):void=>cb(value)
+      ipcRenderer.on('wiki:workspace:chat',listener)
+      return ()=>ipcRenderer.removeListener('wiki:workspace:chat',listener)
+    },
+    sources: (): Promise<KnowledgeSource[]> => ipcRenderer.invoke('wiki:workspace:sources'),
+    jobs: (): Promise<WikiJob[]> => ipcRenderer.invoke('wiki:workspace:jobs'),
+    cancelJob: (id: string): Promise<void> => ipcRenderer.invoke('wiki:workspace:cancel', id),
+    pickFiles: (): Promise<string[]> => ipcRenderer.invoke('wiki:workspace:pickFiles'),
+    ruleSets: (): Promise<RuleSet[]> => ipcRenderer.invoke('wiki:rules:list'),
+    compileRules: (sourcePath: string, task: RuleTask, keywords: string[]): Promise<RuleSet> => ipcRenderer.invoke('wiki:rules:compile', sourcePath, task, keywords),
+    toggleRules: (id: string, enabled: boolean): Promise<void> => ipcRenderer.invoke('wiki:rules:toggle', id, enabled),
+    openOriginal: (rawPath: string): Promise<void> => ipcRenderer.invoke('wiki:workspace:openOriginal', rawPath),
+    pdfData: (sourceId: string): Promise<Uint8Array> => ipcRenderer.invoke('wiki:workspace:pdf', sourceId),
     /** 打开/聚焦知识库独立窗口 */
     openWindow: (): void => { void ipcRenderer.invoke('wiki:window:open') },
 
@@ -167,8 +200,8 @@ const api = {
       ipcRenderer.invoke('wiki:ai:analyze', relPath),
     aiCancel: (): Promise<void> => ipcRenderer.invoke('wiki:ai:cancel'),
 
-    ingest: (rawRelPath: string): Promise<IngestResult> =>
-      ipcRenderer.invoke('wiki:ingest', rawRelPath),
+    ingest: (rawRelPath: string, force = false): Promise<IngestResult> =>
+      ipcRenderer.invoke('wiki:ingest', rawRelPath, force),
     onIngestProgress: (cb: (p: IngestProgress) => void): (() => void) => {
       const listener = (_e: unknown, p: IngestProgress): void => cb(p)
       ipcRenderer.on('wiki:ingest:progress', listener)

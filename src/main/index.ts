@@ -9,7 +9,7 @@
  *   4. ipcMain 通道注册（与 preload 的 window.winagent API 一一对应）
  *   5. 主窗口 + 知识库窗口
  */
-import { app, BrowserWindow, ipcMain, shell, dialog, nativeTheme, protocol } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, nativeTheme, protocol, net } from 'electron'
 import { promises as fs } from 'fs'
 import path from 'path'
 
@@ -254,6 +254,61 @@ function startBusForwarding(): void {
 // ── 4. IPC 通道（与 preload 的 window.winagent API 一一对应）──
 
 function registerIpc(): void {
+  const conversations = new services.ConversationStore(path.join(services.getDataDir(), 'conversations'))
+  let activeConversation = ''
+  let activeConversationKind: 'assistant' | 'topic' = 'assistant'
+  let activeTopicTag = ''
+  let detectingRequest = 0
+  ipcMain.handle('chats:list', () => conversations.list())
+  ipcMain.handle('chats:open', async (_e, id: string) => {
+    if (core!.agent.isBusy() || detectingRequest) throw new Error('请等待当前任务结束后切换')
+    const key = id || 'assistant'
+    let record: import('dsh-winagent/services').SavedConversation | null = null
+    try { record = await conversations.read(key) } catch (e: any) { if (e.code !== 'ENOENT' || key !== 'assistant') throw e }
+    if (record?.kind === 'topic' && !record.topicTag?.startsWith('专题:')) throw new Error('专题任务缺少有效标签，无法打开')
+    core!.agent.restoreSession(record?.state)
+    activeConversation = key
+    activeConversationKind = record?.kind === 'topic' ? 'topic' : 'assistant'
+    activeTopicTag = activeConversationKind === 'topic' ? record?.topicTag || '' : ''
+    if (!record) {
+      record = { id: key, title: '助理', kind: 'assistant', updated: new Date().toISOString(), turns: [], state: core!.agent.exportSession(), context: { mode: 'auto', paths: [] } }
+      await conversations.write(record)
+    }
+    return record
+  })
+  ipcMain.handle('chats:createTopic', async (_e, title: string) => {
+    if (core!.agent.isBusy() || detectingRequest) throw new Error('请等待当前任务结束后新建专题')
+    const name = String(title || '').trim().replace(/\s+/g, ' ')
+    if (!name || name.length > 60 || /[\r\n]/.test(name)) throw new Error('请输入 1–60 字的专题名称')
+    if ((await conversations.list()).some(c => c.kind === 'topic' && c.title.toLowerCase() === name.toLowerCase())) throw new Error('专题名称已存在')
+    core!.agent.restoreSession()
+    const record: import('dsh-winagent/services').SavedConversation = {
+      id: require('crypto').randomUUID(), title: name, kind: 'topic', topicTag: `专题:${name}`,
+      updated: new Date().toISOString(), turns: [], state: core!.agent.exportSession(), context: { mode: 'auto', paths: [] }
+    }
+    await conversations.write(record)
+    activeConversation = record.id; activeConversationKind = 'topic'; activeTopicTag = record.topicTag!
+    return record
+  })
+  ipcMain.handle('chats:save', async (_e, id: string, turns: any[], context?: import('dsh-winagent/services').KnowledgeContext, draft?: string) => {
+    if (id !== activeConversation) throw new Error('当前任务已切换，未覆盖其他任务')
+    const state = core!.agent.exportSession()
+    const existing = await conversations.read(id)
+    await conversations.write({ ...existing, updated: new Date().toISOString(), turns, state,
+      context: { mode: activeConversationKind === 'topic' ? 'auto' : context?.mode || 'auto', paths: activeConversationKind === 'topic' ? [] : context?.paths || [] }, draft })
+  })
+  services.setOutputLimitObserver(async (provider, limit) => {
+    const cfg = core!.store.get()
+    const current = cfg.providers.find(p => p.id === provider.id)
+    if (!current || services.outputLimitKey(current) !== limit.key) return
+    await core!.store.save({ ...cfg, providers: cfg.providers.map(p => p.id === provider.id ? { ...p, outputLimit: limit } : p),
+      maxTokens: cfg.autoMaxTokens !== false && cfg.activeProviderId === provider.id ? limit.value || 0 : cfg.maxTokens })
+    sendToWindows('config:changed', core!.store.get())
+  })
+  ipcMain.handle('models:outputLimit', async (_e, provider: import('dsh-winagent/services').ProviderConfig, force: boolean) => {
+    try { return { limit: await services.detectOutputLimit(provider, (url, init) => net.fetch(url, init), force) } }
+    catch (e) { return { error: e instanceof Error ? e.message : String(e) } }
+  })
   const wiki = () => {
     if (!core) throw new Error('服务未初始化')
     return core.wikiHost
@@ -262,8 +317,11 @@ function registerIpc(): void {
   // === Config ===
   ipcMain.handle('config:get', () => core!.store.get())
   ipcMain.handle('config:save', async (_e, cfg: AppConfig) => {
+    const before = core!.store.get()
+    const toolsChanged = cfg.skillsDir !== before.skillsDir || cfg.mcpConfigPath !== before.mcpConfigPath || JSON.stringify(cfg.skillsDirs) !== JSON.stringify(before.skillsDirs)
+    if(toolsChanged && core!.agent.isBusy()) throw new Error('请等待当前任务结束后更新工具目录')
     await core!.store.save(cfg)
-    await core!.reloadTools()
+    if(toolsChanged)await core!.reloadTools()
     const saved = core!.store.get()
     sendToWindows('config:changed', saved)
     return saved
@@ -318,24 +376,75 @@ function registerIpc(): void {
 
   // === Tools / Models ===
   ipcMain.handle('tools:list', () => core!.registry.getInfos())
+  const mcpFile = (): string => core!.store.resolvePath(core!.store.get().mcpConfigPath || 'mcp.json')
+  ipcMain.handle('tools:mcp:get', async () => {
+    try { return await fs.readFile(mcpFile(), 'utf8') } catch (e: any) { if(e.code==='ENOENT')return '{"mcpServers":{}}';throw e }
+  })
+  ipcMain.handle('tools:mcp:save', async (_e, text: string) => {
+    if(core!.agent.isBusy())throw new Error('请等待当前任务结束后更新工具')
+    const value = JSON.parse(text)
+    if(!value.mcpServers || typeof value.mcpServers!=='object' || Array.isArray(value.mcpServers)) throw new Error('配置需要包含 mcpServers 对象')
+    for(const [name, server] of Object.entries(value.mcpServers) as Array<[string,any]>) {
+      if(!name.trim() || !server || typeof server!=='object')throw new Error('MCP 服务名称或配置无效')
+      if(typeof server.url==='string') { if(!/^https?:\/\//i.test(server.url))throw new Error(`${name} 的 URL 需要使用 http 或 https`) }
+      else if(typeof server.command!=='string' || !server.command.trim())throw new Error(`${name} 需要填写 command 或 url`)
+      if(server.args!==undefined && (!Array.isArray(server.args)||server.args.some((x:any)=>typeof x!=='string')))throw new Error(`${name} 的 args 必须为字符串数组`)
+    }
+    const file=mcpFile();await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,JSON.stringify(value,null,2),'utf8')
+    await core!.reloadTools();return core!.registry.getInfos()
+  })
   ipcMain.handle('tools:reload', async () => {
+    if(core!.agent.isBusy())throw new Error('请等待当前任务结束后重新加载工具')
     await core!.reloadTools()
     return core!.registry.getInfos()
   })
-  ipcMain.handle('models:fetch', async (_e, providerId: string) => {
-    const cfg = core!.store.get()
-    const provider = cfg.providers.find((p) => p.id === providerId) || core!.store.activeProvider()
-    return services.fetchModels(provider)
+  ipcMain.handle('models:fetch', async (_e, request: string | import('dsh-winagent/services').ProviderConfig) => {
+    try {
+      // 设置页可传入尚未保存的配置；顶栏仍可按 providerId 拉取。
+      const provider = typeof request === 'string'
+        ? core!.store.get().providers.find((p) => p.id === request)
+        : request
+      if (!provider) throw new Error('服务商配置不存在，请重新选择服务商。')
+      // 使用 Electron 网络栈，使模型请求遵循系统代理配置。
+      const models = await services.fetchModels(provider, (url, init) => net.fetch(url, init))
+      return { models }
+    } catch (e) {
+      // 显式返回错误，避免 Electron IPC 给用户提示加上内部方法名。
+      return { error: e instanceof Error ? e.message : String(e) }
+    }
   })
 
   // === Agent ===
-  ipcMain.handle('agent:send', async (_e, text: string, attachments?: any[]) => {
+  ipcMain.handle('agent:send', async (_e, text: string, attachments?: any[], context?: import('dsh-winagent/services').KnowledgeContext) => {
+    if (detectingRequest || core!.agent.isBusy()) throw new Error('当前任务仍在执行')
+    if (!activeConversation) throw new Error('请先打开助理或专题任务')
+    if (activeConversationKind === 'topic' && attachments?.length) throw new Error('专题任务只能使用带当前专题标签的 Wiki 文件；请先将文件导入 Wiki 并添加标签')
+    const requestId = Date.now()
+    detectingRequest = requestId
+    if (core!.store.get().autoMaxTokens !== false) {
+      const provider = core!.store.activeProvider()
+      try {
+        const limit = await services.detectOutputLimit(provider, (url, init) => net.fetch(url, init))
+        const cfg = core!.store.get()
+        if (services.outputLimitKey(core!.store.activeProvider()) === limit.key) {
+          await core!.store.save({ ...cfg, maxTokens: limit.value || 0 })
+          sendToWindows('config:changed', core!.store.get())
+        }
+      } catch { // Detection failure must not prevent a valid chat request using server defaults.
+        const cfg = core!.store.get()
+        await core!.store.save({ ...cfg, maxTokens: 0 })
+        sendToWindows('config:changed', core!.store.get())
+      }
+    }
+    if (detectingRequest !== requestId) return
+    detectingRequest = 0
     await core!.agent.process(text, {
       onEvent: (e) => core!.bus.push('agentEvent', e),
       confirmTool
-    }, attachments)
+    }, attachments, activeConversationKind === 'topic' ? { mode: 'auto', paths: [], topicTag: activeTopicTag } : { mode: context?.mode, paths: context?.paths })
   })
   ipcMain.handle('agent:stop', () => {
+    detectingRequest = 0
     core!.agent.stop()
     clearPendingConfirms(false)
   })
@@ -452,6 +561,44 @@ function registerIpc(): void {
 
   // === Wiki — 窗口 / Vault ===
   ipcMain.handle('wiki:window:open', () => createWikiWindow())
+  ipcMain.handle('wiki:workspace:chat', (_e, value: {path:string;title:string;text?:string}) => {
+    mainWindow?.webContents.send('wiki:workspace:chat',value)
+    mainWindow?.show();mainWindow?.focus()
+  })
+  ipcMain.handle('wiki:workspace:sources', () => wiki().workspace.sources())
+  ipcMain.handle('wiki:workspace:jobs', () => wiki().workspace.jobs())
+  ipcMain.handle('wiki:workspace:cancel', (_e, id: string) => wiki().ingestion.cancel(id))
+  ipcMain.handle('wiki:workspace:pickFiles', async () => {
+    const selected = await dialog.showOpenDialog({ title: '导入知识资料或任务规范', properties: ['openFile', 'multiSelections'] })
+    return selected.canceled ? [] : selected.filePaths
+  })
+  ipcMain.handle('wiki:rules:list', () => wiki().workspace.rules())
+  ipcMain.handle('wiki:rules:compile', async (_e, sourcePath: string, task: import('dsh-winagent/services').RuleTask, keywords: string[]) => {
+    const result = await wiki().rules.compile(core!.store.activeProvider(), sourcePath, task, keywords)
+    core!.bus.push('vaultChanged', { type: 'modified', path: sourcePath })
+    return result
+  })
+  ipcMain.handle('wiki:rules:toggle', async (_e, id: string, enabled: boolean) => {
+    await wiki().rules.toggle(id, !!enabled)
+    core!.bus.push('vaultChanged', { type: 'modified', path: '.rules' })
+  })
+  ipcMain.handle('wiki:workspace:openOriginal', async (_e, rawPath: string) => {
+    const root = path.resolve(wiki().getVaultPath())
+    const target = path.resolve(root, rawPath)
+    const relative = path.relative(root, target)
+    if (!rawPath.replace(/\\/g, '/').startsWith('raw/') || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('文件必须位于当前知识库 raw 目录')
+    const error = await shell.openPath(target)
+    if (error) throw new Error(error)
+  })
+  ipcMain.handle('wiki:workspace:pdf', async (_e, id: string) => {
+    const source = (await wiki().workspace.sources()).find(s=>s.id===id)
+    if (!source || !source.rawPath.toLowerCase().endsWith('.pdf')) throw new Error('PDF 来源不存在')
+    const root = await fs.realpath(wiki().getVaultPath())
+    const file = await fs.realpath(path.resolve(root,source.rawPath))
+    const relative = path.relative(root,file)
+    if(relative.startsWith('..')||path.isAbsolute(relative))throw new Error('PDF 不在当前知识库中')
+    return new Uint8Array(await fs.readFile(file))
+  })
   ipcMain.handle('wiki:vault:path', () => wiki().getVaultPath())
   ipcMain.handle('wiki:vault:setPath', async (_e, p: string) => {
     await wiki().setVaultPath(p)
@@ -488,7 +635,7 @@ function registerIpc(): void {
   ipcMain.handle('wiki:ai:cancel', () => wiki().aiCancel())
 
   // === Wiki — Ingest ===
-  ipcMain.handle('wiki:ingest', async (_e, rawRelPath: string) => wiki().runIngest(rawRelPath))
+  ipcMain.handle('wiki:ingest', async (_e, rawRelPath: string, force?: boolean) => wiki().runIngest(rawRelPath, force === true))
   ipcMain.handle('wiki:ingest:batchStart', async (_e, paths: string[]) => wiki().ingestBatchStart(paths))
   ipcMain.handle('wiki:ingest:batchContinue', async () => wiki().ingestBatchContinue())
   ipcMain.handle('wiki:ingest:batchAbort', async () => wiki().ingestBatchAbort())

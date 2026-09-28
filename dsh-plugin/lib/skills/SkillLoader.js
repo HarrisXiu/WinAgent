@@ -49,6 +49,8 @@ async function loadSkills(skillsDir) {
     let entries;
     try {
         entries = await fs_1.promises.readdir(skillsDir);
+        if (entries.includes('SKILL.md') || entries.includes('manifest.json'))
+            entries = ['.'];
     }
     catch {
         return tools;

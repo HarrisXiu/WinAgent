@@ -17,8 +17,14 @@ import {
   Server,
   BookOpen,
   Sparkles
+  , PanelLeftClose, PanelLeftOpen, MessageSquare, Search, ChevronRight, ArrowUpRight, Columns2
 } from 'lucide-react'
-import type { AppConfig, AnalysisTag } from '../../shared/types'
+import type { AppConfig, AnalysisTag, KnowledgeContext } from '../../shared/types'
+import KnowledgeWorkspace, { type KnowledgeSelection } from './components/wiki/KnowledgeWorkspace'
+import ErrorBoundary from './components/ErrorBoundary'
+import ToolsWorkspace from './components/workbench/ToolsWorkspace'
+import { useResizablePane } from './components/workbench/useResizablePane'
+import './components/workbench/workbench.css'
 import { useAgent } from './lib/useAgent'
 import { SpeechProvider, useSpeech } from './lib/useSpeech'
 import SpeechBar from './components/SpeechBar'
@@ -40,7 +46,13 @@ interface PendingAttachment {
 function AppShell(): JSX.Element {
   const speech = useSpeech()
   const skin = useSkin()
-  const { turns, busy, status, confirm, usage, lastUsage, visionActive, send, stop, reset, compact, respondConfirm } = useAgent({
+  const { turns, busy, status, confirm, usage, lastUsage, visionActive, activeRules, knowledgeError, send, stop, reset, compact, respondConfirm, conversations, conversationId, conversationKind, topicTag, switchConversation, createTopic, setDraftContext } = useAgent({
+    onConversationLoaded: record => {
+      setInput(record.draft || '')
+      setKnowledgeMode(record.context?.mode || 'auto')
+      setPinnedKnowledge((record.context?.paths || []).map(path=>({path,title:path.split('/').pop()?.replace(/\.md$/,'') || path})))
+      setAttachments([])
+    },
     // 自动朗读：回复完成后（未出错）走全局语音会话（气泡播放态/控制条/取消链路统一）
     onTurnComplete: (content, turnId) => {
       const v = cfgRef.current?.voice
@@ -56,6 +68,34 @@ function AppShell(): JSX.Element {
   const [settingsTab, setSettingsTab] = useState<TabKey>('models')
   const [pickSkills, setPickSkills] = useState(false)
   const [input, setInput] = useState('')
+  const [showKnowledge, setShowKnowledge] = useState(false)
+  const [showPlugins, setShowPlugins] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [taskSearch, setTaskSearch] = useState('')
+  const [creatingTopic, setCreatingTopic] = useState(false)
+  const [topicDraft, setTopicDraft] = useState('')
+  const [scopeNotice, setScopeNotice] = useState('')
+  const sidebar = useResizablePane('winagent:sidebar-width', 232, 192, 380)
+  const navigate = (view: 'chat'|'wiki'|'plugins'): void => {setShowKnowledge(view==='wiki');setShowPlugins(view==='plugins')}
+  const changeConversation = async (id='assistant'): Promise<void> => { speech.stop(); await switchConversation(id);setScopeNotice('');navigate('chat') }
+  const submitTopic = async (): Promise<void> => { if (!topicDraft.trim()) return;try { await createTopic(topicDraft);setTopicDraft('');setCreatingTopic(false);setScopeNotice('');navigate('chat') } catch(e) { setScopeNotice(e instanceof Error?e.message:String(e)) } }
+  const [knowledgeSelection, setKnowledgeSelection] = useState<KnowledgeSelection | null>(null)
+  const [knowledgeMode, setKnowledgeMode] = useState<KnowledgeContext['mode']>('auto')
+  const [pinnedKnowledge, setPinnedKnowledge] = useState<Array<{path:string;title:string}>>([])
+  const pinKnowledge = async (path: string, title: string): Promise<boolean> => {
+    if (conversationKind === 'topic') {
+      const note = await window.winagent.wiki.readNote(path).catch(()=>null)
+      if (!note) {setScopeNotice(`请先打开《${title}》并添加「${topicTag}」标签`);navigate('wiki');return false}
+      if (!note.tags.includes(topicTag)) {setScopeNotice(`请先为《${title}》添加「${topicTag}」标签`);navigate('wiki');return false}
+      setScopeNotice('');navigate('chat');return true
+    }
+    setPinnedKnowledge(p => p.some(x=>x.path===path)?p:[...p,{path,title}]);setKnowledgeMode('selected')
+    navigate('chat')
+    return true
+  }
+  const openKnowledge = (path: string, chunkId?: string): void => {
+    setKnowledgeSelection({path,chunkId});navigate('wiki')
+  }
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   // 知识库独立窗口 + 拖拽处理
   const [dragOver, setDragOver] = useState(false)
@@ -67,6 +107,18 @@ function AppShell(): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  useEffect(()=>window.winagent.wiki.onChatContext(({path,title,text})=>{
+    void pinKnowledge(path,title);setShowPlugins(false)
+    if(text)setInput(s=>`${s}${s?'\n\n':''}引用《${title}》：\n${text}\n\n`)
+  }),[conversationKind,topicTag])
+  useEffect(()=>{setDraftContext(input,{mode:knowledgeMode,paths:pinnedKnowledge.map(p=>p.path)})},[input,knowledgeMode,pinnedKnowledge])
+  useEffect(()=>{
+    const shortcut=(e:KeyboardEvent):void=>{
+      if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='b'){e.preventDefault();setSidebarCollapsed(s=>!s)}
+      if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.key.toLowerCase()==='n'){e.preventDefault();if(!busy)setCreatingTopic(true)}
+    }
+    window.addEventListener('keydown',shortcut);return()=>window.removeEventListener('keydown',shortcut)
+  },[busy,conversationId,turns,input])
 
   const loadCfg = (): void => {
     window.winagent.getConfig().then((c) => {
@@ -193,7 +245,8 @@ function AppShell(): JSX.Element {
     const atts = attachments.length > 0
       ? attachments.map((a) => ({ name: a.name, path: a.path, isImage: a.isImage, dataUrl: a.dataUrl }))
       : undefined
-    send(text || '请分析这些文件。', atts)
+    if (conversationKind === 'topic' && atts?.length) {setScopeNotice('请先将文件导入 Wiki 并添加当前专题标签');return}
+    send(text || '请分析这些文件。', atts, { mode: conversationKind === 'topic' ? 'auto' : knowledgeMode, paths: conversationKind === 'topic' ? [] : pinnedKnowledge.map(p=>p.path) })
     setInput('')
     setAttachments([])
     if (taRef.current) taRef.current.style.height = 'auto'
@@ -203,7 +256,7 @@ function AppShell(): JSX.Element {
     const files = e.target.files
     if (!files) return
     for (const file of Array.from(files)) {
-      const filePath = (file as any).path || file.name
+      const filePath = window.winagent.filePath(file)
       if (!filePath) continue
       try {
         const data = await window.winagent.readFile(filePath)
@@ -226,7 +279,7 @@ function AppShell(): JSX.Element {
   }
 
   const onKeyDown = (e: React.KeyboardEvent): void => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !(e.nativeEvent as KeyboardEvent).isComposing) {
       e.preventDefault()
       submit()
     }
@@ -294,202 +347,33 @@ function AppShell(): JSX.Element {
   }, [])
 
   return (
-    <div
-      className="flex h-full flex-col bg-bg"
-    >
-      {/* ================= 顶栏 ================= */}
-      <header className="relative z-10 flex items-center gap-2.5 border-b border-border bg-panel/70 px-4 py-2 backdrop-blur">
-        <div className="mr-1.5 flex items-center gap-2.5">
-          {skin.avatar ? (
-            <img src={skin.avatar} alt={skin.name || 'WinAgent'} className="h-8 w-8 rounded-full object-cover shadow-glow" />
-          ) : (
-            <div
-              aria-hidden="true"
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-accent to-accent2 shadow-glow"
-            >
-              <Bot className="h-4 w-4 text-accent-fg" />
-            </div>
-          )}
-          <span className="text-[15px] font-semibold tracking-tight text-text">
-            Win
-            <span className="bg-gradient-to-r from-accent to-accent2 bg-clip-text text-transparent">Agent</span>
-          </span>
-        </div>
-
-        <select
-          className="rounded-lg border border-border bg-panel px-2.5 py-1.5 text-[13px] text-text"
-          value={cfg?.activeProviderId || ''}
-          onChange={(e) => switchProvider(e.target.value)}
-        >
-          {cfg?.providers.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-        </select>
-
-        <div className="flex items-center gap-1">
-          <input
-            className="w-52 rounded-lg border border-border bg-panel px-2.5 py-1.5 text-[13px] text-text"
-            value={activeProvider?.model || ''}
-            list="topbar-models"
-            placeholder="模型"
-            onChange={(e) => switchModel(e.target.value)}
-          />
-          <datalist id="topbar-models">
-            {models.map((m) => (
-              <option key={m} value={m} />
-            ))}
-          </datalist>
-          <button title="拉取模型列表" onClick={refreshModels} className={iconBtn}>
-            <RefreshCw className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* 模式已合并：桌宠（含 Agent 全部能力） */}
-        <div className="ml-auto flex items-center gap-1.5">
-          <button
-            title="知识库浏览器（弹出独立窗口）"
-            onClick={() => window.winagent.wiki.openWindow()}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-hover/70 hover:text-accent"
-          >
-            <BookOpen className="h-4 w-4" />
-          </button>
-          {status && (
-            <span className="max-w-56 truncate text-xs text-muted">{status}</span>
-          )}
-          {usage && usage.total > 0 && (
-            <span
-              title={usageTitle}
-              className="cursor-default rounded-full border border-accent/25 bg-accent/10 px-2.5 py-0.5 text-[11px] font-medium text-accent"
-            >
-              {usage.estimated ? '~' : ''}
-              {fmtTokens(usage.total)} tokens
-            </span>
-          )}
-          <button title="压缩上下文" onClick={compact} className={iconBtn}>
-            <Minimize2 className="h-4 w-4" />
-          </button>
-          <button title="清空对话" onClick={reset} className={iconBtn}>
-            <Trash2 className="h-4 w-4" />
-          </button>
-          <button title="设置" onClick={() => openSettings()} className={iconBtn}>
-            <SettingsIcon className="h-4 w-4" />
-          </button>
-        </div>
-      </header>
-
-      {/* ================= 主区域：左侧立绘（仅吉祥物主题） + 右侧对话 ================= */}
-        <div className="flex min-h-0 flex-1">
-        {/* 左侧：大立绘，实时随对话状态切换；普通主题整栏不渲染（聊天区多出横向空间） */}
-        {turns.length > 0 && skin.art && (
-          <aside className="flex w-52 shrink-0 flex-col items-center border-r border-border/60 bg-panel/40 py-6 backdrop-blur">
-            <div className="relative">
-              <div className="absolute inset-8 rounded-full bg-gradient-to-br from-accent/25 to-accent2/25 blur-2xl" />
-              <img
-                src={skin.art[aiState]}
-                alt={skin.name || ''}
-                className="relative h-44 w-44 object-contain drop-shadow-xl"
-              />
-              {skin.decorations && (
-                <>
-                  <img src={skin.decorations.bubble} alt="" className="absolute -left-7 top-3 h-9 w-9 animate-bounce object-contain" />
-                  <img src={skin.decorations.heart} alt="" className="absolute -right-5 top-8 h-6 w-6 animate-pulse object-contain" />
-                  <img src={skin.decorations.cloud} alt="" className="absolute -left-8 bottom-2 h-8 w-8 object-contain opacity-90" />
-                </>
-              )}
-            </div>
-
-            <div className="mt-4 flex items-center gap-2">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-success" />
-              </span>
-              <span className="text-sm font-semibold text-text">{skin.name}</span>
-            </div>
-
-            <div className="mt-2.5 flex items-center gap-2 rounded-full border border-border bg-panel/80 px-3.5 py-1.5 shadow-card">
-              {aiState === 'idle' ? (
-                <span className="text-xs text-muted">{skin.stateLabel.idle}</span>
-              ) : (
-                <>
-                  <span className="flex gap-0.5">
-                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent" />
-                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:150ms]" />
-                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:300ms]" />
-                  </span>
-                  <span className="text-xs font-medium text-accent">{skin.stateLabel[aiState]}</span>
-                </>
-              )}
-            </div>
-          </aside>
-        )}
-
-        {/* 右侧：消息 + 输入 */}
-        <div className="flex min-w-0 flex-1 flex-col">
-      {/* ================= 消息区 ================= */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
-        {turns.length === 0 ? (
-          <div className="relative flex h-full flex-col items-center justify-center text-center">
-            {/* 吉祥物主题：角色动图 + 漂浮装饰；普通主题：主色图标 + 渐变光环 */}
-            {skin.art ? (
-              <div className="relative mb-3">
-                <div className="absolute inset-4 rounded-full bg-gradient-to-br from-accent/30 to-accent2/30 blur-2xl" />
-                <img src={skin.art.idle} alt={skin.name || ''} className="relative h-52 w-52 object-contain drop-shadow-xl" />
-                {skin.decorations && (
-                  <>
-                    <img src={skin.decorations.bubble} alt="" className="absolute -left-12 top-3 h-10 w-10 animate-bounce object-contain" />
-                    <img src={skin.decorations.heart} alt="" className="absolute -right-9 top-8 h-7 w-7 animate-pulse object-contain" />
-                    <img src={skin.decorations.wand} alt="" className="absolute -right-14 bottom-5 h-12 w-12 animate-bounce object-contain [animation-delay:300ms]" />
-                    <img src={skin.decorations.cloud} alt="" className="absolute -left-14 bottom-1 h-9 w-9 object-contain opacity-90" />
-                  </>
-                )}
-              </div>
-            ) : (
-              <div className="relative mb-3">
-                <div className="absolute inset-0 mx-auto h-32 w-32 rounded-full bg-gradient-to-br from-accent/30 to-accent2/30 blur-2xl" />
-                <div className="relative mx-auto flex h-32 w-32 items-center justify-center rounded-full border border-border bg-panel/80 shadow-glow">
-                  <Sparkles className="h-14 w-14 text-accent" />
-                </div>
-              </div>
-            )}
-
-            <h1 className="mb-2 text-[28px] font-semibold tracking-tight">
-              <span className="bg-gradient-to-r from-accent to-accent2 bg-clip-text text-transparent">WinAgent</span>
-            </h1>
-            <p className="mb-8 max-w-md text-sm leading-relaxed text-muted">{skin.welcome}</p>
-
-            <div className="grid grid-cols-3 gap-3">
-              {features.map((f) => (
-                <button
-                  key={f.title}
-                  onClick={() => openSettings(f.tab, f.pickSkills)}
-                  title={`点击前往「${f.title}」设置`}
-                  className="group w-44 cursor-pointer rounded-2xl border border-border bg-panel/80 p-4 text-left shadow-card transition-all hover:border-accent/40 hover:shadow-glow"
-                >
-                  <f.icon className="mb-2.5 h-5 w-5 text-accent transition-transform group-hover:scale-110" />
-                  <div className="mb-1 text-[13px] font-medium text-text">{f.title}</div>
-                  <div className="text-[11px] leading-relaxed text-muted">{f.desc}</div>
-                </button>
-              ))}
-            </div>
-
-            <p className="mt-8 text-xs text-muted">
-              输入 <code className="rounded-md bg-accent/10 px-1.5 py-0.5 text-[11px] text-accent">/clear</code> 清空 ·{' '}
-              <code className="rounded-md bg-accent/10 px-1.5 py-0.5 text-[11px] text-accent">/compact</code> 压缩上下文
-            </p>
-          </div>
-        ) : (
-          <div className="mx-auto flex max-w-3xl flex-col gap-1 px-4 pb-6 pt-4">
-            {turns.map((t) => (
-              <Message key={t.id} turn={t} aiState={aiState} voiceOn={!!(cfg?.voice.enabled && cfg?.voice.apiKey)} />
-            ))}
-          </div>
-        )}
-      </div>
-
+    <div className={`wb-shell ${sidebarCollapsed?'wb-collapsed':''}`}>
+      <aside ref={sidebar.element} style={sidebar.style} className="wb-sidebar" aria-label="主导航">
+        <div className="wb-brand"><Bot size={21}/><strong>WinAgent</strong><span>0.5.0</span><button title="收起侧栏 Ctrl+B" onClick={()=>setSidebarCollapsed(true)}><PanelLeftClose size={17}/></button></div>
+        <button className="wb-new-task" title="新建专题任务 Ctrl+Shift+N" disabled={busy} onClick={()=>setCreatingTopic(true)}><Plus size={17}/><span>新建专题任务</span><kbd>Ctrl ⇧ N</kbd></button>
+        {creatingTopic&&<form className="wb-topic-form" onSubmit={e=>{e.preventDefault();void submitTopic()}}><input autoFocus aria-label="专题任务名称" placeholder="例如：毕业论文" value={topicDraft} onChange={e=>setTopicDraft(e.target.value)}/><button disabled={busy||!topicDraft.trim()} type="submit">创建专题与标签</button><button type="button" onClick={()=>setCreatingTopic(false)}>取消</button></form>}
+        <nav className="wb-primary-nav">
+          <button aria-current={!showKnowledge&&!showPlugins&&conversationKind==='assistant'?'page':undefined} onClick={()=>void changeConversation('assistant')} title="助理"><Bot size={18}/><span>助理</span></button>
+          <button aria-current={!showKnowledge&&!showPlugins&&conversationKind==='topic'?'page':undefined} onClick={()=>{const first=conversations.find(c=>c.kind==='topic');if(first)void changeConversation(first.id);else setCreatingTopic(true)}} title="专题任务"><MessageSquare size={18}/><span>专题任务</span><small>{conversations.filter(c=>c.kind==='topic').length}</small></button>
+          <button aria-current={showPlugins?'page':undefined} onClick={()=>navigate('plugins')} title="Skills 与 MCP"><Puzzle size={18}/><span>Skills 与 MCP</span></button>
+          <button aria-current={showKnowledge?'page':undefined} onClick={()=>navigate('wiki')} title="Wiki 知识库"><BookOpen size={18}/><span>Wiki 知识库</span><small>资料与规范</small></button>
+        </nav>
+        <div className="wb-task-section"><div className="wb-section-label">专题任务</div><label className="wb-search"><Search size={14}/><input aria-label="搜索专题任务" placeholder="搜索专题任务" value={taskSearch} onChange={e=>setTaskSearch(e.target.value)}/></label><div className="wb-task-list">{conversations.filter(c=>c.kind==='topic'&&c.title.toLowerCase().includes(taskSearch.toLowerCase())).map(c=><button key={c.id} disabled={busy} className={c.id===conversationId?'is-active':''} title={`${c.title} · ${c.topicTag}`} onClick={()=>void changeConversation(c.id)}><MessageSquare size={14}/><span>{c.title}</span></button>)}{!conversations.some(c=>c.kind==='topic')&&<p>新建专题后，在 Wiki 文件上添加对应标签。</p>}</div></div>
+        <div className="wb-sidebar-footer"><button onClick={()=>openSettings('models')} title="设置"><SettingsIcon size={18}/><span>设置</span></button><span className="wb-local-status"><i/>本地工作区</span></div>
+        <div {...sidebar.separator} className="wb-resizer wb-sidebar-resizer" aria-label="调整导航宽度"/>
+      </aside>
+      <div className="wb-stage">
+        <header className="wb-topbar"><button title={sidebarCollapsed?'展开侧栏 Ctrl+B':'收起侧栏 Ctrl+B'} onClick={()=>setSidebarCollapsed(v=>!v)}>{sidebarCollapsed?<PanelLeftOpen size={18}/>:<PanelLeftClose size={18}/>}</button><span className="wb-breadcrumb">工作区<ChevronRight size={13}/><strong>{showKnowledge?'Wiki 知识库':showPlugins?'Skills 与 MCP':conversationKind==='topic'?conversations.find(c=>c.id===conversationId)?.title||'专题任务':'助理'}</strong></span><div className="wb-topbar-actions">{status&&<span className="wb-muted wb-status" role="status">{status}</span>}{usage&&usage.total>0&&<span title={usageTitle} className="wb-usage">{usage.estimated?'~':''}{fmtTokens(usage.total)} tokens</span>}<button title="压缩上下文" disabled={busy} onClick={compact}><Minimize2 size={17}/></button><button title="设置" onClick={()=>openSettings()}><SettingsIcon size={17}/></button></div></header>
+        <main className={`wb-body ${showKnowledge?'wb-reading':''}`}>
+          <div className="wb-wiki-page" hidden={!showKnowledge}><ErrorBoundary name="Wiki 知识库" inline><KnowledgeWorkspace selection={knowledgeSelection} topicOptions={conversations.filter(c=>c.kind==='topic')} activeTopicTag={topicTag} onClose={()=>navigate('chat')} onPin={(path,title)=>{void pinKnowledge(path,title)}} onQuote={(text,path,title)=>{void pinKnowledge(path,title).then(allowed=>{if(!allowed)return;setInput(s=>`${s}${s?'\n\n':''}引用《${title}》：\n${text}\n\n`);setTimeout(()=>taRef.current?.focus(),0)})}}/></ErrorBoundary></div>
+          {showPlugins&&<ErrorBoundary name="Skills 与 MCP" inline><ToolsWorkspace/></ErrorBoundary>}
+          <div className="wb-chat" hidden={showPlugins||showKnowledge}>
+            <div className="wb-context">{conversationKind==='topic'?<strong title="只使用带此标签的 Wiki 文件">{topicTag} · 仅使用本专题资料</strong>:<label><BookOpen size={14}/><select aria-label="知识范围" value={knowledgeMode} onChange={e=>setKnowledgeMode(e.target.value as KnowledgeContext['mode'])}><option value="auto">自动检索 Wiki</option><option value="selected" disabled={!pinnedKnowledge.length}>仅固定资料</option><option value="off">关闭知识检索</option></select></label>}<button onClick={()=>navigate('wiki')}><Plus size={13}/>添加资料标签</button>{conversationKind==='assistant'&&pinnedKnowledge.map(p=><span className="wb-context-chip" key={p.path}><button onClick={()=>openKnowledge(p.path)} title="阅读资料">{p.title}</button><button title="移除此资料" onClick={()=>{setPinnedKnowledge(x=>x.filter(n=>n.path!==p.path));if(pinnedKnowledge.length===1)setKnowledgeMode('auto')}}><X size={12}/></button></span>)}{activeRules.map(r=><span key={r.id} className="wb-rule-chip" title={`规范版本 ${r.version}`}>已采用：{r.title} · {r.count} 条</span>)}</div>
+            {scopeNotice&&<div role="alert" className="wb-error">{scopeNotice}</div>}
+            {knowledgeError&&<div role="alert" className="wb-error">{knowledgeError}</div>}
+            <div ref={scrollRef} className="wb-messages">{turns.length===0?<div className="wb-welcome"><div className="wb-welcome-icon">{skin.avatar?<img src={skin.avatar} alt=""/>:<Bot size={26}/>}</div><h1>{conversationKind==='topic'?conversations.find(c=>c.id===conversationId)?.title||'专题任务':'助理'}</h1><p>{conversationKind==='topic'?`仅按「${topicTag}」标签下的 Wiki 文件完成任务。先到 Wiki 给资料加标签。`:'助理可以访问全部 Wiki 内容。描述你想完成的事，或先选择资料。'}</p><div className="wb-starters"><button onClick={()=>navigate('wiki')}><BookOpen size={19}/><strong>基于资料工作</strong><span>阅读、提问与规范写作</span><ArrowUpRight size={14}/></button><button onClick={()=>{setInput(conversationKind==='topic'?'请根据本专题已标记的资料列出写作计划，并标明每条依据。':'请帮我起草一篇论文，先根据 Wiki 中已启用的论文规范列出写作计划。');taRef.current?.focus()}}><FileText size={19}/><strong>写一份文档</strong><span>采用当前聊天可用的规范</span><ArrowUpRight size={14}/></button>{conversationKind==='assistant'&&<button onClick={()=>navigate('plugins')}><Puzzle size={19}/><strong>扩展工作能力</strong><span>Skills、MCP 与本地工具</span><ArrowUpRight size={14}/></button>}</div></div>:<div className="wb-message-list">{turns.map(t=><Message key={t.id} turn={t} aiState={aiState} voiceOn={!!(cfg?.voice.enabled&&cfg?.voice.apiKey)} onOpenKnowledge={openKnowledge}/>)}</div>}</div>
       {/* ================= 输入区 ================= */}
-      <div className="mx-auto w-full max-w-3xl px-4 pb-4">
+      <div className="wb-composer mx-auto w-full max-w-3xl px-4 pb-4">
         {attachments.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
             {attachments.map((att, i) => (
@@ -516,12 +400,12 @@ function AppShell(): JSX.Element {
           </div>
         )}
 
-        <div className="rounded-2xl border border-border bg-panel/90 shadow-card backdrop-blur transition-all focus-within:border-accent/50 focus-within:shadow-[0_0_0_3px_rgba(244,113,156,0.12),0_8px_30px_rgba(244,113,156,0.15)]">
+        <div className="wb-composer-box">
           <textarea
             ref={taRef}
             className="max-h-40 w-full resize-none bg-transparent px-4 pt-3.5 text-sm leading-relaxed text-text outline-none placeholder:text-muted"
             rows={1}
-            placeholder={skin.placeholder}
+            placeholder={conversationKind==='topic'?'根据已标记的专题资料描述任务…':'描述任务，@ 引用规范，或添加文件…'}
             value={input}
             onChange={(e) => {
               setInput(e.target.value)
@@ -536,17 +420,17 @@ function AppShell(): JSX.Element {
               type="file"
               multiple
               className="hidden"
-              accept="image/*,.txt,.md,.json,.js,.ts,.tsx,.jsx,.py,.java,.c,.cpp,.h,.css,.html,.xml,.yml,.yaml,.csv,.log,.sh,.bat"
+              accept="image/*,.pdf,.docx,.xlsx,.pptx,.txt,.md,.json,.js,.ts,.tsx,.jsx,.py,.java,.c,.cpp,.h,.css,.html,.xml,.yml,.yaml,.csv,.log,.sh,.bat"
               onChange={onFileSelect}
             />
-            <button
+            {conversationKind==='assistant'&&<button
               title="添加文件或图片"
               onClick={() => fileInputRef.current?.click()}
               className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-hover/70 hover:text-accent"
             >
               <Plus className="h-4 w-4" />
-            </button>
-            <span className="text-[11px] text-muted">Enter 发送 · Shift+Enter 换行</span>
+            </button>}
+            <div className="wb-model-controls"><select aria-label="当前服务商" disabled={busy} value={cfg?.activeProviderId || ''} onChange={e=>void switchProvider(e.target.value)}>{cfg?.providers.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}</select><input aria-label="当前模型" disabled={busy} value={activeProvider?.model || ''} list="workbench-models" placeholder="选择模型" onChange={e=>void switchModel(e.target.value)}/><datalist id="workbench-models">{models.map(m=><option key={m} value={m}/>)}</datalist><button title="拉取模型列表" onClick={refreshModels}><RefreshCw size={13}/></button></div>
             <div className="ml-auto">
               {busy ? (
                 <button
@@ -559,7 +443,8 @@ function AppShell(): JSX.Element {
               ) : (
                 <button
                   onClick={submit}
-                  disabled={!input.trim() && attachments.length === 0}
+                  title="发送消息"
+                  disabled={busy || (!input.trim() && attachments.length === 0)}
                   className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-accent to-accent2 text-accent-fg shadow-glow transition-all hover:opacity-90 disabled:opacity-30 disabled:shadow-none"
                 >
                   <Send className="h-4 w-4" />
@@ -569,8 +454,8 @@ function AppShell(): JSX.Element {
           </div>
         </div>
       </div>
-        </div>
-
+          </div>
+        </main>
       </div>
 
     {/* 全局语音控制条（朗读中/暂停/错误时浮现） */}

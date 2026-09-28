@@ -1,6 +1,6 @@
 {
   "name": "dsh-winagent",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "description": "WinAgent 的 DSH Web 插件：在 DSH 里使用 Windows 操作 Agent（OpenAI 兼容 API / 本地 Ollama，53+ Windows 工具，skills 与 MCP 挂载，LLM Wiki 个人知识库）",
   "author": "WinAgent",
   "license": "MIT",

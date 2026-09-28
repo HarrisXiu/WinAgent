@@ -68,7 +68,7 @@ class SearchIndex {
         const doc = {
             path: note.path,
             title: note.title,
-            content: content.slice(0, 50000),
+            content,
             tags: note.tags.join(' '),
             summary: (summary || '').slice(0, 500),
             aliases,

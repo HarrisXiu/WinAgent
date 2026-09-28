@@ -49,6 +49,11 @@ export class ToolRegistry {
   }
 
   /** 分别加载 skills 与 mcp（传入已解析的绝对路径） */
+  async loadSkillsDirectory(directory: string): Promise<void> {
+    this.addAll(await loadSkills(directory), 'skill')
+  }
+
+  /** 分别加载 skills 与 mcp（传入已解析的绝对路径） */
   async loadExternal(skillsDirAbs: string, mcpConfigAbs: string): Promise<void> {
     try {
       const skills = await loadSkills(skillsDirAbs)

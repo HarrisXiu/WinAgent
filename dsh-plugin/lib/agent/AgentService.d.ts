@@ -1,15 +1,18 @@
 import type { AgentEvent, ChatMessage, TokenUsage } from '../shared/types';
 import type { ToolRegistry } from '../tools/ToolRegistry';
 import type { ConfigStore } from '../config/ConfigStore';
+import { RuleService } from '../wiki/RuleService';
+import type { KnowledgeContext, KnowledgeReference } from '../shared/types';
 export interface AgentCallbacks {
     onEvent: (e: AgentEvent) => void;
     confirmTool: (name: string, args: string) => Promise<boolean>;
 }
 /** 知识检索能力接口（由 wiki 侧 KnowledgeRetriever 实现，server.ts 装配时注入；结构化类型避免模块循环依赖） */
 export interface KnowledgeRetrieverLike {
-    retrieve(userInput: string): Promise<{
+    retrieve(userInput: string, context?: KnowledgeContext): Promise<{
         text: string;
         count: number;
+        references?: KnowledgeReference[];
     } | null>;
 }
 export declare class AgentService {
@@ -21,6 +24,9 @@ export declare class AgentService {
     private sessionUsage;
     /** 知识检索能力（WikiHost 初始化后由装配方注入；未注入时跳过自动 RAG） */
     private knowledge;
+    private rules;
+    private activeRules;
+    setRuleService(service: RuleService): void;
     constructor(store: ConfigStore, registry: ToolRegistry);
     /** 注入知识检索能力（AgentService 创建早于 WikiHost，只能 setter 注入） */
     setKnowledgeRetriever(r: KnowledgeRetrieverLike): void;
@@ -30,6 +36,9 @@ export declare class AgentService {
     private reportUsage;
     stop(): void;
     getHistory(): ChatMessage[];
+    isBusy(): boolean;
+    exportSession(): import('../shared/types').AgentSessionState;
+    restoreSession(state?: import('../shared/types').AgentSessionState): void;
     private systemMessage;
     /** 从工具结果文本剥离 [[IMG:...]] 标记：返回净化文本与 dataUrl 列表 */
     private extractToolImages;
@@ -55,6 +64,6 @@ export declare class AgentService {
      * hasFiles=true 表示带了 PDF 文件直传（网关拒收时可降级为工具读取提示）。
      */
     private buildUserContent;
-    process(userInput: string, cb: AgentCallbacks, attachments?: any[]): Promise<void>;
+    process(userInput: string, cb: AgentCallbacks, attachments?: any[], knowledgeContext?: KnowledgeContext): Promise<void>;
     compactNow(cb: AgentCallbacks): Promise<void>;
 }

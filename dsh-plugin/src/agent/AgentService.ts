@@ -3,6 +3,8 @@ import type { ToolRegistry } from '../tools/ToolRegistry'
 import type { ConfigStore } from '../config/ConfigStore'
 import { promises as fs } from 'fs'
 import { chatStream } from '../llm/OpenAIClient'
+import { RuleService, rulesPrompt } from '../wiki/RuleService'
+import type { RuleSet, KnowledgeContext, KnowledgeReference } from '../shared/types'
 import { ContextManager, estimateTokens, IMAGE_TOKEN_COST } from './ContextManager'
 import { Logger } from '../util/Logger'
 import { getCapabilities } from '../util/capabilities'
@@ -100,7 +102,7 @@ export interface AgentCallbacks {
 
 /** 知识检索能力接口（由 wiki 侧 KnowledgeRetriever 实现，server.ts 装配时注入；结构化类型避免模块循环依赖） */
 export interface KnowledgeRetrieverLike {
-  retrieve(userInput: string): Promise<{ text: string; count: number } | null>
+  retrieve(userInput: string, context?: KnowledgeContext): Promise<{ text: string; count: number; references?: KnowledgeReference[] } | null>
 }
 
 /** 估算一段文本的 token 数（中英混合经验值） */
@@ -135,6 +137,10 @@ export class AgentService {
   private sessionUsage: TokenUsage = { prompt: 0, completion: 0, total: 0, estimated: false }
   /** 知识检索能力（WikiHost 初始化后由装配方注入；未注入时跳过自动 RAG） */
   private knowledge: KnowledgeRetrieverLike | null = null
+  private rules: RuleService | null = null
+  private activeRules: RuleSet[] = []
+
+  setRuleService(service: RuleService): void { this.rules = service }
 
   constructor(private store: ConfigStore, private registry: ToolRegistry) {}
 
@@ -144,6 +150,7 @@ export class AgentService {
   }
 
   reset(): void {
+    this.activeRules = []
     this.history = []
     this.sessionUsage = { prompt: 0, completion: 0, total: 0, estimated: false }
   }
@@ -174,10 +181,20 @@ export class AgentService {
   getHistory(): ChatMessage[] {
     return this.history
   }
+  isBusy(): boolean { return this.abort !== null }
+  exportSession(): import('../shared/types').AgentSessionState {
+    if (this.abort) throw new Error('任务仍在执行，请停止或等待完成后切换')
+    return { history: this.history, activeRules: this.activeRules, usage: this.sessionUsage }
+  }
+  restoreSession(state?: import('../shared/types').AgentSessionState): void {
+    if (this.abort) throw new Error('任务仍在执行，请停止或等待完成后切换')
+    this.reset()
+    if (state) { this.history = state.history; this.activeRules = state.activeRules; this.sessionUsage = state.usage }
+  }
 
-  private systemMessage(cfg: AppConfig): ChatMessage {
+  private systemMessage(cfg: AppConfig, topicTag?: string): ChatMessage {
     // petPrompt 只承载人设（身份/语气）；工具清单与规则在此动态拼接，保证唯一一份、与实际注册一致
-    const toolNames = this.registry.getSchemas().map((t) => t.name)
+    const toolNames = this.registry.getSchemas().filter(t => !topicTag || ['write_file', 'markdown_to_docx', 'write_xlsx', 'write_pptx'].includes(t.name)).map((t) => t.name)
     // 本地能力摘要（仅注入影响模型决策的条目；探测结果进程内缓存）
     const caps = getCapabilities()
     const docCaps: string[] = []
@@ -204,7 +221,7 @@ export class AgentService {
       '你管理着用户的个人知识库。每轮用户消息末尾可能附带系统自动检索的「知识库检索结果」。',
       '- 回答知识/事实/概念类问题（如"什么是X""X和Y有什么区别""我之前了解的X"）时，优先依据检索结果作答，注明来源笔记标题，核心结论溯源到 wiki/sources/ 下的来源页；不同来源结论矛盾时显式标注分歧，知识库之外的补充注明「知识库外」。',
       '- 检索结果不够详细时，用 retrieve_knowledge 深度检索（一次取多篇全文）；或用 search_knowledge_base 换关键词（同义词/英文/缩写）检索、read_note 读单篇全文。',
-      '- 检索结果为「未找到相关内容」时：先明确告知用户知识库中没有相关资料，再用自己的知识回答，并标注该部分未经知识库验证。',
+      '- 检索未命中时：说明本轮未检索到相关证据，不推断知识库中绝对不存在资料；尝试换关键词或请用户固定资料。使用自己的知识回答时标注该部分未经知识库验证。',
       '- 系统操作类请求（打开程序、管理文件、系统设置等）与知识库无关，直接执行工具，不要检索。',
       '- 高价值回答用 save_knowledge_output 持久化；记录开放问题用 add_question；健康检查/综合分析/合并页面分别用 lint_knowledge_base / reflect_knowledge_base / merge_knowledge_pages。',
       '',
@@ -213,7 +230,7 @@ export class AgentService {
       '【文档生成规则】生成 Word 用 markdown_to_docx（产出 Markdown，公式用 LaTeX 写在 $...$ 中，自动插入为 Word 原生公式）；生成 Excel 用 write_xlsx（sheets JSON 或 Markdown 表格）；生成 PPT 用 write_pptx（slides JSON）。',
       '【本地文档能力】' + docCaps.join('；')
     ].join('\n')
-    return { role: 'system', content: cfg.petPrompt + capability }
+    return { role: 'system', content: cfg.petPrompt + capability + (topicTag ? `\n\n【专题任务的强制范围：${topicTag}】只能依据本轮提供的、带此专题标签的 Wiki 文件内容完成任务。其他 Wiki 文件、外部知识、通用常识均不能补足事实或规则。资料不足时明确指出缺失，不猜测；所有事实结论标注本专题文件来源。仅能使用当前可用工具清单中的输出文件工具，不得读取其他文件、运行命令或调用知识库工具。` : '') }
   }
 
   /** 从工具结果文本剥离 [[IMG:...]] 标记：返回净化文本与 dataUrl 列表 */
@@ -491,35 +508,60 @@ export class AgentService {
     return { content: userContent, multipart, hasFiles }
   }
 
-  async process(userInput: string, cb: AgentCallbacks, attachments?: any[]): Promise<void> {
+  async process(userInput: string, cb: AgentCallbacks, attachments?: any[], knowledgeContext?: KnowledgeContext): Promise<void> {
+    if (this.abort) throw new Error('当前任务尚未结束')
     const cfg = this.store.get()
     const provider = this.store.activeProvider()
     const ctx = new ContextManager(cfg)
     this.abort = new AbortController()
-
-    const built = await this.buildUserContent(cfg, provider, userInput, attachments, cb)
-    let sentImages = built.multipart
-    let sentFiles = built.hasFiles
-    let downgraded = false
-    let filesDowngraded = false
-
-    // 自动 RAG：检索知识库并把结果拼到本轮 user 消息尾部（注入只在当轮有价值，压缩时会被剥离）
-    let knowledgeText: string | null = null
-    if (this.knowledge && userInput.trim()) {
-      try {
-        const inj = await this.knowledge.retrieve(userInput)
-        knowledgeText = inj?.text ?? null
-        if (inj) cb.onEvent({ type: 'knowledge', query: userInput.slice(0, 50), count: inj.count })
-      } catch (e) {
-        Logger.warn(`[RAG] 知识库检索失败（已跳过）: ${e instanceof Error ? e.message : String(e)}`)
-      }
+    let hasArtifacts = false
+    let repairAttempts = 0
+    try {
+      this.activeRules = await this.rules?.resolve(userInput, this.activeRules, knowledgeContext?.topicTag) || []
+      await this.rules?.recordTask(userInput, this.activeRules)
+      cb.onEvent({ type: 'rules', sets: this.activeRules.map(s => ({ id: s.id, title: s.title, version: s.version, count: s.rules.length })) })
+    } catch (e) {
+      this.abort = null
+      cb.onEvent({ type: 'error', message: `规范加载失败：${e instanceof Error ? e.message : String(e)}` })
+      return
     }
 
-    this.history.push({ role: 'user', content: appendKnowledge(built.content, knowledgeText) })
-    Logger.info(`[USER] ${userInput}${attachments ? ` (+${attachments.length} 附件)` : ''}`)
-
     try {
+      this.abort.signal.throwIfAborted()
+      const built = await this.buildUserContent(cfg, provider, userInput, attachments, cb)
+      let sentImages = built.multipart
+      let sentFiles = built.hasFiles
+      let downgraded = false
+      let filesDowngraded = false
+
+      // 自动 RAG：检索知识库并把结果拼到本轮 user 消息尾部（注入只在当轮有价值，压缩时会被剥离）
+      let knowledgeText: string | null = null
+      if (this.knowledge && userInput.trim()) {
+        try {
+          const inj = await this.knowledge.retrieve(userInput, knowledgeContext)
+          knowledgeText = inj?.text ?? null
+          if (inj) cb.onEvent({ type: 'knowledge', query: userInput.slice(0, 50), count: inj.count, references: inj.references })
+          if (knowledgeContext?.topicTag && (!inj || !inj.count)) {
+            const answer = `当前专题没有可用于回答的已标记资料。请先在 Wiki 文件中添加「${knowledgeContext.topicTag}」标签。`
+            this.history.push({ role: 'user', content: userInput }, { role: 'assistant', content: answer })
+            cb.onEvent({ type: 'round', round: 1, historyCount: this.history.length })
+            cb.onEvent({ type: 'assistant_message', content: answer })
+            cb.onEvent({ type: 'done' })
+            return
+          }
+        } catch (e) {
+          Logger.warn(`[RAG] 知识库检索失败（已跳过）: ${e instanceof Error ? e.message : String(e)}`)
+          cb.onEvent({ type: 'knowledge', query: userInput, count: 0, error: e instanceof Error ? e.message : String(e) })
+          knowledgeText = '【知识库检索失败】本轮无法读取知识来源，不得声称已依据知识库回答。'
+          if (knowledgeContext?.topicTag) throw e
+        }
+      }
+
+      this.history.push({ role: 'user', content: appendKnowledge(built.content, knowledgeText) })
+      Logger.info(`[USER] ${userInput}${attachments ? ` (+${attachments.length} 附件)` : ''}`)
+
       for (let round = 1; round <= MAX_ROUNDS; round++) {
+        this.abort.signal.throwIfAborted()
         // 上下文压缩
         if (ctx.needsCompact(this.history)) {
           const before = estimateTokens(this.history)
@@ -531,8 +573,10 @@ export class AgentService {
 
         cb.onEvent({ type: 'round', round, historyCount: this.history.length })
 
-        const messages = [this.systemMessage(cfg), ...this.history]
-        const tools = this.registry.getSchemas()
+        const system = this.systemMessage(cfg, knowledgeContext?.topicTag)
+        system.content = String(system.content) + rulesPrompt(this.activeRules)
+        const messages = [system, ...this.history]
+        const tools = this.registry.getSchemas().filter(t => !knowledgeContext?.topicTag || ['write_file', 'markdown_to_docx', 'write_xlsx', 'write_pptx'].includes(t.name))
 
         let result
         try {
@@ -624,6 +668,16 @@ export class AgentService {
         this.history.push(assistantMsg)
 
         if (result.finishReason !== 'tool_calls' || result.toolCalls.length === 0) {
+          if (this.rules && this.activeRules.length) {
+            const report = await this.rules.validate(provider, this.activeRules, result.content, hasArtifacts, this.abort.signal)
+            cb.onEvent({ type: 'rule_report', report })
+            const failed = report.checks.filter(c => c.status === 'fail')
+            if (failed.length && !hasArtifacts && repairAttempts < 1 && round < MAX_ROUNDS) {
+              repairAttempts++
+              this.history.push({role:'user',content:`[规范检查反馈] 请局部修正以下未满足项，输出修正后的完整答复。不要编造缺失事实；无法满足的要求明确说明。\n${failed.map(c=>`${c.requirement}：${c.reason}`).join('\n')}`})
+              continue
+            }
+          }
           break // 完成
         }
 
@@ -635,6 +689,12 @@ export class AgentService {
           const source = this.registry.getSource(call.name)
           cb.onEvent({ type: 'tool_call', id: call.id, name: call.name, args: call.arguments, source })
           Logger.info(`[TOOL CALL] ${call.name} ${call.arguments}`)
+          if (knowledgeContext?.topicTag && !tools.some(t => t.name === call.name)) {
+            const denied = '专题任务只能使用本专题资料与允许的输出工具'
+            cb.onEvent({ type: 'tool_result', id: call.id, name: call.name, result: denied, ok: false })
+            this.history.push({ role: 'tool', content: denied, tool_call_id: call.id, name: call.name })
+            continue
+          }
 
           let args: Record<string, any> = {}
           try {
@@ -655,6 +715,7 @@ export class AgentService {
           }
 
           const { ok, result: toolResult } = await this.registry.execute(call.name, args)
+          if (ok && /write|create|save|docx|pdf|execute|shell|python|powershell/i.test(call.name)) hasArtifacts = true
           // 剥离 [[IMG:...]] 标记：图片不进文本上下文，转为视觉输入
           const { text: cleanText, images: toolImages } = this.extractToolImages(toolResult)
           const shown = toolImages.length

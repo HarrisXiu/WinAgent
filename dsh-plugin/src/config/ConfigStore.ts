@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs'
 import os from 'os'
 import path from 'path'
+import { randomUUID } from 'crypto'
 import type { AppConfig } from '../shared/types'
 
 const ENC_PREFIX = 'enc:v1:'
@@ -139,6 +140,7 @@ export function defaultConfig(): AppConfig {
     ],
     temperature: 0.3,
     maxTokens: 4096,
+    autoMaxTokens: true,
     autoApproveTools: false,
     compactThresholdTokens: 24000,
     keepRecentTurns: 6,
@@ -192,6 +194,7 @@ export function getDataDir(): string {
 export class ConfigStore {
   private configPath: string
   private cfg: AppConfig
+  private writes: Promise<void> = Promise.resolve()
 
   constructor() {
     this.configPath = path.join(getDataDir(), 'config.json')
@@ -208,6 +211,7 @@ export class ConfigStore {
       const parsed = JSON.parse(raw)
       // 与默认配置合并，保证新增字段有值
       this.cfg = { ...defaultConfig(), ...parsed }
+      if (!Number.isSafeInteger(this.cfg.maxTokens) || this.cfg.maxTokens < 0) this.cfg.maxTokens = 0
       if (!Array.isArray(this.cfg.providers) || this.cfg.providers.length === 0) {
         this.cfg.providers = defaultConfig().providers
       }
@@ -255,6 +259,7 @@ export class ConfigStore {
   }
 
   async save(cfg: AppConfig): Promise<void> {
+    if (!Number.isSafeInteger(cfg.maxTokens) || cfg.maxTokens < 0) throw new Error('输出 Token 上限必须是非负整数，0 表示由 API 决定')
     this.cfg = cfg
     // encryptKey/decryptKey 当前为空实现（DSH 插件运行在 Node.js，无 DPAPI），
     // apiKey 实为明文落盘于用户私有目录；providers 与 voice 同一约定。加密属独立议题。
@@ -263,8 +268,14 @@ export class ConfigStore {
       providers: cfg.providers.map((p) => ({ ...p, apiKey: encryptKey(p.apiKey) })),
       voice: { ...defaultConfig().voice, ...cfg.voice, apiKey: encryptKey(cfg.voice?.apiKey || '') }
     }
-    await fs.mkdir(path.dirname(this.configPath), { recursive: true })
-    await fs.writeFile(this.configPath, JSON.stringify(diskCfg, null, 2), 'utf-8')
+    const serialized = JSON.stringify(diskCfg, null, 2)
+    this.writes = this.writes.catch(() => {}).then(async () => {
+      await fs.mkdir(path.dirname(this.configPath), { recursive: true })
+      const temporary = `${this.configPath}.${randomUUID()}.tmp`
+      await fs.writeFile(temporary, serialized, 'utf-8')
+      await fs.rename(temporary, this.configPath)
+    })
+    await this.writes
   }
 
   activeProvider() {

@@ -1,6 +1,6 @@
 {
   "name": "winagent",
-  "version": "4.5.0",
+  "version": "0.5.0",
   "description": "Windows AI Agent（OpenAI 兼容 + 本地 Ollama，内置完整 Windows 工具集，支持 skills 与 MCP 挂载，LLM Wiki 知识库）",
   "author": "WinAgent",
   "license": "MIT",
@@ -14,7 +14,13 @@
     "dist": "electron-vite build && electron-builder",
     "build:icon": "node scripts/build-icon.js",
     "plugin:build": "tsc -p dsh-plugin",
-    "test:speech": "node scripts/test-speech.cjs"
+    "test:speech": "node scripts/test-speech.cjs",
+    "test:models": "npm run plugin:build && node --test tests/models-fetch.test.cjs",
+    "test:wiki": "npm run plugin:build && node --test tests/wiki-workspace.test.cjs",
+    "test:wiki-ui": "npm run build && node scripts/test-wiki-ui.cjs",
+    "test:workbench-ui": "npm run build && node scripts/test-workbench-ui.cjs",
+    "test:output-limit": "npm run plugin:build && node --test tests/output-limit.test.cjs",
+    "test:conversations": "npm run plugin:build && node --test tests/conversations.test.cjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -28,6 +34,7 @@
     "highlight.js": "^11.9.0",
     "lucide-react": "^0.400.0",
     "marked": "^12.0.2",
+    "pdfjs-dist": "4.10.38",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },

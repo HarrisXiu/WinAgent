@@ -10,6 +10,18 @@ export declare const WIKI_SUBDIRS: string[];
 export declare const SYSTEM_FILES: string[];
 /** INGEST 管线可处理的文件扩展名（与 runIngest 中的分类一致） */
 export declare const INGESTIBLE_EXTS: string[];
+/**
+ * frontmatter.tags → string[]（笔记元数据的唯一出口，所有读 tags 的地方都必须经过这里）。
+ *
+ * ⚠️ 白屏 bug 防回归（2026-09-27）：YAML 里的 tags 不保证是字符串数组——
+ *   - ANALYSIS_TAGS.md 用 `tags: [{tag, template}]` 存标签模板库（对象数组，合法格式，不能改）
+ *   - 用户手写 `tags: [2024, true]` 会被 YAML 解析成数字/布尔
+ *   - `- key: value` 形式会被解析成对象
+ * 过去直接 `Array.isArray(fm.tags) ? fm.tags : []` 把对象原样透传给渲染层，
+ * KnowledgeWorkspace 对每个 tag 调 `t.startsWith('专题:')` → TypeError →
+ * React 整棵树卸载 → 启动白屏。数字/布尔转成字符串保留，对象/null 丢弃。
+ */
+export declare function normalizeTags(raw: unknown): string[];
 export declare class VaultManager {
     private vaultPath;
     private notesDir;

@@ -48,7 +48,18 @@ export function renderMarkdown(text: string): string {
     html = html.replace(/<a href="#">\{&quot;data-wiki-link&quot;:&quot;([^&]+)&quot;\}<\/a>/g, (_m, target: string) => {
       return `<a href="#" data-wiki-link="${target}" class="wiki-link">${target}</a>`
     })
-    return html
+    const document = new DOMParser().parseFromString(html, 'text/html')
+    document.querySelectorAll('script,iframe,object,embed,form,input,button,style,link,meta,base').forEach(n=>n.remove())
+    document.querySelectorAll('*').forEach(element=>{
+      for(const attr of Array.from(element.attributes)) {
+        if(attr.name.startsWith('on') || attr.name==='style' || attr.name==='srcdoc') element.removeAttribute(attr.name)
+        if(['href','src','xlink:href'].includes(attr.name)) {
+          const value=attr.value.replace(/[\u0000-\u0020]/g,'')
+          if(!/^(https?:|wiki:|#|data:image\/(png|jpeg|gif|webp);)/i.test(value))element.removeAttribute(attr.name)
+        }
+      }
+    })
+    return document.body.innerHTML
   } catch {
     return escapeHtml(text)
   }

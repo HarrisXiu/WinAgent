@@ -11,7 +11,6 @@ exports.flattenWikiNotes = flattenWikiNotes;
  * @module dsh-winagent/wiki-host
  */
 const fs_1 = require("fs");
-const crypto_1 = require("crypto");
 const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
 const gray_matter_1 = __importDefault(require("gray-matter"));
@@ -21,6 +20,9 @@ const VaultManager_1 = require("./VaultManager");
 const SearchIndex_1 = require("./SearchIndex");
 const GraphEngine_1 = require("./GraphEngine");
 const AiPipeline_1 = require("./AiPipeline");
+const WorkspaceStore_1 = require("./WorkspaceStore");
+const RuleService_1 = require("./RuleService");
+const IngestionService_1 = require("./IngestionService");
 const contract_1 = require("./contract");
 const WorkflowService_1 = require("./WorkflowService");
 const slug_1 = require("./slug");
@@ -69,6 +71,8 @@ function extractDocumentText(absPath, format) {
             if (code === 0) {
                 try {
                     const parsed = JSON.parse(out.trim());
+                    if (parsed.truncated)
+                        throw new Error('提取文本不完整，无法进行全文分析');
                     resolve(String(parsed.text || ''));
                 }
                 catch {
@@ -80,7 +84,7 @@ function extractDocumentText(absPath, format) {
             }
         });
         proc.on('error', (e) => reject(e));
-        proc.stdin.write(JSON.stringify({ path: absPath, format }));
+        proc.stdin.write(JSON.stringify({ path: absPath, format, max_chars: Number.MAX_SAFE_INTEGER }));
         proc.stdin.end();
     });
 }
@@ -91,6 +95,9 @@ class WikiHost {
     search;
     graph;
     pipeline;
+    workspace;
+    rules;
+    ingestion;
     batchSession = null;
     autoIngestQueue = new Map();
     recentIngests = new Map();
@@ -103,9 +110,13 @@ class WikiHost {
         this.search = new SearchIndex_1.SearchIndex();
         this.graph = new GraphEngine_1.GraphEngine();
         this.pipeline = new AiPipeline_1.AiPipeline();
+        this.workspace = new WorkspaceStore_1.WorkspaceStore(() => this.vault.getVaultPath());
+        this.rules = new RuleService_1.RuleService(this.workspace, this.vault);
+        this.ingestion = new IngestionService_1.IngestionService(this.workspace, this.vault, this.search, this.store, extractDocumentText, p => this.emitIngestProgress(p), p => this.bus.push('vaultChanged', { type: 'modified', path: p }));
     }
     async init() {
         await this.vault.initialize();
+        await this.workspace.recover();
         this.vault.onChange((event) => {
             this.bus.push('vaultChanged', event);
             if (event.type === 'created' && event.path.startsWith('raw/') && event.path !== 'raw/') {
@@ -113,9 +124,12 @@ class WikiHost {
             }
         });
         await this.indexWikiVault();
+        for (const source of await this.workspace.sources())
+            this.ingestion.index(source);
         await this.rebuildGraph();
     }
     dispose() {
+        this.ingestion.cancel();
         this.vault.dispose();
         for (const timer of this.autoIngestQueue.values())
             clearTimeout(timer);
@@ -190,10 +204,32 @@ class WikiHost {
         this.rebuildGraph().catch(() => { });
     }
     async deleteNote(relPath) {
+        if (!relPath.startsWith('wiki/') || relPath.split(/[\\/]/).includes('..'))
+            throw new Error('只能删除 Wiki 资料文件');
         if (this.vault.isSystemFile(relPath))
             throw new Error('系统文件受保护，不能删除');
-        await this.vault.deleteNote(relPath);
+        if (this.ingestion.active)
+            throw new Error('资料正在解析，请等待解析完成后删除');
+        const source = (await this.workspace.sources()).find(s => s.sourcePath === relPath);
+        if (source && (!source.rawPath.startsWith('raw/') || source.rawPath.split(/[\\/]/).includes('..')))
+            throw new Error('原始文件路径异常，未删除任何资料');
+        try {
+            await this.vault.deleteNote(relPath);
+        }
+        catch (e) {
+            if (!source || e.code !== 'ENOENT')
+                throw e;
+        }
         this.search.removeNote(relPath);
+        if (source) {
+            await fs_1.promises.rm(path_1.default.join(this.vault.getVaultPath(), source.rawPath), { force: true });
+            for (const kind of ['sources', 'completed', 'jobs'])
+                await this.workspace.remove(kind, source.id);
+        }
+        for (const rule of await this.workspace.rules())
+            if (rule.sourcePath === relPath)
+                await this.workspace.remove('rules', rule.id);
+        this.bus.push('vaultChanged', { type: 'deleted', path: relPath });
         this.rebuildGraph().catch(() => { });
     }
     async createNote(relPath, title) {
@@ -259,6 +295,7 @@ class WikiHost {
         }
     }
     aiCancel() {
+        this.ingestion.cancel();
         this.pipeline.cancel();
     }
     // ──────────────────────── INGEST ────────────────────────
@@ -340,242 +377,9 @@ class WikiHost {
         }
     }
     /** 执行一次 INGEST（LLM Wiki 编译）：raw 文件 → sources/concepts/entities 页 */
-    async runIngest(rawRelPath) {
+    async runIngest(rawRelPath, force = false) {
         this.recentIngests.set(rawRelPath, Date.now());
-        const cfg = this.store.get();
-        const provider = cfg.providers.find((p) => p.id === cfg.activeProviderId) || cfg.providers[0];
-        if (!provider)
-            throw new Error('没有可用的 AI 模型，请先在设置中配置');
-        const fileName = rawRelPath.split('/').pop() || rawRelPath;
-        this.emitIngestProgress({ file: fileName, stage: '读取源文件…', percent: 5 });
-        const rawAbs = path_1.default.join(this.vault.getVaultPath(), rawRelPath);
-        const rawBuf = await fs_1.promises.readFile(rawAbs);
-        const ext = path_1.default.extname(rawRelPath).toLowerCase();
-        const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'];
-        const officeExts = ['.pdf', '.pptx', '.docx', '.xlsx', '.xlsm', '.ppt', '.doc', '.xls'];
-        const textExts = ['.md', '.txt', '.markdown', '.json', '.js', '.ts', '.tsx', '.jsx', '.py',
-            '.java', '.c', '.cpp', '.h', '.css', '.html', '.xml', '.yml', '.yaml', '.csv', '.log', '.sh', '.bat'];
-        let rawText = '';
-        let emptyReason = '';
-        if (officeExts.includes(ext)) {
-            const stageNames = {
-                '.pdf': '提取 PDF 文本…', '.pptx': '提取 PPT 文本…', '.docx': '提取 Word 文本…',
-                '.xlsx': '提取 Excel 文本…', '.xlsm': '提取 Excel 文本…', '.ppt': '转换并提取 PPT 文本…',
-                '.doc': '提取 Word(旧版) 文本…', '.xls': '提取 Excel(旧版) 文本…'
-            };
-            this.emitIngestProgress({ file: fileName, stage: stageNames[ext] || '提取文档文本…', percent: 10 });
-            try {
-                rawText = await extractDocumentText(rawAbs, ext.slice(1));
-                if (!rawText)
-                    Logger_1.Logger.info(`[Ingest] ${ext} 无文本内容: ${rawRelPath}`);
-            }
-            catch (e) {
-                Logger_1.Logger.error(`[Ingest] ${ext} 提取失败 ${rawRelPath}: ${String(e)}`);
-                rawText = '';
-                emptyReason = `（${ext.slice(1).toUpperCase()} 文本提取失败：${e instanceof Error ? e.message : String(e)}）`;
-            }
-        }
-        else if (textExts.includes(ext)) {
-            rawText = rawBuf.toString('utf-8');
-        }
-        else if (imageExts.includes(ext)) {
-            rawText = '';
-            emptyReason = '（图片文件，无文本内容）';
-        }
-        else {
-            const isBinary = rawBuf.includes(0);
-            if (isBinary) {
-                rawText = '';
-                emptyReason = `（无法识别的二进制格式 ${ext}，无法提取文本）`;
-            }
-            else {
-                rawText = rawBuf.toString('utf-8');
-            }
-        }
-        const rawTitle = rawRelPath.split('/').pop()?.replace(/\.\w+$/, '') || '未命名';
-        const today = new Date().toISOString().slice(0, 10);
-        const rawSha256 = (0, crypto_1.createHash)('sha256').update(rawBuf).digest('hex');
-        let rawDate = '';
-        try {
-            const rawMatter = (0, gray_matter_1.default)(rawBuf.toString('utf-8'));
-            rawDate = typeof rawMatter.data.date === 'string' ? rawMatter.data.date.slice(0, 10) : '';
-        }
-        catch { /* no frontmatter */ }
-        const possiblyOutdated = !!rawDate && isOlderThan(rawDate, 730);
-        const existingConcepts = await this.listConceptSlugs();
-        const openQuestions = await this.vault.getOpenQuestions();
-        const isPersonal = rawRelPath.startsWith('raw/personal/');
-        const contract = await (0, contract_1.readContract)(this.vault.getVaultPath());
-        this.emitIngestProgress({ file: fileName, stage: 'AI 分析内容…', percent: 25 });
-        const analysis = rawText.trim()
-            ? await this.pipeline.ingestSource(provider, rawTitle, rawText, existingConcepts, openQuestions, isPersonal, contract)
-            : {
-                slug: slugify(rawTitle) || 'untitled',
-                title: rawTitle,
-                summary: emptyReason || '（无文本内容）',
-                keyPoints: [],
-                concepts: [],
-                entities: [],
-                contradictions: []
-            };
-        const sourcePath = `wiki/sources/${analysis.slug}.md`;
-        const sourceFm = {
-            type: isPersonal ? 'personal-writing' : 'source',
-            title: analysis.title,
-            date: rawDate || today,
-            source_url: '',
-            domain: '',
-            tags: [],
-            processed: true,
-            raw_file: rawRelPath,
-            raw_sha256: rawSha256,
-            last_verified: today,
-            possibly_outdated: possiblyOutdated
-        };
-        if (analysis.language)
-            sourceFm.language = analysis.language;
-        if (analysis.canonicalSource)
-            sourceFm.canonical_source = analysis.canonicalSource;
-        if (isPersonal) {
-            sourceFm.status = 'draft';
-            sourceFm.confidence_at_writing = 'medium';
-        }
-        const conceptsLinks = analysis.concepts.map((c) => `- [[${c.matchSlug || slugify(c.name)}]] — ${c.name}`).join('\n');
-        const entitiesLinks = analysis.entities.map((e) => `- [[${e.matchSlug || slugify(e.name)}]] — ${e.name}`).join('\n');
-        const outdatedHint = possiblyOutdated
-            ? `\n\n> ⚠ 此来源发表日期已超过 2 年（${rawDate}），内容可能过时，基于它做决策时请谨慎。`
-            : '';
-        const sourceBody = isPersonal
-            ? [
-                `# ${analysis.title}（个人写作）`, ``,
-                `> 原始文件: \`${rawRelPath}\` · SHA-256: \`${rawSha256.slice(0, 12)}…\`${outdatedHint}`, ``,
-                `## Core Argument`, ``, analysis.summary || '（无）', ``,
-                `## Key Claims`, ``, analysis.keyPoints.map((k) => `- ${k}`).join('\n') || '（无）', ``,
-                `## Evidence Referenced`, ``, conceptsLinks || '（无）', ``,
-                `## Limitations`, ``, `（待补充）`, ``
-            ].join('\n')
-            : [
-                `# ${analysis.title}`, ``,
-                `> 原始文件: \`${rawRelPath}\` · SHA-256: \`${rawSha256.slice(0, 12)}…\`${outdatedHint}`, ``,
-                `## Summary`, ``, analysis.summary || '（无摘要）', ``,
-                `## Key Points`, ``, analysis.keyPoints.map((k) => `- ${k}`).join('\n') || '（无要点）', ``,
-                `## Concepts Extracted`, ``, conceptsLinks || '（无）', ``,
-                `## Entities Extracted`, ``, entitiesLinks || '（无）', ``,
-                `## Contradictions`, ``, analysis.contradictions?.length ? analysis.contradictions.map((c) => `- ${c}`).join('\n') : '（无）', ``,
-                `## My Notes`, ``, `（在此记录你的想法）`, ``
-            ].join('\n');
-        await fs_1.promises.mkdir(path_1.default.join(this.vault.getVaultPath(), 'wiki/sources'), { recursive: true });
-        await fs_1.promises.writeFile(path_1.default.join(this.vault.getVaultPath(), sourcePath), gray_matter_1.default.stringify(sourceBody, sourceFm), 'utf-8');
-        this.emitIngestProgress({ file: fileName, stage: '创建来源页…', percent: 55 });
-        this.emitIngestProgress({ file: fileName, stage: '编译概念与实体…', percent: 70 });
-        const result = { sourcePath, conceptPaths: [], entityPaths: [], created: [], updated: [], logEntry: '' };
-        for (const c of analysis.concepts) {
-            const slug = c.matchSlug || slugify(c.name);
-            const pagePath = `wiki/concepts/${slug}.md`;
-            const absPath = path_1.default.join(this.vault.getVaultPath(), pagePath);
-            const exists = await fileExists(absPath);
-            result.conceptPaths.push(pagePath);
-            if (exists) {
-                const raw = await fs_1.promises.readFile(absPath, 'utf-8');
-                const parsed = (0, gray_matter_1.default)(raw);
-                const fm = parsed.data;
-                const prevCount = fm.source_count || 0;
-                const sourceCount = isPersonal ? prevCount : prevCount + 1;
-                const evolution = isPersonal
-                    ? `- ${today} 个人写作 [[${analysis.slug}]] 确立了对此概念的明确立场（不参与计数）`
-                    : `- ${today}（${sourceCount} sources）：强化 — [[${analysis.slug}]] 提供支持`;
-                if (!isPersonal && sourceCount >= 5 && fm.confidence !== 'high') {
-                    result.confirmHigh = result.confirmHigh || [];
-                    result.confirmHigh.push({ slug, title: c.name, sourceCount });
-                }
-                await fs_1.promises.writeFile(absPath, gray_matter_1.default.stringify(`${parsed.content.trimEnd()}\n\n## Evolution Log\n\n${evolution}\n`, {
-                    ...fm,
-                    updated: new Date().toISOString(),
-                    source_count: sourceCount,
-                    last_reviewed: today,
-                    confidence: sourceCount >= 3 ? 'medium' : fm.confidence || 'low'
-                }), 'utf-8');
-                result.updated.push(pagePath);
-            }
-            else {
-                const aliases = [c.name, c.nameEn].filter(Boolean);
-                const fm2 = {
-                    type: 'concept', title: c.name, date: today, updated: new Date().toISOString(),
-                    tags: [], source_count: 1, confidence: 'low', domain_volatility: 'medium',
-                    last_reviewed: today, aliases: [...new Set(aliases)]
-                };
-                const body2 = [
-                    `# ${c.name}${c.nameEn ? `（${c.nameEn}）` : ''}`, ``,
-                    `## Definition`, ``, c.definition || '（待补充）', ``,
-                    `## Key Points`, ``, `- （待补充）`, ``,
-                    `## My Position`, ``, `（待补充）`, ``,
-                    `## Contradictions`, ``, `（无）`, ``,
-                    `## Sources`, ``, `- [[${analysis.slug}]]`, ``,
-                    `## Evolution Log`, ``, `- ${today}（1 sources）：首次摄入，由 [[${analysis.slug}]] 建立`, ``
-                ].join('\n');
-                await fs_1.promises.writeFile(absPath, gray_matter_1.default.stringify(body2, fm2), 'utf-8');
-                result.created.push(pagePath);
-            }
-        }
-        for (const e of analysis.entities) {
-            const slug = e.matchSlug || slugify(e.name);
-            const pagePath = `wiki/entities/${slug}.md`;
-            const absPath = path_1.default.join(this.vault.getVaultPath(), pagePath);
-            const exists = await fileExists(absPath);
-            result.entityPaths.push(pagePath);
-            if (exists) {
-                const raw = await fs_1.promises.readFile(absPath, 'utf-8');
-                const parsed = (0, gray_matter_1.default)(raw);
-                const fm = parsed.data;
-                const body = `${parsed.content.trimEnd()}\n\n- [[${analysis.slug}]]`;
-                await fs_1.promises.writeFile(absPath, gray_matter_1.default.stringify(body, { ...fm, updated: new Date().toISOString() }), 'utf-8');
-                result.updated.push(pagePath);
-            }
-            else {
-                const fm2 = {
-                    type: 'entity', title: e.name, date: today,
-                    tags: [], entity_type: e.type, aliases: [e.name]
-                };
-                const body2 = [
-                    `# ${e.name}`, ``,
-                    `## Description`, ``, e.description || '（待补充）', ``,
-                    `## Key Contributions`, ``, `（待补充）`, ``,
-                    `## Related Concepts`, ``, `（待补充）`, ``,
-                    `## Sources`, ``, `- [[${analysis.slug}]]`, ``
-                ].join('\n');
-                await fs_1.promises.writeFile(absPath, gray_matter_1.default.stringify(body2, fm2), 'utf-8');
-                result.created.push(pagePath);
-            }
-        }
-        const allSources = await this.listWikiPages('sources');
-        const allConcepts = await this.listWikiPages('concepts');
-        const allEntities = await this.listWikiPages('entities');
-        await this.vault.updateIndex(allSources, allConcepts, allEntities);
-        await this.vault.updateOverview({
-            '总来源数': allSources.length,
-            '概念数': allConcepts.length,
-            '实体数': allEntities.length,
-            '开放问题数': (await this.vault.getOpenQuestions()).length,
-            '最近摄入': analysis.title
-        });
-        if (analysis.answeredQuestions?.length) {
-            result.answeredQuestions = [];
-            for (const q of analysis.answeredQuestions) {
-                await this.vault.answerQuestion(q);
-                result.answeredQuestions.push(q);
-            }
-        }
-        this.emitIngestProgress({ file: fileName, stage: '更新索引…', percent: 85 });
-        const logEntry = `ingest | ${analysis.title} → wiki/sources/${analysis.slug}.md`;
-        await this.vault.appendLog(logEntry);
-        result.logEntry = logEntry;
-        for (const p of [sourcePath, ...result.conceptPaths, ...result.entityPaths]) {
-            await this.indexOne(p);
-        }
-        this.rebuildGraph().catch(() => { });
-        this.bus.push('vaultChanged', { type: 'created', path: sourcePath });
-        this.emitIngestProgress({ file: fileName, stage: '完成', percent: 100, done: true });
-        return result;
+        return this.ingestion.run(rawRelPath, force);
     }
     // ──────────────────────── 批量摄入 ────────────────────────
     async ingestBatchStart(paths) {
@@ -891,8 +695,13 @@ class WikiHost {
         return this.vault.getVaultPath();
     }
     async setVaultPath(p) {
+        if (this.ingestion.active)
+            throw new Error('请先停止当前知识整理任务再切换知识库');
+        await this.search.rebuild([]);
         await this.vault.setVaultPath(p);
         await this.indexWikiVault();
+        for (const source of await this.workspace.sources())
+            this.ingestion.index(source);
         await this.rebuildGraph();
     }
 }

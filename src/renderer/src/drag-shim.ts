@@ -40,7 +40,7 @@ window.addEventListener('drop', (e) => {
   e.preventDefault()
   dragActive = false
   const paths = Array.from(e.dataTransfer?.files || [])
-    .map((f) => (f as File & { path?: string }).path)
+    .map((f) => window.winagent.filePath(f))
     .filter((p): p is string => !!p)
   window.dispatchEvent(new CustomEvent('tauri:drop', { detail: { paths } }))
 })

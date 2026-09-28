@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.chatStream = chatStream;
 exports.fetchModels = fetchModels;
+const OutputLimit_1 = require("./OutputLimit");
 function chatUrl(p) {
     const base = p.baseUrl.replace(/\/$/, '');
     if (p.type === 'ollama')
@@ -124,15 +125,18 @@ async function chatStream(provider, messages, opts, cb = {}) {
         throw e;
     }
 }
-async function request(provider, messages, opts, cb, thinking) {
+async function request(provider, messages, opts, cb, thinking, retriedLimit = false) {
     const useStream = opts.stream !== false;
     const body = {
         model: provider.model,
         messages: sanitizeMessages(messages),
         temperature: opts.temperature,
-        max_tokens: opts.maxTokens,
         stream: useStream
     };
+    const limit = (0, OutputLimit_1.knownOutputLimit)(provider)?.value;
+    const requested = Number.isSafeInteger(opts.maxTokens) && opts.maxTokens > 0 ? opts.maxTokens : 0;
+    if (requested)
+        body.max_tokens = limit ? Math.min(requested, limit) : requested;
     if (opts.tools && opts.tools.length > 0) {
         body.tools = opts.tools.map((t) => ({ type: 'function', function: t }));
         body.tool_choice = 'auto';
@@ -149,6 +153,13 @@ async function request(provider, messages, opts, cb, thinking) {
     });
     if (!res.ok) {
         const text = await res.text().catch(() => '');
+        const upper = res.status === 400 ? (0, OutputLimit_1.parseOutputLimitError)(text) : null;
+        if (upper && !retriedLimit) {
+            // Some gateways reject their own advertised boundary. Let the server choose in that case.
+            const next = Number(body.max_tokens) > upper ? upper : 0;
+            await (0, OutputLimit_1.rememberOutputLimit)(provider, next || null, next ? 'API 参数校验返回的输出上限' : `接口拒绝公布范围内的参数（上限 ${upper}），已改用服务端默认值`);
+            return request(provider, messages, { ...opts, maxTokens: next }, cb, thinking, true);
+        }
         throw new Error(`LLM 请求失败 [${res.status}] ${text.slice(0, 500)}`);
     }
     if (!useStream) {
@@ -240,19 +251,92 @@ async function request(provider, messages, opts, cb, thinking) {
         finishReason = toolCalls.length > 0 ? 'tool_calls' : 'stop';
     return { content, reasoning, toolCalls, finishReason, usage };
 }
-/** 拉取可用模型列表 */
-async function fetchModels(provider) {
-    const base = provider.baseUrl.replace(/\/$/, '');
-    if (provider.type === 'ollama') {
-        const res = await fetch(`${base}/api/tags`);
-        if (!res.ok)
-            throw new Error(`Ollama /api/tags 失败 [${res.status}]`);
-        const json = await res.json();
-        return (json.models || []).map((m) => m.name).filter(Boolean);
+/** 只提取已知网络错误类别，避免把可能含 Key 的底层请求信息带到界面。 */
+function modelNetworkError(error, endpoint) {
+    const e = error;
+    const codes = [];
+    const visit = (value, depth = 0) => {
+        if (!value || typeof value !== 'object' || depth > 4)
+            return;
+        const item = value;
+        if (typeof item.code === 'string')
+            codes.push(item.code);
+        if (typeof item.message === 'string')
+            codes.push(...(item.message.match(/net::ERR_[A-Z_]+/g) || []));
+        visit(item.cause, depth + 1);
+        if (Array.isArray(item.errors))
+            item.errors.forEach((child) => visit(child, depth + 1));
+    };
+    visit(error);
+    const detail = codes.join(' ');
+    let hint = '网络连接失败，请检查网络和系统代理是否能访问该地址。';
+    if (e?.name === 'TimeoutError' || e?.name === 'AbortError' || /TIMED?_?OUT|TIMEOUT/.test(detail)) {
+        hint = '请求超时，请检查网络、系统代理或服务是否正常。';
     }
-    const res = await fetch(`${base}/models`, { headers: headers(provider) });
-    if (!res.ok)
-        throw new Error(`/models 失败 [${res.status}]`);
-    const json = await res.json();
-    return (json.data || []).map((m) => m.id).filter(Boolean);
+    else if (/ENOTFOUND|EAI_AGAIN|NAME_NOT_RESOLVED/.test(detail)) {
+        hint = '域名解析失败，请检查 Base URL、DNS 和系统代理。';
+    }
+    else if (/ECONNREFUSED|CONNECTION_REFUSED/.test(detail)) {
+        hint = '连接被拒绝，请检查服务是否启动、端口是否正确；本地 Ollama 默认使用 11434 端口。';
+    }
+    else if (/CERT|TLS|SSL|SELF_SIGNED/.test(detail)) {
+        hint = 'HTTPS 证书校验失败，请检查系统时间、证书信任或代理证书。';
+    }
+    else if (/PROXY|TUNNEL/.test(detail)) {
+        hint = '代理连接失败，请检查系统代理是否启动、地址和端口是否正确。';
+    }
+    else if (/ECONNRESET|CONNECTION_RESET/.test(detail)) {
+        hint = '连接被重置，请检查网络、系统代理或服务状态。';
+    }
+    return new Error(`${hint} 请求地址：${endpoint}`);
+}
+/** 拉取可用模型列表；桌面端可注入 Electron fetch，以遵循系统代理。 */
+async function fetchModels(provider, request = fetch) {
+    const base = provider.baseUrl?.trim().replace(/\/+$/, '');
+    let url;
+    try {
+        url = new URL(base);
+    }
+    catch {
+        throw new Error('Base URL 无效，请填写完整的 http:// 或 https:// 接口地址。');
+    }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+        throw new Error('Base URL 必须为 http:// 或 https:// 地址，不含账号、查询参数或片段；API Key 请填入独立字段。');
+    }
+    const endpoint = `${base}${provider.type === 'ollama' ? '/api/tags' : '/models'}`;
+    const signal = AbortSignal.timeout(15000);
+    let res;
+    try {
+        res = await request(endpoint, {
+            headers: provider.type === 'ollama' ? undefined : headers(provider),
+            signal
+        });
+    }
+    catch (e) {
+        throw modelNetworkError(e, endpoint);
+    }
+    if (!res.ok) {
+        const hint = res.status === 401 ? '认证失败，请检查 API Key 是否属于当前服务商。'
+            : res.status === 403 ? '访问被拒绝，请检查 API Key 权限、接口访问限制或地区限制。'
+                : res.status === 404 ? '模型列表接口不存在，请核对 Base URL；部分服务商需手动填写模型名称。'
+                    : res.status === 429 ? '请求过于频繁或配额不足，请稍后重试并检查服务商配额。'
+                        : res.status >= 500 ? '服务商暂时不可用，请稍后重试。'
+                            : '模型列表请求失败，请核对接口配置。';
+        throw new Error(`${hint} [HTTP ${res.status}] 请求地址：${endpoint}`);
+    }
+    let json;
+    try {
+        json = await res.json();
+    }
+    catch (e) {
+        if (!(e instanceof SyntaxError))
+            throw modelNetworkError(e, endpoint);
+        throw new Error(`接口未返回有效 JSON，请确认 Base URL 指向 API 而非网页。请求地址：${endpoint}`);
+    }
+    const models = provider.type === 'ollama' ? json?.models : json?.data;
+    if (!Array.isArray(models)) {
+        throw new Error(`模型列表格式不正确，请检查服务商类型和 Base URL。请求地址：${endpoint}`);
+    }
+    const names = models.map((m) => provider.type === 'ollama' ? m?.name : m?.id);
+    return [...new Set(names.filter((name) => typeof name === 'string' && name.length > 0))];
 }

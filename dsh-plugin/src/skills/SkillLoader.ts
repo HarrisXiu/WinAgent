@@ -54,6 +54,7 @@ export async function loadSkills(skillsDir: string): Promise<Tool[]> {
   let entries: string[]
   try {
     entries = await fs.readdir(skillsDir)
+    if (entries.includes('SKILL.md') || entries.includes('manifest.json')) entries = ['.']
   } catch {
     return tools
   }

@@ -6,6 +6,7 @@ directories:
 files:
   - out/**/*
   - package.json
+  - third-party/**/*
   # dsh-winagent 服务层（file: 依赖，symlink 解引用后打包；assets/skills 随包播种到 userData）
   - node_modules/dsh-winagent/**/*
 win:

@@ -37,6 +37,10 @@ class ToolRegistry {
         Logger_1.Logger.info(`[Tools] 内置工具 ${this.tools.size} 个`);
     }
     /** 分别加载 skills 与 mcp（传入已解析的绝对路径） */
+    async loadSkillsDirectory(directory) {
+        this.addAll(await (0, SkillLoader_1.loadSkills)(directory), 'skill');
+    }
+    /** 分别加载 skills 与 mcp（传入已解析的绝对路径） */
     async loadExternal(skillsDirAbs, mcpConfigAbs) {
         try {
             const skills = await (0, SkillLoader_1.loadSkills)(skillsDirAbs);

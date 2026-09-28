@@ -4,6 +4,9 @@ import { VaultManager } from './VaultManager';
 import { SearchIndex } from './SearchIndex';
 import { GraphEngine } from './GraphEngine';
 import { AiPipeline } from './AiPipeline';
+import { WorkspaceStore } from './WorkspaceStore';
+import { RuleService } from './RuleService';
+import { IngestionService } from './IngestionService';
 import type { AISuggestion, AnalysisTag, BatchIngestDoneResult, BatchIngestStartResult, GraphData, ImportAnalyzeResult, IngestResult, NoteContent, NoteData, NoteMeta, SearchResult, TagWithCount, WorkflowResult, LintWorkflowResult, NoteAnnotation } from '../shared/types';
 /** 扁平化笔记树 */
 export declare function flattenWikiNotes(notes: NoteMeta[]): NoteMeta[];
@@ -14,6 +17,9 @@ export declare class WikiHost {
     search: SearchIndex;
     graph: GraphEngine;
     pipeline: AiPipeline;
+    workspace: WorkspaceStore;
+    rules: RuleService;
+    ingestion: IngestionService;
     private batchSession;
     private autoIngestQueue;
     private recentIngests;
@@ -58,7 +64,7 @@ export declare class WikiHost {
         aliases: string[];
     }>>;
     /** 执行一次 INGEST（LLM Wiki 编译）：raw 文件 → sources/concepts/entities 页 */
-    runIngest(rawRelPath: string): Promise<IngestResult>;
+    runIngest(rawRelPath: string, force?: boolean): Promise<IngestResult>;
     ingestBatchStart(paths: string[]): Promise<BatchIngestStartResult>;
     ingestBatchContinue(): Promise<BatchIngestDoneResult>;
     ingestBatchAbort(): Promise<{

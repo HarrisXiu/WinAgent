@@ -12,6 +12,8 @@ export declare class ToolRegistry {
     setVoiceTools(tools: Tool[]): void;
     initialize(cfg: AppConfig): Promise<void>;
     /** 分别加载 skills 与 mcp（传入已解析的绝对路径） */
+    loadSkillsDirectory(directory: string): Promise<void>;
+    /** 分别加载 skills 与 mcp（传入已解析的绝对路径） */
     loadExternal(skillsDirAbs: string, mcpConfigAbs: string): Promise<void>;
     getSchemas(): ToolSchema[];
     getInfos(): ToolInfo[];

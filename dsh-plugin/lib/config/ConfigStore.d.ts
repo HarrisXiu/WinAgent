@@ -16,6 +16,7 @@ export declare function getDataDir(): string;
 export declare class ConfigStore {
     private configPath;
     private cfg;
+    private writes;
     constructor();
     get path(): string;
     load(): Promise<AppConfig>;

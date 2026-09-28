@@ -7,8 +7,18 @@ import ToolCard from './ToolCard'
 import { useSkin } from '../theme/SkinProvider'
 import type { AiState } from '../theme/skins'
 
-export default function Message({ turn, aiState = 'idle', voiceOn = false }: { turn: ChatTurn; aiState?: AiState; voiceOn?: boolean }): JSX.Element {
+export default function Message({ turn, aiState = 'idle', voiceOn = false, onOpenKnowledge }: { turn: ChatTurn; aiState?: AiState; voiceOn?: boolean; onOpenKnowledge?: (path:string,chunkId?:string)=>void }): JSX.Element {
   const [showReason, setShowReason] = useState(false)
+  const [saveStatus, setSaveStatus] = useState('')
+  const saveKnowledge = async (): Promise<void> => {
+    setSaveStatus('保存中…')
+    try {
+      const refs = turn.references || []
+      const path = `wiki/outputs/chat-${turn.id.replace(/[^a-zA-Z0-9_-]/g,'')}.md`
+      await window.winagent.wiki.writeNote(path, { title: turn.content.replace(/[#*\n]/g,' ').slice(0,50), tags:['对话结论','AI草稿'], body:`${turn.content}\n\n## 来源\n\n${refs.map(r=>`- [${r.title}](wiki:${encodeURIComponent(r.path)}?chunk=${r.chunkId||''}) · 提取文本行 ${r.lineStart}–${r.lineEnd}`).join('\n')}` })
+      setSaveStatus('已保存到知识库')
+    } catch(e) { setSaveStatus(`保存失败：${String(e)}`) }
+  }
   // 语音播放态读全局 context：手动/自动/Agent 三条来源统一，
   // 只有正在朗读「本条」时才显示播放态（修自动朗读与气泡脱节的 bug）
   const speech = useSpeech()
@@ -93,9 +103,19 @@ export default function Message({ turn, aiState = 'idle', voiceOn = false }: { t
         {turn.content && (
           <div
             className="md-body text-[14px]"
+            onClick={e=>{
+              const a=(e.target as HTMLElement).closest('a');const href=a?.getAttribute('href')||''
+              if(href.startsWith('wiki:')){e.preventDefault();const [raw,query]=href.slice(5).split('?');const path=decodeURIComponent(raw);const chunk=new URLSearchParams(query).get('chunk')||undefined
+                if(turn.references?.some(r=>r.path===path))onOpenKnowledge?.(path,chunk)
+              }
+            }}
             dangerouslySetInnerHTML={{ __html: renderMarkdown(turn.content) }}
           />
         )}
+
+        {!!turn.references?.length&&<details className="my-3 rounded-lg border border-border px-3 py-2 text-xs"><summary className="cursor-pointer text-accent">本轮知识来源 · {turn.references.length} 个片段</summary><div className="mt-2 flex flex-col gap-2">{turn.references.map((r,i)=><button key={`${r.path}-${r.chunkId}-${i}`} className="text-left text-text-secondary hover:text-accent" onClick={()=>onOpenKnowledge?.(r.path,r.chunkId)}>{r.title} · 提取文本行 {r.lineStart}–{r.lineEnd}</button>)}</div></details>}
+        {turn.ruleReport&&<details className="my-3 rounded-lg border border-border px-3 py-2 text-xs" open={turn.ruleReport.checks.some(c=>c.status==='fail')}><summary className="cursor-pointer text-accent">规范检查 · {turn.ruleReport.checks.filter(c=>c.status==='pass').length} 项通过评估 · {turn.ruleReport.checks.filter(c=>c.status!=='pass').length} 项待处理</summary><p className="my-2 text-muted">{turn.ruleReport.scope}</p>{turn.ruleReport.checks.map(c=><div key={c.ruleId} className="border-t border-border py-2"><strong>{c.status==='pass'?'模型评估通过':c.status==='fail'?'未满足':'需核验'} · {c.requirement}</strong><p className="mt-1 text-muted">{c.reason}</p></div>)}</details>}
+        {turn.content&&!turn.streaming&&<div className="my-2 flex items-center gap-2 text-xs"><button className="text-accent" onClick={()=>void saveKnowledge()} disabled={saveStatus==='保存中…'}>保存结论到知识库</button><span role="status" className="text-muted">{saveStatus}</span></div>}
 
         {/* 语音朗读：回复完成后显示（需在设置中启用语音）；播放态/错误读全局状态 */}
         {!turn.streaming && turn.content && voiceOn && (

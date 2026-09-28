@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Logger = exports.seedDataDir = exports.createWinAgentCore = exports.SKIN_SLOTS = exports.SkinStore = exports.TTS_CANCELLED = exports.isCancelled = exports.speak = exports.plainTextForSpeech = exports.BUILTIN_VOICES = exports.splitForSpeech = exports.SpeechSessionManager = exports.VoiceStore = exports.VoiceService = exports.chatStream = exports.fetchModels = exports.createWikiTools = exports.runQuery = exports.runReflect = exports.runMerge = exports.runLint = exports.AiPipeline = exports.GraphEngine = exports.VaultManager = exports.SearchIndex = exports.KNOWLEDGE_MARK = exports.KnowledgeRetriever = exports.WikiHost = exports.estimateTokens = exports.ContextManager = exports.AgentService = exports.ToolRegistry = exports.LEGACY_SYSTEM_PROMPT = exports.DEFAULT_PET_PROMPT = exports.DEFAULT_PERSONA_PROMPT = exports.getDataDir = exports.defaultConfig = exports.ConfigStore = exports.EventBus = void 0;
+exports.Logger = exports.seedDataDir = exports.createWinAgentCore = exports.SKIN_SLOTS = exports.SkinStore = exports.TTS_CANCELLED = exports.isCancelled = exports.speak = exports.plainTextForSpeech = exports.BUILTIN_VOICES = exports.splitForSpeech = exports.SpeechSessionManager = exports.VoiceStore = exports.VoiceService = exports.setOutputLimitObserver = exports.outputLimitKey = exports.knownOutputLimit = exports.detectOutputLimit = exports.chatStream = exports.fetchModels = exports.createWikiTools = exports.runQuery = exports.runReflect = exports.runMerge = exports.runLint = exports.AiPipeline = exports.GraphEngine = exports.VaultManager = exports.SearchIndex = exports.KNOWLEDGE_MARK = exports.KnowledgeRetriever = exports.WikiHost = exports.estimateTokens = exports.ContextManager = exports.ConversationStore = exports.AgentService = exports.ToolRegistry = exports.LEGACY_SYSTEM_PROMPT = exports.DEFAULT_PET_PROMPT = exports.DEFAULT_PERSONA_PROMPT = exports.getDataDir = exports.defaultConfig = exports.ConfigStore = exports.EventBus = void 0;
 /**
  * dsh-winagent 服务层导出：供 Electron 桌面版主进程（或其他宿主）直接导入复用。
  * 与插件入口 index.ts 的区别：这里不依赖 DSH webServer，纯服务对象装配。
@@ -19,6 +19,8 @@ var ToolRegistry_1 = require("./tools/ToolRegistry");
 Object.defineProperty(exports, "ToolRegistry", { enumerable: true, get: function () { return ToolRegistry_1.ToolRegistry; } });
 var AgentService_1 = require("./agent/AgentService");
 Object.defineProperty(exports, "AgentService", { enumerable: true, get: function () { return AgentService_1.AgentService; } });
+var ConversationStore_1 = require("./agent/ConversationStore");
+Object.defineProperty(exports, "ConversationStore", { enumerable: true, get: function () { return ConversationStore_1.ConversationStore; } });
 var ContextManager_1 = require("./agent/ContextManager");
 Object.defineProperty(exports, "ContextManager", { enumerable: true, get: function () { return ContextManager_1.ContextManager; } });
 Object.defineProperty(exports, "estimateTokens", { enumerable: true, get: function () { return ContextManager_1.estimateTokens; } });
@@ -45,6 +47,11 @@ Object.defineProperty(exports, "createWikiTools", { enumerable: true, get: funct
 var OpenAIClient_1 = require("./llm/OpenAIClient");
 Object.defineProperty(exports, "fetchModels", { enumerable: true, get: function () { return OpenAIClient_1.fetchModels; } });
 Object.defineProperty(exports, "chatStream", { enumerable: true, get: function () { return OpenAIClient_1.chatStream; } });
+var OutputLimit_1 = require("./llm/OutputLimit");
+Object.defineProperty(exports, "detectOutputLimit", { enumerable: true, get: function () { return OutputLimit_1.detectOutputLimit; } });
+Object.defineProperty(exports, "knownOutputLimit", { enumerable: true, get: function () { return OutputLimit_1.knownOutputLimit; } });
+Object.defineProperty(exports, "outputLimitKey", { enumerable: true, get: function () { return OutputLimit_1.outputLimitKey; } });
+Object.defineProperty(exports, "setOutputLimitObserver", { enumerable: true, get: function () { return OutputLimit_1.setOutputLimitObserver; } });
 var VoiceService_1 = require("./voice/VoiceService");
 Object.defineProperty(exports, "VoiceService", { enumerable: true, get: function () { return VoiceService_1.VoiceService; } });
 var VoiceStore_1 = require("./voice/VoiceStore");

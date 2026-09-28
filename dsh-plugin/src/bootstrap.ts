@@ -108,6 +108,10 @@ export async function createWinAgentCore(): Promise<WinAgentCore> {
     const mp = cfg.mcpConfigPath || 'mcp.json'
     const mcpPath = path.isAbsolute(mp) ? mp : path.join(getDataDir(), mp)
     await registry.loadExternal(skillsDir, mcpPath)
+    for (const extra of cfg.skillsDirs || []) {
+      const resolved = path.isAbsolute(extra) ? extra : path.join(getDataDir(), extra)
+      if (resolved !== skillsDir) await registry.loadSkillsDirectory(resolved)
+    }
   }
 
   // 语音：克隆音色库 + TTS 门面（speak_text 工具读取配置，随 reloadTools 刷新）
@@ -127,7 +131,8 @@ export async function createWinAgentCore(): Promise<WinAgentCore> {
   await registry.initialize(cfg)
   await reloadTools()
   // 自动 RAG：每轮提问自动检索知识库并注入结果
-  agent.setKnowledgeRetriever(new KnowledgeRetriever(wikiHost.vault, wikiHost.search, store))
+  agent.setKnowledgeRetriever(new KnowledgeRetriever(wikiHost.vault, wikiHost.search, store, wikiHost.workspace))
+  agent.setRuleService(wikiHost.rules)
 
   Logger.info('WinAgent 服务核心装配完成，数据目录: ' + getDataDir())
 

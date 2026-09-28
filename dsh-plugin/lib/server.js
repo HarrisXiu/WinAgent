@@ -49,6 +49,11 @@ function createServerHost(ctx, store, registry, agent, bus) {
             ? cfg.mcpConfigPath
             : path_1.default.join((0, ConfigStore_1.getDataDir)(), cfg.mcpConfigPath || 'mcp.json');
         await registry.loadExternal(skillsDir, mcpPath);
+        for (const extra of cfg.skillsDirs || []) {
+            const resolved = path_1.default.isAbsolute(extra) ? extra : path_1.default.join((0, ConfigStore_1.getDataDir)(), extra);
+            if (resolved !== skillsDir)
+                await registry.loadSkillsDirectory(resolved);
+        }
     }
     async function init() {
         await seed();
@@ -59,7 +64,8 @@ function createServerHost(ctx, store, registry, agent, bus) {
         await registry.initialize(cfg);
         await reloadTools();
         // 自动 RAG：把知识检索能力注入对话服务（每轮提问自动检索知识库并注入结果）
-        agent.setKnowledgeRetriever(new KnowledgeRetriever_1.KnowledgeRetriever(wikiHost.vault, wikiHost.search, store));
+        agent.setKnowledgeRetriever(new KnowledgeRetriever_1.KnowledgeRetriever(wikiHost.vault, wikiHost.search, store, wikiHost.workspace));
+        agent.setRuleService(wikiHost.rules);
         Logger_1.Logger.info('dsh-winagent 启动完成，数据目录: ' + (0, ConfigStore_1.getDataDir)());
         ctx.logger?.info?.('dsh-winagent mounted (data: ' + (0, ConfigStore_1.getDataDir)() + ')');
     }

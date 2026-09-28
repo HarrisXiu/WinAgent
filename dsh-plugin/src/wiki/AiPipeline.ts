@@ -1,6 +1,8 @@
 import type { ProviderConfig, ChatMessage, IngestAnalysis, NoteRelation, CustomAnalysisOutput } from '../shared/types'
 import { chatStream } from '../llm/OpenAIClient'
 import { Logger } from '../util/Logger'
+import { analyzeDetailed } from './DetailedAnalysis'
+import { splitSource } from './WorkspaceStore'
 
 export interface AiAnalysisResult {
   tags: string[]
@@ -99,6 +101,12 @@ export class AiPipeline {
     candidates: CandidateNote[],
     opts: AnalyzeOptions = {}
   ): Promise<AiAnalysisResult> {
+    if (body.length > 4000) {
+      const results: AiAnalysisResult[] = []
+      for (const chunk of splitSource(body, 3800)) results.push(await this.analyze(provider, `${title} · ${chunk.id}`, chunk.text, candidates, opts))
+      return { tags: [...new Set(results.flatMap(r=>r.tags))], summary: results.map(r=>r.summary).join('\n\n'),
+        relations: [...new Map(results.flatMap(r=>r.relations).map(r=>[r.target,r])).values()], suggestions: [...new Set(results.flatMap(r=>r.suggestions))] }
+    }
     const signal = this.track('analyze')
     const { noteType = 'note', contract = '', openQuestions = [] } = opts
 
@@ -218,6 +226,12 @@ ${others.map((c) => `- ${c.path}（标题: ${c.title}）`).join('\n') || '（暂
     contract: string,
     existingTags: Array<{ tag: string; template: string }> = []
   ): Promise<CustomAnalysisOutput> {
+    if (sourceBody.length > 6000) {
+      const results: CustomAnalysisOutput[] = []
+      for (const chunk of splitSource(sourceBody, 5500)) results.push(await this.customAnalyze(provider, `${sourceTitle} · ${chunk.id}`, chunk.text, requirement, contract, existingTags))
+      return { summary: results.map(r=>r.summary).join('\n\n'), report: results.map((r,i)=>`## 分段分析 ${i+1}\n\n${r.report}`).join('\n\n'),
+        analysisTags: [...new Map(results.flatMap(r=>r.analysisTags).map(r=>[r.tag,r])).values()] }
+    }
     const signal = this.track('custom')
 
     // 契约注入：与 analyze/ingestSource 同一模板，改 CLAUDE.md → 报告行为随之变化
@@ -305,94 +319,10 @@ ${others.map((c) => `- ${c.path}（标题: ${c.title}）`).join('\n') || '（暂
     isPersonal = false,
     contract = ''
   ): Promise<IngestAnalysis> {
-    const signal = this.track('ingest')
-
-    const conceptList = existingConcepts.length
-      ? existingConcepts
-          .map((c) => `- slug: ${c.slug} | 中文名: ${c.title} | aliases: ${c.aliases.join(', ') || '无'}`)
-          .join('\n')
-      : '（暂无已有概念）'
-    const questionList = openQuestions.length
-      ? openQuestions.map((q) => `- ${q}`).join('\n')
-      : '（暂无开放问题）'
-
-    const personalRule = isPersonal
-      ? `【个人写作模式】本来源是用户自己写的文章（raw/personal/）：
-- summary 简写为核心论点（第一人称视角）
-- keyPoints 为文章的主要论点
-- 概念 definition 作为「个人立场」表述
-- 不参与已有概念的 source_count 计数（但 matchSlug 对齐规则照常）`
-      : ''
-
-    const contractRule = contract
-      ? `\n\n=== 知识库行为契约（CLAUDE.md，必须遵守）===\n${contract}`
-      : ''
-
-    const messages: ChatMessage[] = [
-      {
-        role: 'system',
-        content: `你是一个个人知识库管理员。给定一篇原始来源，你要把它编译成知识库结构。
-输出必须是一个严格合法的 JSON 对象（不要 markdown 代码块、不要多余文字），格式：
-{
-  "slug": "英文小写连字符文件名（如 attention-is-all-you-need，不要中文）",
-  "title": "来源的中文标题",
-  "summary": "2-4 句中文摘要，概括核心内容",
-  "keyPoints": ["3-8 条核心要点，每条一句话"],
-  "concepts": [
-    {"name": "概念中文名", "nameEn": "概念英文名（若无则省略）", "definition": "一句话定义", "matchSlug": "命中已有概念的 slug（否则省略）"}
-  ],
-  "entities": [
-    {"name": "实体名", "type": "person|tool|institution|paper", "description": "一句话描述", "matchSlug": "命中已有实体的 slug（否则省略）"}
-  ],
-  "contradictions": ["与知识库已有内容的分歧（若无则省略）"],
-  "answeredQuestions": ["本来源能回答的开放问题原文（若下方开放问题列表中有能回答的，复制原问题文本；没有则省略该字段"],
-  "language": "来源写作语言代码（zh/en/ja/…，无法判断则省略）",
-  "canonicalSource": "若本来源是译文/转述/转载，填原始出处（URL 或标题）；原创来源省略该字段"
-}
-数量要求：concepts 提取 3-8 个（仅提取文中实际出现的核心概念，不足 3 个时按实际数量）；entities 0-6 个；keyPoints 3-8 条。
-${personalRule}
-概念对齐规则（重要）：
-- 下方提供了知识库中已有概念列表（slug + 中文名 + aliases）
-- 提取概念时，若该概念与已有概念的 slug、中文名、aliases 或语义相同 → 在 matchSlug 填入已有概念的 slug，表示"更新已有页"
-- 只有确实不存在时才作为新概念（不填 matchSlug）
-- 实体同理（知识库已有实体在下方列出时对齐）${contractRule}`
-      },
-      {
-        role: 'user',
-        content: `来源标题：${rawTitle}
-
-来源内容：
-${truncate(rawBody, 6000)}
-
-=== 知识库已有概念列表 ===
-${conceptList}
-
-=== 开放问题列表（判断本来源是否能回答） ===
-${questionList}
-
-请编译以上来源，输出 JSON。`
-      }
-    ]
-
-    try {
-      const result = await chatStream(provider, messages, {
-        temperature: 0.3,
-        maxTokens: 4000,
-        stream: false,
-        signal
-      })
-      assertNotTruncated(result, 'INGEST 分析')
-      const parsed = parseJsonObject(result.content)
-      if (!parsed) {
-        // 契约 §9：失败必须如实报错，不得静默吞掉（静默空兜底会写出「(无摘要)」的坏页）
-        throw new Error(`LLM 输出无法解析为 JSON。前 200 字符: ${result.content.slice(0, 200)}`)
-      }
-      return sanitizeIngest(parsed)
-    } catch (e) {
-      throw new Error(`INGEST 分析失败: ${e instanceof Error ? e.message : String(e)}`)
-    } finally {
-      this.untrack('ingest')
-    }
+    const key = `ingest-${Date.now()}-${Math.random()}`
+    const signal = this.track(key)
+    try { return await analyzeDetailed(provider, rawTitle, rawBody, { signal }) }
+    finally { this.untrack(key) }
   }
 }
 

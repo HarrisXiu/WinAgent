@@ -24,6 +24,31 @@ export const INGESTIBLE_EXTS = [
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'
 ]
 
+/**
+ * frontmatter.tags → string[]（笔记元数据的唯一出口，所有读 tags 的地方都必须经过这里）。
+ *
+ * ⚠️ 白屏 bug 防回归（2026-09-27）：YAML 里的 tags 不保证是字符串数组——
+ *   - ANALYSIS_TAGS.md 用 `tags: [{tag, template}]` 存标签模板库（对象数组，合法格式，不能改）
+ *   - 用户手写 `tags: [2024, true]` 会被 YAML 解析成数字/布尔
+ *   - `- key: value` 形式会被解析成对象
+ * 过去直接 `Array.isArray(fm.tags) ? fm.tags : []` 把对象原样透传给渲染层，
+ * KnowledgeWorkspace 对每个 tag 调 `t.startsWith('专题:')` → TypeError →
+ * React 整棵树卸载 → 启动白屏。数字/布尔转成字符串保留，对象/null 丢弃。
+ */
+export function normalizeTags(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  for (const t of raw) {
+    if (typeof t === 'string') {
+      if (t.trim()) out.push(t)
+    } else if (typeof t === 'number' || typeof t === 'boolean') {
+      out.push(String(t))
+    }
+    // 对象/数组/null：不是笔记标签（如 ANALYSIS_TAGS.md 的模板条目），丢弃
+  }
+  return out
+}
+
 export class VaultManager {
   private vaultPath: string
   private notesDir: string
@@ -546,6 +571,7 @@ export class VaultManager {
           const ext = path.extname(filename).toLowerCase()
           if (!INGESTIBLE_EXTS.includes(ext)) return
           const relPath = filename.replace(/\\/g, '/')
+          if (relPath.startsWith('.winagent/')) return
           if (eventType === 'rename') {
             fs.access(path.join(this.notesDir, filename))
               .then(() => this.emit({ type: 'created', path: relPath }))
@@ -611,7 +637,8 @@ export class VaultManager {
         result.push({
           path: relPath,
           title: fm.title || f.name.replace(/\.md$/, ''),
-          tags: Array.isArray(fm.tags) ? fm.tags : [],
+          // 必须经 normalizeTags：tags 可能含对象/数字，直接透传会导致渲染层 startsWith 崩溃白屏
+          tags: normalizeTags(fm.tags),
           created: fm.created || '',
           updated: fm.updated || '',
           kind: 'file'
@@ -700,7 +727,8 @@ export class VaultManager {
     return {
       path: relPath.replace(/\\/g, '/'),
       title: fm.title || path.basename(relPath, '.md'),
-      tags: Array.isArray(fm.tags) ? fm.tags : [],
+      // 必须经 normalizeTags：tags 可能含对象/数字，直接透传会导致渲染层 startsWith 崩溃白屏
+      tags: normalizeTags(fm.tags),
       created: fm.created || new Date().toISOString(),
       updated: fm.updated || new Date().toISOString(),
       kind: 'file',

@@ -9,6 +9,7 @@ exports.getDataDir = getDataDir;
 const fs_1 = require("fs");
 const os_1 = __importDefault(require("os"));
 const path_1 = __importDefault(require("path"));
+const crypto_1 = require("crypto");
 const ENC_PREFIX = 'enc:v1:';
 // DSH 插件运行在 Node.js 里，没有 Electron safeStorage(DPAPI)。
 // apiKey 以明文存于 $DSH_HOME/winagent/config.json（用户私有目录），
@@ -140,6 +141,7 @@ function defaultConfig() {
         ],
         temperature: 0.3,
         maxTokens: 4096,
+        autoMaxTokens: true,
         autoApproveTools: false,
         compactThresholdTokens: 24000,
         keepRecentTurns: 6,
@@ -192,6 +194,7 @@ function getDataDir() {
 class ConfigStore {
     configPath;
     cfg;
+    writes = Promise.resolve();
     constructor() {
         this.configPath = path_1.default.join(getDataDir(), 'config.json');
         this.cfg = defaultConfig();
@@ -205,6 +208,8 @@ class ConfigStore {
             const parsed = JSON.parse(raw);
             // 与默认配置合并，保证新增字段有值
             this.cfg = { ...defaultConfig(), ...parsed };
+            if (!Number.isSafeInteger(this.cfg.maxTokens) || this.cfg.maxTokens < 0)
+                this.cfg.maxTokens = 0;
             if (!Array.isArray(this.cfg.providers) || this.cfg.providers.length === 0) {
                 this.cfg.providers = defaultConfig().providers;
             }
@@ -253,6 +258,8 @@ class ConfigStore {
         return this.cfg;
     }
     async save(cfg) {
+        if (!Number.isSafeInteger(cfg.maxTokens) || cfg.maxTokens < 0)
+            throw new Error('输出 Token 上限必须是非负整数，0 表示由 API 决定');
         this.cfg = cfg;
         // encryptKey/decryptKey 当前为空实现（DSH 插件运行在 Node.js，无 DPAPI），
         // apiKey 实为明文落盘于用户私有目录；providers 与 voice 同一约定。加密属独立议题。
@@ -261,8 +268,14 @@ class ConfigStore {
             providers: cfg.providers.map((p) => ({ ...p, apiKey: encryptKey(p.apiKey) })),
             voice: { ...defaultConfig().voice, ...cfg.voice, apiKey: encryptKey(cfg.voice?.apiKey || '') }
         };
-        await fs_1.promises.mkdir(path_1.default.dirname(this.configPath), { recursive: true });
-        await fs_1.promises.writeFile(this.configPath, JSON.stringify(diskCfg, null, 2), 'utf-8');
+        const serialized = JSON.stringify(diskCfg, null, 2);
+        this.writes = this.writes.catch(() => { }).then(async () => {
+            await fs_1.promises.mkdir(path_1.default.dirname(this.configPath), { recursive: true });
+            const temporary = `${this.configPath}.${(0, crypto_1.randomUUID)()}.tmp`;
+            await fs_1.promises.writeFile(temporary, serialized, 'utf-8');
+            await fs_1.promises.rename(temporary, this.configPath);
+        });
+        await this.writes;
     }
     activeProvider() {
         const c = this.cfg;

@@ -1,6 +1,6 @@
 # WinAgent
 
-当前版本：**v4.5**（项目版本号 `4.5.0`）。
+当前版本：**v0.5.0**。
 
  **Windows 桌面 AI 助手**（基于 **Electron**，业务逻辑复用 dsh-winagent 插件服务层）。兼容 **OpenAI 格式 API** 与 **本地 Ollama**，内置**完整 Windows 工具集**（53+ 个工具）与 **LLM Wiki 个人知识库**——你只负责剪藏，AI 负责理解和沉淀。支持 **MiMo TTS 语音朗读与声音克隆**（Agent 可以真的开口说话）、**可换装主题包**（默认简洁主题，可选《明日方舟》安洁莉娜桌宠形象或上传自制立绘）、**skills（含 SKILL.md 格式）** 与 **MCP** 扩展挂载，可打包为**免安装便携版**。
 
@@ -12,6 +12,8 @@
 
 - **多 Provider**：OpenAI / DeepSeek / 任意 OpenAI 兼容端 / 本地 Ollama，一键切换
 - **模型自动拉取**：Ollama `/api/tags`、OpenAI 兼容 `/v1/models`
+- **输出上限自动检测**：按 API 地址与模型读取输出上限并回填设置；没有元数据时使用最小校验请求。明确的范围错误自动更新并重试一次；无法确认时使用服务端默认值，不用上下文长度替代输出长度。
+- **统一工作台**：借鉴 ZCode 的侧栏与面板交互，左侧提供“助理”“专题任务”“Skills 与 MCP”“Wiki 知识库”；助理是固定聊天，专题任务各有独立聊天和 Wiki 标签。会话、草稿与侧栏宽度可恢复。
 - **文件/图片/PDF 附件**：图片自动以 vision 格式发送，文本文件内容内嵌；PDF（≤15MB）在 provider 支持时直接以文件输入发送（拒收自动降级）；不支持 vision 的模型自动降级为视觉辅助或路径描述
 - **Vision 模型识别**：自动按模型名关键词检测（`gpt-4o`、`vision`、`vl`、`llava`、`gemini`、`claude-3`、`qwen-vl`、`glm-4v` 等），也可在设置中手动指定「支持/不支持/自动检测」
 - **视觉辅助（双模型协作）**：主模型为纯语言模型时，自动调用另一个视觉模型识别图片，再把识别结果回填给主模型继续完成任务。**支持同一 API 下用两个模型**（如主模型 `mimo-v2.5-pro` + 视觉模型 `mimo-v2.5`）
@@ -35,20 +37,20 @@
 - **文档生成（模型优先）**：模型产出 Markdown / 结构化 JSON，工具做确定性序列化——`markdown_to_docx`（pandoc 检测到则优先，否则内置纯 JS 链）、`write_xlsx`（SheetJS）、`write_pptx`（pptxgenjs）；数学公式以 **Word 原生可编辑公式（OMML）** 插入（非图片，双击可用公式编辑器修改）
 - **文档读取与视觉理解（混合回退链）**：PDF 附件直传 → `render_pdf_page` 整页渲染 PNG 视觉阅读（扫描件/复杂排版，pdfjs-dist + @napi-rs/canvas）→ `read_pdf` / `read_docx(with_images)` 等 skills 哑提取 + 模型结构化（纯 JS 零系统依赖）；`[[IMG:]]` 标记协议——skill 输出图片标记，Agent 自动转为视觉输入（非 vision 模型走视觉辅助）
 - **格式互转**：`office_convert` 四级降级链（纯 JS SheetJS → pandoc → LibreOffice headless → Office COM），Office 文档 → PDF 等常用转换本机装有 Office 即可用；不可达时报错附安装指引
-- **Skills 挂载**：`skills/` 目录下的脚本插件（node/python/command）
-- **MCP 挂载**：`mcp.json` 挂载外部 MCP server（stdio / HTTP）
+- **Skills 挂载**：左侧“Skills 与 MCP”追加技能目录；支持单个 `SKILL.md` 目录和包含多个技能的父目录，保留默认 `skills/` 与已加入目录。
+- **MCP 挂载**：同页编辑 `mcpServers` 配置并连接外部 MCP server（stdio / HTTP）；下方按内置、Skills、MCP 查看和搜索真实已加载工具。
 - **上下文压缩**：长对话自动/手动压缩，避免超出上下文窗口
 - **危险操作确认**：删除/写注册表/结束进程/执行命令/模拟输入等默认弹窗确认
 - **Ollama 兼容优化**：消息格式自动清洗（content null 处理、tool_calls 结构标准化、tool 结果补 name 字段），避免 `invalid tool call arguments` 兼容性错误
 - **API Key 存储**：`config.json` 中的 `apiKey` 以明文存于用户私有目录（`%APPDATA%/com.winagent.app/`），请勿分享该目录；旧版 DPAPI 密文（`enc:v1:` 前缀）加载时自动清空，重填一次即可
 - **上下文压缩（两阶段）**：阶段一免 LLM 轻量压缩（截断旧工具结果、剥离旧图片 base64），阶段二 LLM 摘要旧消息；摘要失败自动降级，不中断对话
 - **便携**：数据（`config.json`、`wiki/`）保存在 `%APPDATA%/com.winagent.app/`，遵循 Windows 应用数据规范
-- **Angelina 可爱主题（可选皮肤）**：《明日方舟》安洁莉娜主题界面——奶油色系 UI、动态角色立绘（左侧常驻，随对话状态切换「思考/执行工具/识别图片/回答」动作动画）、空状态 GIF 动图；在「设置 → 外观」中切换主题包，默认为无吉祥物的简洁主题
+- **Angelina 主题（可选皮肤）**：在「设置 → 外观」中选择头像、配色与角色人设。v0.5.0 工作台使用常驻功能侧栏，主界面不再用大立绘占据导航区；已有主题素材仍可管理。
 - **单一桌宠模式（Agent 能力合并）**：AI 以安洁莉娜的角色人设陪伴聊天（人设提示词可编辑），同时拥有专业 Agent 的**完整工具能力**——读文件、操作 Windows、检索知识库，系统提示词运行时自动附加工具清单，不会"拒绝访问本地文件"
-- **LLM Wiki 个人知识库（Karpathy 模式）**：基于 Andrej Karpathy `llm-wiki` 思路——**你只负责剪藏，LLM 负责理解和沉淀**。三层架构（raw 原始文件只读 / wiki 编译层 / outputs 输出），拖拽文件弹出分析要求弹窗（AI 编译 + 按你的要求定制分析，要求自动归纳为可复用 tag），支持概念对齐、confidence 体系、QUESTIONS 队列、LINT/REFLECT/MERGE
-- **对话自动 RAG**：每轮提问自动检索知识库并把相关笔记（标题/路径/confidence/摘要）注入上下文——回答知识类问题优先依据库内知识、注明来源；未命中时明确告知「知识库中没有相关内容」再自答并标注，绝不冒充库内知识
-- **文档自动解析**：拖入 PDF / PPTX / DOCX / XLSX / PPT / DOC / XLS / Markdown / 文本，自动提取文本 → AI 分析 → 生成知识库页面（带进度条）；PPT 通过 Office COM 转换，旧版格式全覆盖
-- **知识库面板**：侧边滑出，文件树分层展示（📥 raw 只读 / 📚 wiki 可编辑），中缝可拖拽调整宽度，量子粒子关系图谱
+- **知识工作区**：资料、专题标签、持久规则与处理记录直接嵌入主窗口；可核对原文、给文件增删专题标签、删除 Wiki 文件，选段后返回当前聊天。
+- **全文详细知识**：逐段保存解释、步骤、参数、条件、例外与原文证据，不再只分析前 6000 字符。模型输出截断时自动细分片段重试；完成的片段保留缓存。
+- **任务规范自动执行**：用户明确将资料编译并启用为论文、报告、编码或自定义规则；适用的新任务自动加载，工具调用与上下文压缩后仍保留。回答完成后逐条进行模型评估，纯文本未满足项最多自动修正一次。
+- **原文检索与阅读**：自动检索、固定资料、关闭检索三种范围；注入真实原文片段并附定位链接。PDF 支持内嵌原版阅读，扫描页无文字时提示 OCR 限制。
 - **SKILL.md 格式支持**：除原生 `manifest.json` 外，支持 Anthropic 官方 `SKILL.md` 格式 skill，GitHub 上的 skill 可直接放入 `skills/` 目录使用
 - **图片生成提示词**：需要图片时模型直接生成可复制的绘图 Prompt（可直接粘贴的英文 Prompt + 中文拆解，适配 Midjourney / Stable Diffusion / 即梦AI 等），不编造图片
 - **DSH 插件版（dsh-winagent）**：同一套 Agent 能力以插件形式装进 DeepSeek Harness（`dsh plugin --profile web add` 一条命令安装，详见下文「DSH 插件版」），在 DSH Web 界面里直接使用，无需桌面壳
@@ -77,7 +79,7 @@ npm run pack             # 仅打包目录不生成安装包（调试用）
 npm run build:icon       # 从 Angelina/PNG/送货.png 重新生成多尺寸 ICO 图标
 ```
 
-v4.5 构建产物为 `release/WinAgent-4.5.0-win64.exe`（Windows x64 便携版）。
+v0.5.0 构建产物为 `release/WinAgent-0.5.0-win64.exe`（Windows x64 便携版）。
 
 开发验证：`npx tsc --noEmit` 检查类型，`npm run test:speech` 在隐藏的 Electron 窗口中验证分段播放与缓存重播；回归测试使用模拟音频和语音接口，不调用真实 TTS API。
 
@@ -123,7 +125,7 @@ v4.5 构建产物为 `release/WinAgent-4.5.0-win64.exe`（Windows x64 便携版�
 「设置 → 外观」中切换主题包（`theme.skin`）：
 
 - `plain`（默认）：无吉祥物、中性文案的简洁主题
-- `angelina`：内置安洁莉娜主题——五态立绘 + 头像 + 漂浮装饰 + 角色文案；素材经动态 import 代码分割，不选它不加载
+- `angelina`：内置安洁莉娜头像与人设；素材经动态 import 代码分割，不选它不加载。新版工作台以任务导航与阅读为主，原有大立绘与漂浮装饰不再展示。
 - `custom:<id>`：自制主题包。新建后逐槽位上传图片（png/gif/jpg/webp，单张 ≤5MB）：待机 / 思考 / 工具 / 识别 / 说话五态立绘 + 头像，**只需上传 idle 也能用**（缺省槽位自动回退）；支持重命名、清空单槽、整包删除
 
 素材存 `dataDir/skins/`，经 `winagent-skin://` 自定义协议供渲染层 `<img>` 直接引用（id/slot 白名单 + 路径穿越双校验，`?v=mtime` 缓存失效）。切换主题包时可一键应用配套人设提示词默认值；自定义包被删除自动回退 plain，不会空白。
@@ -235,45 +237,62 @@ PDF 附件（≤15MB）优先**文件直传**（provider 支持时，拒收自�
 
 > 实现为 `LaTeX → MathML（temml）→ OMML（mathml2omml）→ OOXML 写入 docx（jszip）`，纯 JS 无原生模块，**无需安装 Word 也能生成**。已修复 `mml2omml` 双重转义 bug 和空公式位多余空格问题。
 
-## LLM Wiki 个人知识库
+## Wiki 知识与规则工作区
 
-基于 Andrej Karpathy [llm-wiki](https://github.com/karpathy/llm-wiki) 思路的个人知识库，核心理念：**你只负责剪藏，LLM 负责理解和沉淀**——知识「编译一次、持续维护」，而非每次查询重新推导。
+左侧有“助理”“专题任务”“Skills 与 MCP”“Wiki 知识库”四个入口。Wiki 负责阅读和管理文件；点击“加入当前聊天”或引用原文时，回到当前助理或专题聊天。切换入口保留 Wiki 阅读位置和聊天草稿。
 
-### 三层架构
+“助理”只有一个固定聊天，可以访问整个 Wiki；“新建专题任务”创建独立聊天，同时生成 `专题:<名称>` 标签。在 Wiki 阅读页点击标签即可将文件加入或移出专题，一份文件可以属于多个专题。专题聊天每轮只注入本专题所有已标记文件的内容，持久规则也只采用本专题文件编译的规则；没有标记文件时会要求先添加，资料超出单轮阅读预算时会明确报错。专题不开放 Wiki 读取、外部读取或命令工具，仍可用输出文件工具生成文档。要在专题中使用附件，先把它导入 Wiki 并添加标签。
 
+聊天消息、模型历史、规则版本快照和草稿保存在 `%APPDATA%/com.winagent.app/conversations/`。执行中的任务需结束或停止后再切换。`Ctrl+B` 收起 / 展开侧栏，`Ctrl+Shift+N` 新建专题任务；分隔线支持拖拽与方向键调整。
+
+### 导入、阅读与提问
+
+1. 在“资料”中导入 PDF、Word、PPT、Excel、Markdown 或文本。原始文件保存在 `raw/`；解析完成后先可检索，详细分析在后续逐段完成。
+2. 打开资料，在“详细知识”“原文与证据”之间切换。详细正文保留定义、解释、步骤、数值与单位、条件、例外和局限；证据引句必须能在对应原文中找到。
+3. PDF 可以选择“PDF 原版阅读”；提取文本带页码标记。扫描件与无法提取文字的图片不会被标记为已完成知识分析，需要先 OCR。
+4. 助理中点击“加入当前聊天”可固定资料；选中原文后点“选段加入提问”，内容进入助理聊天输入框。专题中需先为该文件添加当前专题标签。回答引用可回到对应原文片段。
+5. 阅读页的“专题任务标签”可直接添加或移除标签。“删除文件”会在确认后删除 Wiki 来源页；导入资料还会一并删除原文件、分析记录及关联规则。
+
+### 让论文规范在以后自动生效
+
+1. 导入论文规范，打开其资料页，展开“将这份资料作为任务规范”。
+2. 选择“论文写作与修改”，点击“编译并启用规范”。所有可读取片段都会参与编译，条款保留强制程度、条件、例外及原文证据。
+3. 在主界面直接提出“帮我写一篇论文”。系统显示本次采用的规范版本，并在每轮模型调用时加入规则；无需再次复制规范。程序重启后启用状态仍保留。
+4. 回复完成后查看“规范检查”。语义检查明确标为模型评估；缺少依据、检查失败或实际文件内容与版式尚未检查时标为需核验，不宣称全部通过。纯文本答复的未满足项最多自动修正一次。
+
+支持论文、报告、代码、所有任务、自定义关键词范围，也可以通过 `@规范标题` 显式选定。总结论文不会自动匹配论文写作格式；继续修改同一任务时保留原规则快照。关闭普通知识检索不会停用规则。停用规则影响后续新任务，原文变化后需重新分析和编译。
+
+### 处理记录与存储
+
+“处理记录”显示真实处理阶段、已完成片段、错误、取消和重试入口。重启后未完成任务标为可恢复，点击重新处理继续；同来源、模型与分析版本的成功片段使用缓存。详细分析遇到输出长度截断会继续细分片段；如果模型连最小片段都无法返回完整 JSON，会提示换用输出能力更高的模型。重新分析直接覆盖对应 AI 知识正文，不做旧笔记迁移；原始资料保留，直到用户点击删除。
+
+```text
+<vault>/
+├── raw/                  原始资料
+├── wiki/sources/         全文详细知识 Markdown
+├── wiki/outputs/         保存的对话结论
+└── .winagent/
+    ├── sources/          原文片段、版本、详细知识结构
+    ├── analysis-cache/   逐段分析缓存
+    ├── jobs/             处理进度与恢复记录
+    ├── rules/            已编译规则集及启用状态
+    ├── task-context/     任务采用的完整规则版本快照
+    └── tasks/            规范检查结果
 ```
-<vault>/（桌面版默认 %APPDATA%/com.winagent.app/wiki，插件版默认 $DSH_HOME/winagent/wiki，可在设置中修改）
-├── raw/          📥 原始文件（你拥有，AI 只读）—— 拖拽/复制文件进来自动处理
-│   ├── articles/ clippings/ images/ pdfs/ notes/ personal/
-├── wiki/         📚 编译层（AI 维护，你可浏览/修正）
-│   ├── index.md  log.md  overview.md  QUESTIONS.md  ANALYSIS_TAGS.md（系统文件，自动维护）
-│   ├── sources/   每篇来源的摘要页（Summary/Key Points/Concepts/Contradictions）
-│   ├── concepts/  概念页（中文 title + aliases + Evolution Log + confidence）
-│   ├── entities/  实体页（人物/工具/机构/论文）
-│   └── synthesis/ outputs/ templates/
-└── outputs/      查询答案、lint 报告
-```
 
-### 使用方式
+备份时应复制整个 vault，包括 `.winagent/`；任务记录另存于数据目录的 `conversations/`。当前检索使用本地关键词索引；语义向量检索、自动 OCR、规范语义冲突消解与实际 DOCX/PDF 版式自动验收尚未实现。后台任务按用户点击恢复。
 
-- **剪藏**：把任何文档（PDF / PPTX / DOCX / XLSX / PPT / DOC / XLS / Markdown / 文本）拖进窗口 → 弹出分析要求弹窗 → AI 编译生成 sources/concepts/entities 页面（带进度条），并按你的要求定制分析（报告追加到来源页 `## Custom Analysis` 区块）。手动复制文件到 raw/ 目录也会被自动监视编译
-- **分析要求 Tag**：弹窗中可勾选历史分析 tag 快速复用常用分析方式——tag 由 AI 自动归纳（短标签 + 一句话模板），多选填入输入框后可继续编辑；也可点「直接编译入库」跳过定制分析、点「取消」放弃导入。Tag 存于 `wiki/ANALYSIS_TAGS.md`，可手动编辑/删除
-- **浏览**：点顶栏 📚 打开知识库面板——raw 层只读预览（不可变原则），wiki 层可编辑修正；文件树分层展示，中缝可拖拽调整宽度；量子粒子关系图谱可视化
-- **对话检索（自动 RAG）**：每轮提问系统自动检索知识库并注入相关笔记（标题/路径/confidence/摘要），AI 回答知识类问题优先依据库内知识、注明来源并溯源到 wiki/sources/ 具体来源页；注入不够详细时 AI 自动调用 `retrieve_knowledge` 深度检索（一次取多篇全文）或 `search_knowledge_base` 换关键词重试；未命中时明确告知「知识库中没有相关内容」再用自己的知识回答并标注
-- **记录问题**：说"我想搞清楚 X" → 加入 QUESTIONS.md 队列，之后摄入的新来源能回答时自动提示
-- **健康检查**：说"检查知识库" → LINT 10 项检查（frontmatter / broken links / 索引一致性 / stub / 近重复 / SHA-256 完整性 / stale / 别名重叠 / wikilink 格式 / 系统文件保护）
-- **综合分析**：说"综合分析知识库" → REFLECT 四阶段（反向检验 / 模式扫描 / 深度合成 / Gap Analysis）
-- **去重合并**：重复概念页 → AI 先与你确认方案再执行 MERGE（保留 redirect 页）
+开发验证：`npm run test:wiki`、`npm run test:output-limit`、`npm run test:conversations`、`npm run test:wiki-ui`、`npm run test:workbench-ui`、`npx tsc --noEmit`。界面测试在隔离的隐藏 Electron 窗口运行；模型测试使用离线响应，不消耗用户 API 额度。
 
-### 机制亮点
+### 输出 Token 上限
 
-- **概念对齐**：新来源提取的概念与已有概念页做 slug/aliases/语义匹配，命中则更新（Evolution Log 追加"强化/修正"），不重复建页
-- **定制分析**：拖入弹窗中输入的个性化分析要求注入 AI prompt（与契约 CLAUDE.md 同轨），报告逐条回应要求、不编造、引用原文注明位置
-- **分析要求 Tag 模板**：AI 把用户的要求归纳为「短标签 + 一句话模板」持久化到 ANALYSIS_TAGS.md，下次拖入弹窗直接勾选复用
-- **confidence 体系**：1 来源 low → 3+ medium → 5+ 弹窗由你确认后晋升 high（你的主动背书，非计数器输出）
-- **possibly_outdated**：来源超过 2 年自动标注
-- **SHA-256 完整性**：每篇来源记录哈希，LINT 检测 raw 文件是否被篡改
-- **个人写作**：放入 `raw/personal/` 的文章走个人写作流程（写入 My Position，不参与 confidence 计数）
+“设置 → 生成参数”默认启用自动检测。按服务商地址与模型读取公开的输出字段（包括 Google 原生模型的 `outputTokenLimit`），缺少字段时发送只要求回复 `OK` 的参数校验请求，不附带对话、资料或工具。检测可能产生一次极小的模型请求；成功响应会立即取消流。
+
+确认的上限回填最大输出 Tokens 并缓存一天；“重新检测”跳过缓存。无法确认时填入 `0`，实际请求不发送 `max_tokens`，交给 API 默认值。请求遇到明确的输出范围错误时重新记录上限并重试一次；网关连自身宣称的上限也拒绝时，重试使用服务端默认值。认证、配额和上下文超限不是输出上限，不会伪装为检测成功。
+
+### 开源代码来源
+
+工作台交互参考 [ZCode](https://github.com/zai-org/ZCode)，复用其侧面板标签溢出计算，并改编侧栏宽度保存、指针与键盘调整逻辑。固定来源版本及修改说明见 [第三方声明](third-party/ZCode/NOTICE.md)，Apache-2.0 许可证和上游声明随源码与 EXE 打包分发。WinAgent 的 Skills/MCP 页面使用本地工具注册表。
 
 ## 配置文件
 
@@ -289,10 +308,12 @@ PDF 附件（≤15MB）优先**文件直传**（provider 支持时，拒收自�
   ],
   "temperature": 0.3,
   "maxTokens": 4096,
+  "autoMaxTokens": true,     // 按 API / 模型检测并回填，未知时为 0（服务端默认）
   "autoApproveTools": false,
   "compactThresholdTokens": 24000,
   "keepRecentTurns": 6,
   "skillsDir": "skills",
+  "skillsDirs": [],         // 从 Skills 与 MCP 页面追加的技能目录
   "mcpConfigPath": "mcp.json",
   "petPrompt": "…",          // 人设提示词（纯人设；工具清单与执行规则由系统动态拼接，勿写进人设）
   "knowledgeRag": {
@@ -342,6 +363,16 @@ WinAgent 拥有较高系统权限（删文件、改注册表、执行命令、�
 
 **API Key 存储**：`config.json` 中的 `apiKey` 以明文保存于用户私有数据目录（桌面版 `%APPDATA%/com.winagent.app/`，插件版 `$DSH_HOME/winagent/`），均为本机当前用户的私有位置，请勿分享该目录或 config.json。旧版 DPAPI 密文（`enc:v1:` 前缀）加载时自动清空，需重填一次。
 
+## 故障排查：启动白屏
+
+v0.5.0 起界面渲染出错会显示报错面板，请把面板上的错误信息反馈到 Issues。若窗口仍是纯白（错误发生在界面之外，如主进程或预加载脚本），在项目目录执行以下命令获取渲染进程日志：
+
+```bash
+npx electron . --enable-logging=stderr --v=0
+```
+
+输出中 `CONSOLE(...)` 与 `Uncaught` 开头的行即为报错原因。
+
 ## 技术栈
 
 **Electron** + TypeScript + React + Vite（electron-vite）+ TailwindCSS。桌面版主进程是精简编排层（窗口 + IPC + 数据目录），**全部业务逻辑（Agent 循环、53+ 工具、LLM Wiki、skills/MCP）复用 `dsh-plugin/` 服务层**（`dsh-winagent` file: 依赖）——一套 TS 代码同时服务桌面版与 DSH Web 插件。文档解析（PDF / PPTX / DOCX / XLSX）通过子进程调用插件自带解析脚本。
@@ -382,7 +413,22 @@ npx tsc -p tsconfig.json   # 或仓库根目录 npm run plugin:build
 
 ## 更新日志
 
-### v4.5（2026-09-26）
+### v0.5.0（2026-09-28）
+
+- 更正此前误标的 v4.5 / 4.5.0，桌面包与服务插件统一为 0.5.0。
+- 主界面改为 ZCode 风格侧栏工作台：助理、专题任务、Skills 与 MCP、Wiki 并列；助理固定聊天、专题独立聊天，历史和草稿支持恢复。
+- 新建专题任务自动生成标签；Wiki 文件可直接增删专题标签与删除资料。专题检索、规范和工具访问受标签范围限制。
+- Skills 目录支持追加和单目录导入，MCP 配置可直接编辑连接，现有工具按来源展示与搜索。
+- 自动检测 API / 模型输出上限并回填；明确范围错误更新缓存后重试，无法确认时使用服务端默认参数。
+- 重构 Wiki 为主界面内的资料、专题、规则与处理记录工作区，独立窗口也使用相同阅读组件，提问回到主会话。
+- 全文分块分析与原文证据校验，移除导入 6000 字符限制及固定少量概念空页；增加逐段缓存、截断自动细分、失败恢复、单任务取消。
+- 持久任务规范的编译、启停、任务匹配、每轮加载、版本快照和逐条检查；纯文本检查不通过时限一次修正。
+- 对话使用原文片段，支持固定资料、引用定位、选段提问与保存结论；加入 PDF 原版阅读及页码文本。
+- 模型列表请求使用 Electron 网络栈，保存前可测试当前填写的服务商配置，错误单独显示。
+- **修复启动白屏**：`wiki/ANALYSIS_TAGS.md` 以对象数组（`{tag, template}`）保存 tags，被当作笔记标签透传到知识工作区，`startsWith` 抛错导致整个主窗口白屏。服务层新增 `normalizeTags` 保证笔记 tags 恒为字符串数组（数字/布尔转字符串，对象丢弃），渲染层增加类型守卫。
+- **白屏兜底**：新增 `ErrorBoundary`，包在渲染根部与常驻挂载的知识工作区外层。此后任何界面渲染异常都会显示报错信息与「重试 / 重新加载窗口」按钮，不再表现为无提示的白屏；知识工作区出错仅影响面板本身，聊天不受影响。
+
+**此前同批次的朗读修复（原误标 v4.5，2026-09-26）**
 
 **朗读修复与缓存重播**
 - 修复点击朗读或试听时出现 `MEDIA_ELEMENT_ERROR: Media load rejected by URL safety check`：页面媒体策略允许语音使用的 `data:` 音频地址。
