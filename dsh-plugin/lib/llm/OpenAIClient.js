@@ -1,8 +1,15 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.setChatFetcher = setChatFetcher;
 exports.chatStream = chatStream;
 exports.fetchModels = fetchModels;
 const OutputLimit_1 = require("./OutputLimit");
+// 桌面宿主注入 Electron net.fetch 以沿用系统代理；插件宿主仍使用 Node fetch。
+// 用闭包延迟读取 global fetch，测试和其他宿主替换 global.fetch 时仍然生效。
+let chatFetcher = (url, init) => fetch(url, init);
+function setChatFetcher(fetcher) {
+    chatFetcher = fetcher || ((url, init) => fetch(url, init));
+}
 function chatUrl(p) {
     const base = p.baseUrl.replace(/\/$/, '');
     if (p.type === 'ollama')
@@ -145,12 +152,21 @@ async function request(provider, messages, opts, cb, thinking, retriedLimit = fa
     if (useStream)
         body.stream_options = { include_usage: true };
     applyThinking(body, thinking);
-    const res = await fetch(chatUrl(provider), {
-        method: 'POST',
-        headers: headers(provider),
-        body: JSON.stringify(body),
-        signal: opts.signal
-    });
+    const endpoint = chatUrl(provider);
+    let res;
+    try {
+        res = await chatFetcher(endpoint, {
+            method: 'POST',
+            headers: headers(provider),
+            body: JSON.stringify(body),
+            signal: opts.signal
+        });
+    }
+    catch (e) {
+        if (opts.signal?.aborted)
+            throw e;
+        throw modelNetworkError(e, endpoint);
+    }
     if (!res.ok) {
         const text = await res.text().catch(() => '');
         const upper = res.status === 400 ? (0, OutputLimit_1.parseOutputLimitError)(text) : null;

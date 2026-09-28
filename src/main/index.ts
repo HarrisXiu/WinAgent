@@ -702,6 +702,8 @@ if (!gotSingleInstanceLock) {
   })
 
   app.whenReady().then(async () => {
+    // 模型列表、输出上限和实际 LLM 请求使用同一 Electron 网络栈与系统代理。
+    services.setChatFetcher((url, init) => net.fetch(url, init))
     // 自定义协议（主题包素材）须在窗口加载前就绪
     registerSkinProtocol()
     try {

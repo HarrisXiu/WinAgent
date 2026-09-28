@@ -21,6 +21,9 @@ export interface StreamCallbacks {
     onContent?: (delta: string) => void;
     onReasoning?: (delta: string) => void;
 }
+type ChatFetcher = (url: string, init?: RequestInit) => Promise<Response>;
+export declare function setChatFetcher(fetcher?: ChatFetcher): void;
 export declare function chatStream(provider: ProviderConfig, messages: ChatMessage[], opts: ChatOptions, cb?: StreamCallbacks): Promise<ChatResult>;
 /** 拉取可用模型列表；桌面端可注入 Electron fetch，以遵循系统代理。 */
 export declare function fetchModels(provider: ProviderConfig, request?: (url: string, init?: RequestInit) => Promise<Response>): Promise<string[]>;
+export {};

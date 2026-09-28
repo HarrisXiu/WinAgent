@@ -1,7 +1,8 @@
 const {test}=require('node:test')
 const assert=require('node:assert/strict')
 const {detectOutputLimit,parseOutputLimitError,knownOutputLimit}=require('../dsh-plugin/lib/llm/OutputLimit')
-const {chatStream}=require('../dsh-plugin/lib/llm/OpenAIClient')
+const {chatStream,setChatFetcher}=require('../dsh-plugin/lib/llm/OpenAIClient')
+const {analyzeDetailed}=require('../dsh-plugin/lib/wiki/DetailedAnalysis')
 const provider=model=>({id:model,label:'test',type:'openai',baseUrl:'https://test.invalid/v1',apiKey:'test-key',model})
 test('output cap metadata is distinct from context size and cached per model',async()=>{
  const p=provider('metadata');let calls=0
@@ -46,4 +47,28 @@ test('invalid numeric options are never serialized as max_tokens null or zero',a
  const old=global.fetch
  global.fetch=async(_url,init)=>{assert.equal('max_tokens' in JSON.parse(init.body),false);return Response.json({choices:[{message:{content:'OK'}}]})}
  try{for(const maxTokens of [0,-1,NaN,Infinity,1.5])await chatStream(provider('invalid'),[],{temperature:0,maxTokens,stream:false})}finally{global.fetch=old}
+})
+test('Wiki document analysis uses the desktop fetcher instead of Node fetch',async()=>{
+ const old=global.fetch,p=provider('wiki-proxy');let calls=0
+ global.fetch=async()=>{throw Error('Node fetch must not run')}
+ setChatFetcher(async(url,init)=>{
+  calls++;assert.equal(url,'https://test.invalid/v1/chat/completions')
+  const body=JSON.parse(init.body)
+  assert.equal(body.messages[0].role,'system')
+  assert.match(body.messages[1].content,/APA文献引用书写格式\.doc/)
+  return Response.json({choices:[{message:{content:JSON.stringify({title:'APA',overview:'引用规范',markdown:'引用需保留作者和年份',quotes:['作者和年份']})},finish_reason:'stop'}]})
+ })
+ try{
+  const result=await analyzeDetailed(p,'APA文献引用书写格式.doc','引用需保留作者和年份。')
+  assert.equal(result.sections.length,1);assert.equal(calls,1)
+ }finally{setChatFetcher();global.fetch=old}
+})
+test('LLM connection errors identify proxy failure without exposing credentials',async()=>{
+ const p=provider('proxy-failure')
+ setChatFetcher(async()=>{throw new TypeError('fetch failed',{cause:new Error('net::ERR_PROXY_CONNECTION_FAILED')})})
+ try{
+  await assert.rejects(chatStream(p,[{role:'user',content:'hello'}],{temperature:0,maxTokens:100,stream:false}),e=>{
+   assert.match(e.message,/代理连接失败/);assert.ok(!e.message.includes(p.apiKey));return true
+  })
+ }finally{setChatFetcher()}
 })

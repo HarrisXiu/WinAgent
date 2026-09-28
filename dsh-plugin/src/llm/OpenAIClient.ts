@@ -33,6 +33,14 @@ export interface StreamCallbacks {
   onReasoning?: (delta: string) => void
 }
 
+type ChatFetcher = (url: string, init?: RequestInit) => Promise<Response>
+// 桌面宿主注入 Electron net.fetch 以沿用系统代理；插件宿主仍使用 Node fetch。
+// 用闭包延迟读取 global fetch，测试和其他宿主替换 global.fetch 时仍然生效。
+let chatFetcher: ChatFetcher = (url, init) => fetch(url, init)
+export function setChatFetcher(fetcher?: ChatFetcher): void {
+  chatFetcher = fetcher || ((url, init) => fetch(url, init))
+}
+
 function chatUrl(p: ProviderConfig): string {
   const base = p.baseUrl.replace(/\/$/, '')
   if (p.type === 'ollama') return `${base}/v1/chat/completions`
@@ -197,12 +205,19 @@ async function request(
   if (useStream) body.stream_options = { include_usage: true }
   applyThinking(body, thinking)
 
-  const res = await fetch(chatUrl(provider), {
-    method: 'POST',
-    headers: headers(provider),
-    body: JSON.stringify(body),
-    signal: opts.signal
-  })
+  const endpoint = chatUrl(provider)
+  let res: Response
+  try {
+    res = await chatFetcher(endpoint, {
+      method: 'POST',
+      headers: headers(provider),
+      body: JSON.stringify(body),
+      signal: opts.signal
+    })
+  } catch (e) {
+    if (opts.signal?.aborted) throw e
+    throw modelNetworkError(e, endpoint)
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => '')

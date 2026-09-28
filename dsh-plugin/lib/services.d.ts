@@ -17,7 +17,7 @@ export { GraphEngine } from './wiki/GraphEngine';
 export { AiPipeline } from './wiki/AiPipeline';
 export { runLint, runMerge, runReflect, runQuery } from './wiki/WorkflowService';
 export { createWikiTools } from './tools/wikiTools';
-export { fetchModels, chatStream } from './llm/OpenAIClient';
+export { fetchModels, chatStream, setChatFetcher } from './llm/OpenAIClient';
 export { detectOutputLimit, knownOutputLimit, outputLimitKey, setOutputLimitObserver } from './llm/OutputLimit';
 export { VoiceService } from './voice/VoiceService';
 export { VoiceStore } from './voice/VoiceStore';
