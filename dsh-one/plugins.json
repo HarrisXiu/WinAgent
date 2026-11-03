@@ -1,0 +1,426 @@
+[
+  {
+    "id": "office",
+    "package": "dsh-winagent-office",
+    "title": "Office 文档",
+    "tools": [
+      "winagent_markdown_to_docx",
+      "winagent_write_xlsx",
+      "winagent_write_pptx",
+      "winagent_office_convert",
+      "winagent_read_docx",
+      "winagent_read_pptx",
+      "winagent_read_xlsx"
+    ],
+    "skills": [
+      {
+        "directory": "docx",
+        "name": "read_docx",
+        "entry": "read_docx.js",
+        "runtime": "node"
+      },
+      {
+        "directory": "pptx",
+        "name": "read_pptx",
+        "entry": "read_pptx.js",
+        "runtime": "node"
+      },
+      {
+        "directory": "xlsx",
+        "name": "read_xlsx",
+        "entry": "read_xlsx.js",
+        "runtime": "node"
+      }
+    ],
+    "sourceFiles": [
+      "config/ConfigStore.ts",
+      "docx/DocxBuilder.ts",
+      "platform.ts",
+      "shared/types.ts",
+      "skills/SkillLoader.ts",
+      "tools/officeTools.ts",
+      "tools/types.ts",
+      "util/Logger.ts",
+      "util/capabilities.ts",
+      "util/powershell.ts"
+    ],
+    "origins": [
+      "WinAgent/dsh-plugin/src/config/ConfigStore.ts",
+      "WinAgent/dsh-plugin/src/docx/DocxBuilder.ts",
+      "WinAgent/dsh-plugin/src/platform.ts",
+      "WinAgent/dsh-plugin/src/shared/types.ts",
+      "WinAgent/dsh-plugin/src/skills/SkillLoader.ts",
+      "WinAgent/dsh-plugin/src/tools/officeTools.ts",
+      "WinAgent/dsh-plugin/src/tools/types.ts",
+      "WinAgent/dsh-plugin/src/util/Logger.ts",
+      "WinAgent/dsh-plugin/src/util/capabilities.ts",
+      "WinAgent/dsh-plugin/src/util/powershell.ts"
+    ],
+    "runtime": "Node.js 22"
+  },
+  {
+    "id": "pdf",
+    "package": "dsh-winagent-pdf",
+    "title": "PDF 阅读与视觉",
+    "tools": [
+      "winagent_read_pdf",
+      "winagent_render_pdf_page",
+      "winagent_extract_pdf_images"
+    ],
+    "skills": [
+      {
+        "directory": "pdf",
+        "name": "read_pdf",
+        "entry": "read_pdf.js",
+        "runtime": "node"
+      },
+      {
+        "directory": "pdf-render",
+        "name": "render_pdf_page",
+        "entry": "render_pdf_page.js",
+        "runtime": "node"
+      },
+      {
+        "directory": "pdf-images",
+        "name": "extract_pdf_images",
+        "entry": "extract_pdf_images.js",
+        "runtime": "node"
+      }
+    ],
+    "sourceFiles": [
+      "config/ConfigStore.ts",
+      "platform.ts",
+      "shared/types.ts",
+      "skills/SkillLoader.ts",
+      "tools/types.ts",
+      "util/Logger.ts"
+    ],
+    "origins": [
+      "WinAgent/dsh-plugin/src/config/ConfigStore.ts",
+      "WinAgent/dsh-plugin/src/platform.ts",
+      "WinAgent/dsh-plugin/src/shared/types.ts",
+      "WinAgent/dsh-plugin/src/skills/SkillLoader.ts",
+      "WinAgent/dsh-plugin/src/tools/types.ts",
+      "WinAgent/dsh-plugin/src/util/Logger.ts"
+    ],
+    "runtime": "Node.js 22"
+  },
+  {
+    "id": "files",
+    "package": "dsh-winagent-files",
+    "title": "文件与目录",
+    "tools": [
+      "winagent_list_directory",
+      "winagent_read_file",
+      "winagent_write_file",
+      "winagent_edit_file",
+      "winagent_multi_edit_file",
+      "winagent_delete_file",
+      "winagent_copy_file",
+      "winagent_move_file",
+      "winagent_search_files",
+      "winagent_find_files",
+      "winagent_get_file_info",
+      "winagent_create_directory",
+      "winagent_grep"
+    ],
+    "skills": [],
+    "sourceFiles": [
+      "shared/types.ts",
+      "tools/fileTools.ts",
+      "tools/types.ts"
+    ],
+    "origins": [
+      "WinAgent/dsh-plugin/src/shared/types.ts",
+      "WinAgent/dsh-plugin/src/tools/fileTools.ts",
+      "WinAgent/dsh-plugin/src/tools/types.ts"
+    ],
+    "runtime": "Node.js 22"
+  },
+  {
+    "id": "system",
+    "package": "dsh-winagent-system",
+    "title": "Windows 系统",
+    "tools": [
+      "winagent_list_processes",
+      "winagent_kill_process",
+      "winagent_run_command",
+      "winagent_get_system_info",
+      "winagent_take_screenshot",
+      "winagent_list_startup_items",
+      "winagent_add_startup_item",
+      "winagent_remove_startup_item"
+    ],
+    "skills": [],
+    "sourceFiles": [
+      "shared/types.ts",
+      "tools/systemTools.ts",
+      "tools/types.ts",
+      "util/powershell.ts"
+    ],
+    "origins": [
+      "WinAgent/dsh-plugin/src/shared/types.ts",
+      "WinAgent/dsh-plugin/src/tools/systemTools.ts",
+      "WinAgent/dsh-plugin/src/tools/types.ts",
+      "WinAgent/dsh-plugin/src/util/powershell.ts"
+    ],
+    "runtime": "Node.js 22"
+  },
+  {
+    "id": "registry",
+    "package": "dsh-winagent-registry",
+    "title": "Windows 注册表",
+    "tools": [
+      "winagent_registry_list",
+      "winagent_registry_read",
+      "winagent_registry_write",
+      "winagent_registry_delete_value",
+      "winagent_registry_delete_key"
+    ],
+    "skills": [],
+    "sourceFiles": [
+      "shared/types.ts",
+      "tools/registryTools.ts",
+      "tools/types.ts",
+      "util/powershell.ts"
+    ],
+    "origins": [
+      "WinAgent/dsh-plugin/src/shared/types.ts",
+      "WinAgent/dsh-plugin/src/tools/registryTools.ts",
+      "WinAgent/dsh-plugin/src/tools/types.ts",
+      "WinAgent/dsh-plugin/src/util/powershell.ts"
+    ],
+    "runtime": "Node.js 22"
+  },
+  {
+    "id": "input",
+    "package": "dsh-winagent-input",
+    "title": "键盘与鼠标",
+    "tools": [
+      "winagent_mouse_move",
+      "winagent_mouse_click",
+      "winagent_mouse_scroll",
+      "winagent_key_press",
+      "winagent_key_combination",
+      "winagent_type_text",
+      "winagent_get_cursor_pos",
+      "winagent_get_screen_size"
+    ],
+    "skills": [],
+    "sourceFiles": [
+      "shared/types.ts",
+      "tools/inputTools.ts",
+      "tools/types.ts",
+      "util/powershell.ts"
+    ],
+    "origins": [
+      "WinAgent/dsh-plugin/src/shared/types.ts",
+      "WinAgent/dsh-plugin/src/tools/inputTools.ts",
+      "WinAgent/dsh-plugin/src/tools/types.ts",
+      "WinAgent/dsh-plugin/src/util/powershell.ts"
+    ],
+    "runtime": "Node.js 22"
+  },
+  {
+    "id": "windows",
+    "package": "dsh-winagent-windows",
+    "title": "窗口管理",
+    "tools": [
+      "winagent_find_windows",
+      "winagent_set_window_state",
+      "winagent_bring_window_to_front",
+      "winagent_close_window"
+    ],
+    "skills": [],
+    "sourceFiles": [
+      "shared/types.ts",
+      "tools/types.ts",
+      "tools/windowTools.ts",
+      "util/powershell.ts"
+    ],
+    "origins": [
+      "WinAgent/dsh-plugin/src/shared/types.ts",
+      "WinAgent/dsh-plugin/src/tools/types.ts",
+      "WinAgent/dsh-plugin/src/tools/windowTools.ts",
+      "WinAgent/dsh-plugin/src/util/powershell.ts"
+    ],
+    "runtime": "Node.js 22"
+  },
+  {
+    "id": "network",
+    "package": "dsh-winagent-network",
+    "title": "HTTP 网络",
+    "tools": [
+      "winagent_http_request",
+      "winagent_http_download"
+    ],
+    "skills": [],
+    "sourceFiles": [
+      "shared/types.ts",
+      "tools/httpTools.ts",
+      "tools/types.ts"
+    ],
+    "origins": [
+      "WinAgent/dsh-plugin/src/shared/types.ts",
+      "WinAgent/dsh-plugin/src/tools/httpTools.ts",
+      "WinAgent/dsh-plugin/src/tools/types.ts"
+    ],
+    "runtime": "Node.js 22"
+  },
+  {
+    "id": "wiki",
+    "package": "dsh-winagent-wiki",
+    "title": "Wiki 知识库",
+    "tools": [
+      "winagent_search_knowledge_base",
+      "winagent_retrieve_knowledge",
+      "winagent_read_note",
+      "winagent_list_notes",
+      "winagent_read_raw_file",
+      "winagent_add_question",
+      "winagent_save_knowledge_output",
+      "winagent_lint_knowledge_base",
+      "winagent_merge_knowledge_pages",
+      "winagent_reflect_knowledge_base",
+      "winagent_import_knowledge_files",
+      "winagent_import_knowledge_url"
+    ],
+    "skills": [],
+    "sourceFiles": [
+      "config/ConfigStore.ts",
+      "event-bus.ts",
+      "llm/OpenAIClient.ts",
+      "llm/OutputLimit.ts",
+      "llm/TaskChat.ts",
+      "platform.ts",
+      "shared/types.ts",
+      "tools/types.ts",
+      "tools/wikiTools.ts",
+      "util/Logger.ts",
+      "wiki/AiPipeline.ts",
+      "wiki/DetailedAnalysis.ts",
+      "wiki/GraphEngine.ts",
+      "wiki/IngestionService.ts",
+      "wiki/RuleService.ts",
+      "wiki/SearchIndex.ts",
+      "wiki/VaultManager.ts",
+      "wiki/WorkflowService.ts",
+      "wiki/WorkspaceStore.ts",
+      "wiki/contract.ts",
+      "wiki/slug.ts",
+      "wiki/wiki-host.ts"
+    ],
+    "origins": [
+      "WinAgent/dsh-plugin/src/config/ConfigStore.ts",
+      "WinAgent/dsh-plugin/src/event-bus.ts",
+      "WinAgent/dsh-plugin/src/llm/OpenAIClient.ts",
+      "WinAgent/dsh-plugin/src/llm/OutputLimit.ts",
+      "WinAgent/dsh-plugin/src/llm/TaskChat.ts",
+      "WinAgent/dsh-plugin/src/platform.ts",
+      "WinAgent/dsh-plugin/src/shared/types.ts",
+      "WinAgent/dsh-plugin/src/tools/types.ts",
+      "WinAgent/dsh-plugin/src/tools/wikiTools.ts",
+      "WinAgent/dsh-plugin/src/util/Logger.ts",
+      "WinAgent/dsh-plugin/src/wiki/AiPipeline.ts",
+      "WinAgent/dsh-plugin/src/wiki/DetailedAnalysis.ts",
+      "WinAgent/dsh-plugin/src/wiki/GraphEngine.ts",
+      "WinAgent/dsh-plugin/src/wiki/IngestionService.ts",
+      "WinAgent/dsh-plugin/src/wiki/RuleService.ts",
+      "WinAgent/dsh-plugin/src/wiki/SearchIndex.ts",
+      "WinAgent/dsh-plugin/src/wiki/VaultManager.ts",
+      "WinAgent/dsh-plugin/src/wiki/WorkflowService.ts",
+      "WinAgent/dsh-plugin/src/wiki/WorkspaceStore.ts",
+      "WinAgent/dsh-plugin/src/wiki/contract.ts",
+      "WinAgent/dsh-plugin/src/wiki/slug.ts",
+      "WinAgent/dsh-plugin/src/wiki/wiki-host.ts"
+    ],
+    "runtime": "Node.js 22"
+  },
+  {
+    "id": "voice",
+    "package": "dsh-winagent-voice",
+    "title": "语音与克隆音色",
+    "tools": [
+      "winagent_speak_text",
+      "winagent_list_voice_clones",
+      "winagent_add_voice_clone"
+    ],
+    "skills": [],
+    "sourceFiles": [
+      "config/ConfigStore.ts",
+      "event-bus.ts",
+      "shared/types.ts",
+      "util/Logger.ts",
+      "voice/MimoTtsClient.ts",
+      "voice/SpeechSession.ts",
+      "voice/VoiceService.ts",
+      "voice/VoiceStore.ts",
+      "voice/segment.ts"
+    ],
+    "origins": [
+      "WinAgent/dsh-plugin/src/config/ConfigStore.ts",
+      "WinAgent/dsh-plugin/src/event-bus.ts",
+      "WinAgent/dsh-plugin/src/shared/types.ts",
+      "WinAgent/dsh-plugin/src/util/Logger.ts",
+      "WinAgent/dsh-plugin/src/voice/MimoTtsClient.ts",
+      "WinAgent/dsh-plugin/src/voice/SpeechSession.ts",
+      "WinAgent/dsh-plugin/src/voice/VoiceService.ts",
+      "WinAgent/dsh-plugin/src/voice/VoiceStore.ts",
+      "WinAgent/dsh-plugin/src/voice/segment.ts"
+    ],
+    "runtime": "Node.js 22"
+  },
+  {
+    "id": "extensions",
+    "package": "dsh-winagent-extensions",
+    "title": "Skills 与 MCP 扩展",
+    "tools": [
+      "winagent_hello_skill"
+    ],
+    "skills": [
+      {
+        "directory": "hello",
+        "name": "hello_skill",
+        "entry": "index.js",
+        "runtime": "node"
+      }
+    ],
+    "sourceFiles": [
+      "config/ConfigStore.ts",
+      "mcp/McpManager.ts",
+      "platform.ts",
+      "shared/types.ts",
+      "skills/SkillLoader.ts",
+      "tools/types.ts",
+      "util/Logger.ts"
+    ],
+    "origins": [
+      "WinAgent/dsh-plugin/src/config/ConfigStore.ts",
+      "WinAgent/dsh-plugin/src/mcp/McpManager.ts",
+      "WinAgent/dsh-plugin/src/platform.ts",
+      "WinAgent/dsh-plugin/src/shared/types.ts",
+      "WinAgent/dsh-plugin/src/skills/SkillLoader.ts",
+      "WinAgent/dsh-plugin/src/tools/types.ts",
+      "WinAgent/dsh-plugin/src/util/Logger.ts"
+    ],
+    "runtime": "Node.js 22"
+  },
+  {
+    "id": "office2pdf",
+    "package": "dsh-winagent-office2pdf",
+    "title": "office2PDF 批量处理",
+    "tools": [
+      "winagent_office2pdf_convert",
+      "winagent_office2pdf_inspect"
+    ],
+    "skills": [],
+    "sourceFiles": [],
+    "origins": [
+      "office2PDF/conversion_core.py",
+      "office2PDF/desktop_service.py",
+      "office2PDF/office_backend.py",
+      "office2PDF/blank_pages.py"
+    ],
+    "runtime": "Node.js 22 + Windows Python 3 + pywin32"
+  }
+]
