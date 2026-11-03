@@ -16,5 +16,10 @@ win:
         - x64
   icon: build/icon.ico
   artifactName: WinAgent-${version}-win64.exe
-compression: maximum
+portable:
+  # 解压阶段启动图（portable 每次双击都要先解压，Electron 还没起来）：
+  # 由 scripts/build-splash.cjs 从 src/main/splash.html 渲染，与运行时启动窗同款
+  splashImage: build/splash.bmp
+# normal 而非 maximum：portable 每次启动都要解压，maximum 解压明显更慢，体积仅略小
+compression: normal
 npmRebuild: false

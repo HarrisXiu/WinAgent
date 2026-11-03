@@ -19,3 +19,8 @@ Angelina/
 
 # Tauri build artifacts
 src-tauri/target/
+
+# 可重新生成的产物
+dsh-one/*/
+build/splash.bmp
+build/icon-candidates/

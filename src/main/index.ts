@@ -12,6 +12,7 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, nativeTheme, protocol, net } from 'electron'
 import { promises as fs } from 'fs'
 import path from 'path'
+import { closeSplash, createSplashWindow, getSplashWindow, setSplashStage } from './splash'
 
 // ── 1. 数据目录：必须先于服务层加载设置（服务层 Logger 单例在 import 时按数据目录构造）──
 // 显式沿用 Tauri 时代的数据目录（com.winagent.app 下已有用户的 config.json 与 wiki vault）；
@@ -109,10 +110,17 @@ function resolveThemeMode(cfg: AppConfig): 'light' | 'dark' {
   return cfg.theme.mode
 }
 
-/** 窗口启动背景色（与 body 首帧一致，避免启动闪色） */
+/** 窗口启动背景色（与 index.css 的 --bg 首帧一致，避免启动闪色） */
 function windowBackground(): string {
   try {
-    return resolveThemeMode(core!.store.get()) === 'dark' ? '#181824' : '#fff8f4'
+    const cfg = core!.store.get()
+    const accent = String(cfg.theme.accent).toLowerCase()
+    const accent2 = String(cfg.theme.accent2).toLowerCase()
+    const classic = accent === '#f4719c' && accent2 === '#6db7d9'
+    const coral = accent === '#e0603f' && accent2 === '#f0a04b'
+    return resolveThemeMode(cfg) === 'dark'
+      ? classic ? '#181824' : coral ? '#1e1b1a' : '#171d28'
+      : classic || coral ? '#fff8f4' : '#f5f7fb'
   } catch {
     return '#fff8f4'
   }
@@ -127,6 +135,8 @@ function createWindow(): void {
     backgroundColor: windowBackground(),
     title: 'WinAgent',
     autoHideMenuBar: true,
+    // 先隐藏：首帧绘制完成（ready-to-show）后再显示并淡出启动窗，避免白屏空窗期
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -144,6 +154,17 @@ function createWindow(): void {
   mainWindow.webContents.on('will-navigate', (e) => {
     e.preventDefault()
   })
+
+  // 首帧就绪即显示；兜底 15s（渲染层异常时也要让窗口出来，由 ErrorBoundary 展示错误而不是一直卡在启动窗）
+  let revealed = false
+  const reveal = (): void => {
+    if (revealed || !mainWindow || mainWindow.isDestroyed()) return
+    revealed = true
+    mainWindow.show()
+    closeSplash()
+  }
+  mainWindow.once('ready-to-show', reveal)
+  setTimeout(reveal, 15000)
 
   if (process.env.ELECTRON_RENDERER_URL) {
     loadDevUrl(process.env.ELECTRON_RENDERER_URL)
@@ -254,48 +275,134 @@ function startBusForwarding(): void {
 // ── 4. IPC 通道（与 preload 的 window.winagent API 一一对应）──
 
 function registerIpc(): void {
-  const conversations = new services.ConversationStore(path.join(services.getDataDir(), 'conversations'))
+  const conversationsDir = path.join(services.getDataDir(), 'conversations')
+  const conversations = new services.ConversationStore(conversationsDir)
+  type SessionState = import('dsh-winagent/services').AgentSessionState
+  type KnowledgeContext = import('dsh-winagent/services').KnowledgeContext
+  // 「查看」与「运行」分离：Agent 只有一份内存会话（属于 sessionOwner），但界面可以在任务
+  // 运行时切去看别的对话——后台任务照常跑完。对其他对话发送/清空/压缩前才懒加载其会话。
   let activeConversation = ''
   let activeConversationKind: 'assistant' | 'topic' = 'assistant'
   let activeTopicTag = ''
+  let sessionOwner = ''
   let detectingRequest = 0
-  ipcMain.handle('chats:list', () => conversations.list())
+  // exportSession 返回内存会话本身的引用（history 会被原地 push），留存一律深拷贝
+  const emptyState: SessionState = structuredClone(core!.agent.exportSession())
+  const blankState = (): SessionState => structuredClone(emptyState)
+  const agentBusy = (): boolean => core!.agent.isBusy() || !!detectingRequest
+  const ensureActiveSession = async (): Promise<void> => {
+    if (sessionOwner === activeConversation) return
+    if (agentBusy()) throw new Error('另一个任务正在后台运行，请等它完成后再操作当前对话')
+    let state: SessionState | undefined
+    try { state = (await conversations.read(activeConversation)).state } catch { /* 新对话无存档 */ }
+    core!.agent.restoreSession(state)
+    sessionOwner = activeConversation
+  }
+  /** 最近一次发送前的会话快照：「重新生成」回滚到此处再按原问题重跑（仅本次启动内有效） */
+  let lastSend: { conversation: string; state: SessionState; text: string; attachments?: any[]; context?: KnowledgeContext } | null = null
+
+  // 归档标记作为附加字段存在对话记录里（服务层 ConversationStore 的摘要不含它，这里补读）
+  // TODO(dsh-plugin 暂停中)：归档字段、删除、Wiki 标签批量改名/移除应下沉到 ConversationStore / WikiHost
+  // （服务层 writeNote 只重写固定 frontmatter 字段；下沉时改为只动 tags 的定向改写）
+  type TopicRecord = import('dsh-winagent/services').SavedConversation & { archived?: boolean }
+  ipcMain.handle('chats:list', async () => Promise.all((await conversations.list()).map(async (s) => {
+    try { return { ...s, archived: !!((await conversations.read(s.id)) as TopicRecord).archived } } catch { return s }
+  })))
   ipcMain.handle('chats:open', async (_e, id: string) => {
-    if (core!.agent.isBusy() || detectingRequest) throw new Error('请等待当前任务结束后切换')
     const key = id || 'assistant'
     let record: import('dsh-winagent/services').SavedConversation | null = null
     try { record = await conversations.read(key) } catch (e: any) { if (e.code !== 'ENOENT' || key !== 'assistant') throw e }
     if (record?.kind === 'topic' && !record.topicTag?.startsWith('专题:')) throw new Error('专题任务缺少有效标签，无法打开')
-    core!.agent.restoreSession(record?.state)
     activeConversation = key
     activeConversationKind = record?.kind === 'topic' ? 'topic' : 'assistant'
     activeTopicTag = activeConversationKind === 'topic' ? record?.topicTag || '' : ''
+    // 空闲时立即切换内存会话；运行中只切换「查看」，内存会话留给后台任务
+    if (!agentBusy()) {
+      core!.agent.restoreSession(record?.state)
+      sessionOwner = key
+    }
     if (!record) {
-      record = { id: key, title: '助理', kind: 'assistant', updated: new Date().toISOString(), turns: [], state: core!.agent.exportSession(), context: { mode: 'auto', paths: [] } }
+      record = { id: key, title: '助理', kind: 'assistant', updated: new Date().toISOString(), turns: [], state: blankState(), context: { mode: 'auto', paths: [] } }
       await conversations.write(record)
     }
     return record
   })
-  ipcMain.handle('chats:createTopic', async (_e, title: string) => {
-    if (core!.agent.isBusy() || detectingRequest) throw new Error('请等待当前任务结束后新建专题')
+  /** 专题名规范化 + 校验（新建与重命名共用）；exceptId = 重命名时排除自身 */
+  const checkTopicName = async (title: string, exceptId = ''): Promise<string> => {
     const name = String(title || '').trim().replace(/\s+/g, ' ')
     if (!name || name.length > 60 || /[\r\n]/.test(name)) throw new Error('请输入 1–60 字的专题名称')
-    if ((await conversations.list()).some(c => c.kind === 'topic' && c.title.toLowerCase() === name.toLowerCase())) throw new Error('专题名称已存在')
-    core!.agent.restoreSession()
+    if ((await conversations.list()).some(c => c.id !== exceptId && c.kind === 'topic' && c.title.toLowerCase() === name.toLowerCase())) throw new Error('专题名称已存在')
+    return name
+  }
+  /**
+   * 把 Wiki 中带 from 标签的文件改为 to（null = 移除该标签），返回改动文件数。
+   * 走与 Wiki 界面切换专题标签相同的 readNote + writeNote 路径，标签位置保持不变。
+   */
+  const retagWiki = async (from: string, to: string | null): Promise<number> => {
+    const notes = await wiki().getNotesByTag(from)
+    for (const meta of notes) {
+      const note = await wiki().readNote(meta.path)
+      const tags = [...new Set(note.tags.map((t) => (t === from ? to : t)).filter((t): t is string => !!t))]
+      await wiki().writeNote(meta.path, { title: note.title, body: note.rawBody, tags })
+      core!.bus.push('vaultChanged', { type: 'modify', path: meta.path })
+    }
+    return notes.length
+  }
+  const readTopic = async (id: string): Promise<TopicRecord> => {
+    const record = (await conversations.read(id)) as TopicRecord
+    if (record.kind !== 'topic' || !record.topicTag) throw new Error('只能操作专题任务')
+    return record
+  }
+  const assertNotRunning = (id: string, action: string): void => {
+    if (agentBusy() && sessionOwner === id) throw new Error(`该专题正在运行，请等待任务完成后再${action}`)
+  }
+  ipcMain.handle('chats:renameTopic', async (_e, id: string, title: string) => {
+    const record = await readTopic(id)
+    assertNotRunning(id, '重命名')
+    const name = await checkTopicName(title, id)
+    if (name === record.title) return { wikiFiles: 0 }
+    const oldTag = record.topicTag!
+    const newTag = `专题:${name}`
+    const next: TopicRecord = { ...record, title: name, topicTag: newTag }
+    await conversations.write(next)
+    if (activeConversation === id) activeTopicTag = newTag
+    // 对话先改名再同步 Wiki：即使个别文件写入失败，专题本身也已是新名字，可重试
+    return { wikiFiles: await retagWiki(oldTag, newTag) }
+  })
+  ipcMain.handle('chats:archiveTopic', async (_e, id: string, archived: boolean) => {
+    const next: TopicRecord = { ...(await readTopic(id)), archived: !!archived }
+    await conversations.write(next)
+  })
+  ipcMain.handle('chats:deleteTopic', async (_e, id: string, removeWikiTag: boolean) => {
+    const record = await readTopic(id)
+    assertNotRunning(id, '删除')
+    if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error('无效任务 ID')
+    await fs.rm(path.join(conversationsDir, `${id}.json`), { force: true })
+    if (sessionOwner === id) sessionOwner = ''
+    if (activeConversation === id) activeConversation = ''
+    if (lastSend?.conversation === id) lastSend = null
+    return { wikiFiles: removeWikiTag ? await retagWiki(record.topicTag!, null) : 0 }
+  })
+  ipcMain.handle('chats:createTopic', async (_e, title: string) => {
+    const name = await checkTopicName(title)
     const record: import('dsh-winagent/services').SavedConversation = {
       id: require('crypto').randomUUID(), title: name, kind: 'topic', topicTag: `专题:${name}`,
-      updated: new Date().toISOString(), turns: [], state: core!.agent.exportSession(), context: { mode: 'auto', paths: [] }
+      updated: new Date().toISOString(), turns: [], state: blankState(), context: { mode: 'auto', paths: [] }
     }
     await conversations.write(record)
     activeConversation = record.id; activeConversationKind = 'topic'; activeTopicTag = record.topicTag!
+    if (!agentBusy()) { core!.agent.restoreSession(); sessionOwner = record.id }
     return record
   })
-  ipcMain.handle('chats:save', async (_e, id: string, turns: any[], context?: import('dsh-winagent/services').KnowledgeContext, draft?: string) => {
-    if (id !== activeConversation) throw new Error('当前任务已切换，未覆盖其他任务')
-    const state = core!.agent.exportSession()
+  ipcMain.handle('chats:save', async (_e, id: string, turns: any[], context?: KnowledgeContext, draft?: string) => {
+    // 先同步取内存会话（在任何 await 之前），保证不与随后的 chats:open 交错
+    const live = id === sessionOwner && !core!.agent.isBusy() ? structuredClone(core!.agent.exportSession()) : null
     const existing = await conversations.read(id)
-    await conversations.write({ ...existing, updated: new Date().toISOString(), turns, state,
-      context: { mode: activeConversationKind === 'topic' ? 'auto' : context?.mode || 'auto', paths: activeConversationKind === 'topic' ? [] : context?.paths || [] }, draft })
+    const isTopic = existing.kind === 'topic'
+    await conversations.write({ ...existing, updated: new Date().toISOString(), turns, state: live || existing.state,
+      // context/draft 缺省 = 保留原值（后台任务结束时渲染层只回写 turns）
+      context: context ? { mode: isTopic ? 'auto' : context.mode || 'auto', paths: isTopic ? [] : context.paths || [] } : existing.context,
+      draft: draft ?? existing.draft })
   })
   services.setOutputLimitObserver(async (provider, limit) => {
     const cfg = core!.store.get()
@@ -415,10 +522,12 @@ function registerIpc(): void {
   })
 
   // === Agent ===
-  ipcMain.handle('agent:send', async (_e, text: string, attachments?: any[], context?: import('dsh-winagent/services').KnowledgeContext) => {
-    if (detectingRequest || core!.agent.isBusy()) throw new Error('当前任务仍在执行')
-    if (!activeConversation) throw new Error('请先打开助理或专题任务')
-    if (activeConversationKind === 'topic' && attachments?.length) throw new Error('专题任务只能使用带当前专题标签的 Wiki 文件；请先将文件导入 Wiki 并添加标签')
+  /** 在当前查看的对话上执行一轮（发送与重新生成共用）；结束后把会话落盘到所属对话 */
+  const runAgent = async (text: string, attachments?: any[], context?: KnowledgeContext): Promise<void> => {
+    const kind = activeConversationKind
+    const topicTag = activeTopicTag
+    const owner = sessionOwner
+    lastSend = { conversation: owner, state: structuredClone(core!.agent.exportSession()), text, attachments, context }
     const requestId = Date.now()
     detectingRequest = requestId
     if (core!.store.get().autoMaxTokens !== false) {
@@ -438,21 +547,53 @@ function registerIpc(): void {
     }
     if (detectingRequest !== requestId) return
     detectingRequest = 0
-    await core!.agent.process(text, {
-      onEvent: (e) => core!.bus.push('agentEvent', e),
-      confirmTool
-    }, attachments, activeConversationKind === 'topic' ? { mode: 'auto', paths: [], topicTag: activeTopicTag } : { mode: context?.mode, paths: context?.paths })
+    try {
+      await core!.agent.process(text, {
+        onEvent: (e) => core!.bus.push('agentEvent', e),
+        confirmTool
+      }, attachments, kind === 'topic' ? { mode: 'auto', paths: [], topicTag } : { mode: context?.mode, paths: context?.paths })
+    } finally {
+      // 界面可能已切走：主进程先把会话状态写回所属对话，turns 由渲染层随后回写
+      if (sessionOwner === owner && !core!.agent.isBusy()) {
+        try {
+          const record = await conversations.read(owner)
+          await conversations.write({ ...record, updated: new Date().toISOString(), state: structuredClone(core!.agent.exportSession()) })
+        } catch (e) { services.Logger.error('任务会话落盘失败: ' + String((e as Error)?.message || e)) }
+      }
+    }
+  }
+  ipcMain.handle('agent:send', async (_e, text: string, attachments?: any[], context?: KnowledgeContext) => {
+    if (agentBusy()) throw new Error('当前任务仍在执行')
+    if (!activeConversation) throw new Error('请先打开助理或专题任务')
+    if (activeConversationKind === 'topic' && attachments?.length) throw new Error('专题任务只能使用带当前专题标签的 Wiki 文件；请先将文件导入 Wiki 并添加标签')
+    await ensureActiveSession()
+    await runAgent(text, attachments, context)
+  })
+  ipcMain.handle('agent:regenerate', async () => {
+    if (agentBusy()) throw new Error('当前任务仍在执行')
+    const snap = lastSend
+    if (!snap || snap.conversation !== activeConversation || sessionOwner !== activeConversation) {
+      throw new Error('只能重新生成本次启动后、当前对话的最新回复')
+    }
+    core!.agent.restoreSession(structuredClone(snap.state))
+    await runAgent(snap.text, snap.attachments, snap.context)
   })
   ipcMain.handle('agent:stop', () => {
     detectingRequest = 0
     core!.agent.stop()
     clearPendingConfirms(false)
   })
-  ipcMain.handle('agent:reset', () => {
+  ipcMain.handle('agent:reset', async () => {
+    if (agentBusy()) throw new Error('任务执行中，无法清空对话')
+    await ensureActiveSession()
     core!.agent.reset()
+    lastSend = null
     clearPendingConfirms(false)
   })
   ipcMain.handle('agent:compact', async () => {
+    if (agentBusy()) throw new Error('任务执行中，无法压缩上下文')
+    await ensureActiveSession()
+    lastSend = null
     await core!.agent.compactNow({ onEvent: (e) => core!.bus.push('agentEvent', e), confirmTool })
   })
 
@@ -695,28 +836,35 @@ if (!gotSingleInstanceLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.focus()
+    // 主窗口尚未显示（仍在启动中）时聚焦启动窗
+    const target = mainWindow?.isVisible() ? mainWindow : getSplashWindow() || mainWindow
+    if (target) {
+      if (target.isMinimized()) target.restore()
+      target.focus()
     }
   })
 
   app.whenReady().then(async () => {
+    // 启动等待窗：ready 后第一件事，覆盖服务装配 + 主窗口首帧前的全部空窗期
+    createSplashWindow(services.getDataDir(), app.getVersion())
     // 模型列表、输出上限和实际 LLM 请求使用同一 Electron 网络栈与系统代理。
     services.setChatFetcher((url, init) => net.fetch(url, init))
     // 自定义协议（主题包素材）须在窗口加载前就绪
     registerSkinProtocol()
     try {
+      setSplashStage('正在加载配置、工具与知识库…')
       core = await services.createWinAgentCore()
       startBusForwarding()
       services.Logger.info('桌面版服务核心就绪')
     } catch (err) {
       services.Logger.error('服务核心装配失败: ' + String((err as Error)?.message || err))
+      closeSplash(true)
       dialog.showErrorBox('WinAgent 启动失败', String((err as Error)?.message || err))
       app.quit()
       return
     }
     registerIpc()
+    setSplashStage('正在打开主窗口…')
     createWindow()
   })
 

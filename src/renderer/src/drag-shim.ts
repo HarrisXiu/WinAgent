@@ -42,5 +42,7 @@ window.addEventListener('drop', (e) => {
   const paths = Array.from(e.dataTransfer?.files || [])
     .map((f) => window.winagent.filePath(f))
     .filter((p): p is string => !!p)
-  window.dispatchEvent(new CustomEvent('tauri:drop', { detail: { paths } }))
+  // zone：落点所在的放置区（主窗口拖放遮罩的 data-drop-zone），无则为 undefined（旧监听忽略即可）
+  const zone = (e.target as HTMLElement | null)?.closest?.('[data-drop-zone]')?.getAttribute('data-drop-zone') || undefined
+  window.dispatchEvent(new CustomEvent('tauri:drop', { detail: { paths, zone } }))
 })

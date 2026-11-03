@@ -1,0 +1,118 @@
+<!doctype html>
+<!--
+  启动等待窗模板（src/main/splash.ts 以 ?raw 内联，scripts/build-splash.cjs 渲染为 BMP）。
+  占位符：__THEME__ light|dark · __SCHEME__ 配色方案 · __ACCENT__/__ACCENT2__ 色值 · __VERSION__ 版本号 · __MODE__ live|static
+  live   = 透明无边框小窗里的圆角卡片（带阴影、转圈、阶段文案）
+  static = portable 解压阶段的整幅 BMP（无透明、无圆角）
+-->
+<html lang="zh-CN" class="__THEME__ __MODE__ scheme-__SCHEME__">
+<head>
+<meta charset="UTF-8" />
+<title>WinAgent</title>
+<style>
+  :root {
+    --accent: __ACCENT__;
+    --accent2: __ACCENT2__;
+    --card: rgba(255, 255, 255, 0.97);
+    --text: #3f3440;
+    --muted: #8f7985;
+    --line: rgba(0, 0, 0, 0.08);
+    --spoke: #3f3440;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 12px 32px rgba(0, 0, 0, 0.16);
+  }
+  .scheme-coral { --text: #241f1e; --muted: #968a86; --spoke: #241f1e; }
+  .scheme-ocean, .scheme-custom { --text: #1f2a3a; --muted: #64748b; --spoke: #1f2a3a; }
+  .dark {
+    --card: rgba(30, 30, 46, 0.97);
+    --text: #e2dce8;
+    --muted: #948aa0;
+    --line: rgba(255, 255, 255, 0.1);
+    --spoke: #e2dce8;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.5);
+  }
+  .dark.scheme-coral { --card: rgba(39, 35, 34, 0.97); --text: #f6f1ef; --muted: #a09692; --spoke: #f6f1ef; }
+  .dark.scheme-ocean, .dark.scheme-custom { --card: rgba(32, 41, 56, 0.97); --text: #f1f5f9; --muted: #94a3b8; --spoke: #f1f5f9; }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; cursor: default; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI Variable Display', 'Segoe UI',
+      'PingFang SC', 'Microsoft YaHei UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    color: var(--text);
+    display: flex; align-items: center; justify-content: center;
+    /* 整窗可拖动（无边框窗口） */
+    -webkit-app-region: drag;
+  }
+  .card {
+    width: 340px; height: 240px; box-sizing: border-box;
+    background: var(--card);
+    border-radius: 18px;
+    box-shadow: 0 0 0 0.5px var(--line), var(--shadow);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    animation: rise 0.45s cubic-bezier(0.25, 0.1, 0.25, 1) both;
+  }
+  .static body { background: var(--card); }
+  .static .card { width: 100%; height: 100%; border-radius: 0; box-shadow: none; animation: none; background: transparent; }
+  .static.light body { background: #fff8f4; }
+  .static.light.scheme-ocean body, .static.light.scheme-custom body { background: #f5f7fb; }
+  .static.dark body { background: #1e1e2e; }
+  .static.dark.scheme-coral body { background: #272322; }
+  .static.dark.scheme-ocean body, .static.dark.scheme-custom body { background: #202938; }
+
+  /* 应用图标：主色 squircle + 高光渐变（与侧栏品牌标识同形） */
+  .icon {
+    width: 64px; height: 64px; border-radius: 15px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 55%),
+      linear-gradient(135deg, var(--accent), var(--accent2));
+    box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.12), 0 4px 14px color-mix(in srgb, var(--accent) 35%, transparent);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .icon svg { width: 34px; height: 34px; fill: #fff; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.15)); }
+  h1 { margin: 16px 0 2px; font-size: 19px; font-weight: 600; letter-spacing: -0.02em; }
+  .ver { font-size: 11px; color: var(--muted); letter-spacing: 0.02em; }
+  .status { margin-top: 22px; height: 20px; display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--muted); }
+  #stage { transition: opacity 0.2s ease; }
+
+  /* macOS 活动指示器：12 根辐条依次渐隐 */
+  .spinner { position: relative; width: 18px; height: 18px; }
+  .spinner i {
+    position: absolute; left: 8px; top: 0; width: 2px; height: 5.5px; border-radius: 1px;
+    background: var(--spoke); transform-origin: 1px 9px;
+    animation: fade 1s linear infinite;
+  }
+  @keyframes fade { from { opacity: 0.85; } to { opacity: 0.12; } }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px) scale(0.985); } to { opacity: 1; transform: none; } }
+  .out .card { transition: opacity 0.2s ease, transform 0.2s ease; opacity: 0; transform: scale(0.985); }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M12 2.5c.55 4.9 4.1 8.45 9 9-4.9.55-8.45 4.1-9 9-.55-4.9-4.1-8.45-9-9 4.9-.55 8.45-4.1 9-9Z"/><path d="M19 2c.2 1.6 1.4 2.8 3 3-1.6.2-2.8 1.4-3 3-.2-1.6-1.4-2.8-3-3 1.6-.2 2.8-1.4 3-3Z" opacity=".75"/></svg>
+    </div>
+    <h1>WinAgent</h1>
+    <div class="ver">版本 __VERSION__</div>
+    <div class="status" role="status" aria-live="polite">
+      <div class="spinner" id="spinner"></div>
+      <span id="stage">正在启动…</span>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var sp = document.getElementById('spinner')
+      for (var i = 0; i < 12; i++) {
+        var s = document.createElement('i')
+        s.style.transform = 'rotate(' + i * 30 + 'deg)'
+        s.style.animationDelay = (i - 12) / 12 + 's'
+        sp.appendChild(s)
+      }
+      var stage = document.getElementById('stage')
+      if (document.documentElement.classList.contains('static')) stage.textContent = '正在准备运行环境…'
+      window.setStage = function (text) {
+        stage.style.opacity = '0'
+        setTimeout(function () { stage.textContent = text; stage.style.opacity = '1' }, 120)
+      }
+    })()
+  </script>
+</body>
+</html>

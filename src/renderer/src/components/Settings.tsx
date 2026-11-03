@@ -26,10 +26,30 @@ import {
 } from 'lucide-react'
 import type { AppConfig, ProviderConfig, ThemeConfig, SkinMeta, SkinSlot, ToolInfo, VoiceCloneMeta } from '../../../shared/types'
 import { useSpeech } from '../lib/useSpeech'
+import { COLOR_SCHEMES, matchColorScheme } from '../theme/colorSchemes'
 import avatarThumb from '../assets/angelina/avatar.png'
 
-/** 默认配色（品牌粉蓝，与改造前硬编码配色一致）；不含 skin——恢复配色不动主题包 */
-const DEFAULT_THEME: Omit<ThemeConfig, 'skin'> = { mode: 'light', accent: '#f4719c', accent2: '#6db7d9' }
+/** 原版粉蓝为默认方案；恢复配色不改变主题包。 */
+const DEFAULT_THEME: Omit<ThemeConfig, 'skin'> = {
+  mode: 'light', accent: COLOR_SCHEMES[0].accent, accent2: COLOR_SCHEMES[0].accent2
+}
+
+/**
+ * 其他强调色；三套完整方案在下方独立展示。
+ * 深色模式下的提亮由 derive.ts 按对比度自动处理，这里只存一份。
+ */
+const ACCENT_PRESETS: Array<{ name: string; accent: string; accent2: string }> = [
+  { name: '蓝色', accent: '#007aff', accent2: '#5856d6' },
+  { name: '靛蓝', accent: '#5856d6', accent2: '#af52de' },
+  { name: '紫色', accent: '#af52de', accent2: '#ff2d55' },
+  { name: '粉色', accent: '#ff2d55', accent2: '#ff9500' },
+  { name: '红色', accent: '#ff3b30', accent2: '#ff9500' },
+  { name: '橙色', accent: '#ff9500', accent2: '#ffcc00' },
+  { name: '黄色', accent: '#ffcc00', accent2: '#ff9500' },
+  { name: '绿色', accent: '#34c759', accent2: '#30b0c7' },
+  { name: '青色', accent: '#30b0c7', accent2: '#007aff' },
+  { name: '石墨', accent: '#8e8e93', accent2: '#636366' }
+]
 
 interface Props {
   onClose: () => void
@@ -249,13 +269,18 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
     onSaved(saved)
   }
 
-  // 主题修改：防抖 300ms 自动保存（拾色器拖拽不写盘，释放后生效；双窗口实时同步）
+  // 主题修改：防抖 300ms 自动保存（拾色器拖拽不写盘，释放后生效；双窗口经 config:changed 实时同步）。
+  // 只写 theme 一项、合并到已落盘的配置上：不能顺带保存其他分页里未点「保存」的修改；
+  // 也不调 onSaved——那是「保存并关闭」语义，调了会在改颜色 300ms 后把设置面板关掉。
   const updateTheme = (patch: Partial<ThemeConfig>): void => {
-    const next = { ...cfg, theme: { ...cfg.theme, ...patch } }
-    setCfg(next)
+    const theme = { ...cfg.theme, ...patch }
+    setCfg({ ...cfg, theme })
     clearTimeout(themeDebounceRef.current)
     themeDebounceRef.current = setTimeout(() => {
-      void window.winagent.saveConfig(next).then(onSaved)
+      void window.winagent
+        .getConfig()
+        .then((saved) => window.winagent.saveConfig({ ...saved, theme }))
+        .catch((e) => console.error('保存主题失败:', e))
     }, 300)
   }
 
@@ -1100,7 +1125,61 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                   </p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <span className="mb-2 block text-xs text-muted">配色方案</span>
+                  <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="配色方案">
+                    {COLOR_SCHEMES.map((scheme) => {
+                      const active = matchColorScheme(cfg.theme.accent, cfg.theme.accent2) === scheme.id
+                      return (
+                        <button
+                          key={scheme.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          aria-label={scheme.name}
+                          onClick={() => updateTheme({ accent: scheme.accent, accent2: scheme.accent2 })}
+                          className={`rounded-xl border p-2 text-left transition-colors ${active ? 'border-accent bg-accent/5' : 'border-border bg-panel hover:bg-surface'}`}
+                        >
+                          <span className="mb-2 block h-10 rounded-lg" style={{ background: `linear-gradient(120deg, ${scheme.accent}, ${scheme.accent2})` }} />
+                          <strong className="block text-xs font-medium text-text">{scheme.name}{scheme.id === 'classic' ? ' · 默认' : ''}</strong>
+                          <span className="block text-[10px] text-muted">{scheme.description}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <span className="mb-2 block text-xs text-muted">其他强调色</span>
+                  <div className="flex flex-wrap items-center gap-2.5" role="radiogroup" aria-label="强调色预设">
+                    {ACCENT_PRESETS.map((p) => {
+                      const active = cfg.theme.accent.toLowerCase() === p.accent && cfg.theme.accent2.toLowerCase() === p.accent2
+                      return (
+                        <button
+                          key={p.accent}
+                          role="radio"
+                          aria-checked={active}
+                          aria-label={p.name}
+                          title={p.name}
+                          onClick={() => updateTheme({ accent: p.accent, accent2: p.accent2 })}
+                          className={`relative h-6 w-6 rounded-full transition-transform hover:scale-110 ${
+                            active ? 'ring-2 ring-offset-2 ring-offset-panel' : ''
+                          }`}
+                          style={{ background: p.accent, ['--tw-ring-color' as string]: p.accent }}
+                        >
+                          {active && <Check className="absolute inset-0 m-auto h-3.5 w-3.5" style={{ color: p.accent === '#ffcc00' ? '#1d1d1f' : '#fff' }} strokeWidth={3} />}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-muted">
+                    {COLOR_SCHEMES.find((p) => p.id === matchColorScheme(cfg.theme.accent, cfg.theme.accent2))?.name || ACCENT_PRESETS.find((p) => p.accent === cfg.theme.accent.toLowerCase() && p.accent2 === cfg.theme.accent2.toLowerCase())?.name || '自定义'} · 选中项、按钮与链接使用强调色
+                  </p>
+                </div>
+
+                <details className="group rounded-xl border border-border px-3 py-2">
+                  <summary className="cursor-pointer select-none text-xs text-text-secondary">自定义颜色</summary>
+                <div className="mt-3 grid grid-cols-2 gap-3 pb-1">
                   <label className="block text-sm">
                     <span className="mb-1.5 block text-xs text-muted">主色 accent（按钮/高亮/链接）</span>
                     <div className="flex items-center gap-2">
@@ -1143,6 +1222,8 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                   </label>
                 </div>
 
+                </details>
+
                 {/* 实时预览卡片（内联 style 即时反馈，不等防抖） */}
                 <div className="rounded-xl border border-border bg-panel p-4">
                   <span className="mb-2 block text-xs text-muted">实时预览</span>
@@ -1182,7 +1263,7 @@ export default function Settings({ onClose, onSaved, initialTab, pickSkillsOnMou
                   className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-text-secondary transition-colors hover:bg-surface hover:text-accent"
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
-                  恢复默认配色（浅色 + 品牌粉蓝）
+                  恢复默认配色（浅色 + 经典粉蓝）
                 </button>
               </section>
             )}

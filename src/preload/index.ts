@@ -54,6 +54,8 @@ const api = {
 
   send: (text: string, attachments?: AttachmentData[], context?: KnowledgeContext): Promise<void> =>
     ipcRenderer.invoke('agent:send', text, attachments, context),
+  /** 回滚到最近一次发送前的会话快照，按原问题重新生成（仅本次启动内、当前对话最新回复） */
+  regenerate: (): Promise<void> => ipcRenderer.invoke('agent:regenerate'),
   stop: (): Promise<void> => ipcRenderer.invoke('agent:stop'),
   reset: (): Promise<void> => ipcRenderer.invoke('agent:reset'),
   compact: (): Promise<void> => ipcRenderer.invoke('agent:compact'),
@@ -61,7 +63,12 @@ const api = {
     list: (): Promise<import('../shared/types').ConversationSummary[]> => ipcRenderer.invoke('chats:list'),
     open: (id = ''): Promise<import('../shared/types').SavedConversation> => ipcRenderer.invoke('chats:open', id),
     createTopic: (title: string): Promise<import('../shared/types').SavedConversation> => ipcRenderer.invoke('chats:createTopic', title),
-    save: (id: string, turns: unknown[], context?: KnowledgeContext, draft?: string): Promise<void> => ipcRenderer.invoke('chats:save', id, turns, context, draft)
+    save: (id: string, turns: unknown[], context?: KnowledgeContext, draft?: string): Promise<void> => ipcRenderer.invoke('chats:save', id, turns, context, draft),
+    /** 重命名专题：Wiki 中「专题:旧名」标签同步改为「专题:新名」；返回改动的 Wiki 文件数 */
+    renameTopic: (id: string, title: string): Promise<{ wikiFiles: number }> => ipcRenderer.invoke('chats:renameTopic', id, title),
+    archiveTopic: (id: string, archived: boolean): Promise<void> => ipcRenderer.invoke('chats:archiveTopic', id, archived),
+    /** 删除专题；removeWikiTag=true 时一并从 Wiki 文件移除其标签 */
+    deleteTopic: (id: string, removeWikiTag: boolean): Promise<{ wikiFiles: number }> => ipcRenderer.invoke('chats:deleteTopic', id, removeWikiTag)
   },
 
   onEvent: (cb: (e: AgentEvent) => void): (() => void) => {

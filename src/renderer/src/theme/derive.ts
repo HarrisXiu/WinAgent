@@ -1,6 +1,7 @@
 import { colord, extend, type Colord } from 'colord'
 import a11yPlugin from 'colord/plugins/a11y'
 import mixPlugin from 'colord/plugins/mix'
+import { matchColorScheme } from './colorSchemes'
 
 extend([a11yPlugin, mixPlugin])
 
@@ -25,7 +26,27 @@ export interface DerivedTokens {
 }
 
 /** 深色模式背景（与 index.css [data-theme='dark'] --bg 一致） */
-const DARK_BG = colord('#181824')
+/** 原版粉蓝渐变是默认方案；与 ConfigStore 和 Settings 保持一致。 */
+export const DEFAULT_ACCENT = '#f4719c'
+export const DEFAULT_ACCENT2 = '#6db7d9'
+
+/**
+ * 三套方案各有同色温的表面与边框；自定义强调色使用冷灰中性色。
+ */
+const NEUTRALS = {
+  classic: {
+    light: { surface: '#fff2f6', surfaceHover: '#fce7f0', border: '#f5dfe8', borderStrong: '#f0cdda' },
+    dark: { surface: '#2b2632', surfaceHover: '#37303e', border: '#45384c', borderStrong: '#5c4a62' }
+  },
+  coral: {
+    light: { surface: '#faf2ed', surfaceHover: '#f4eae4', border: '#eee4de', borderStrong: '#dccfc8' },
+    dark: { surface: '#2e2927', surfaceHover: '#3a3432', border: '#3a3432', borderStrong: '#4a4340' }
+  },
+  ocean: {
+    light: { surface: '#f1f4f8', surfaceHover: '#e8edf4', border: '#e2e8f0', borderStrong: '#cbd5e1' },
+    dark: { surface: '#283242', surfaceHover: '#344154', border: '#39485a', borderStrong: '#516276' }
+  }
+}
 
 function triplet(c: Colord): ChannelTriplet {
   const { r, g, b } = c.toRgb()
@@ -33,7 +54,7 @@ function triplet(c: Colord): ChannelTriplet {
 }
 
 /**
- * 主色上的文字色：与白色对比 ≥ 2.6 选白（保留品牌粉 #f4719c 白字按钮的默认观感），
+ * 主色上的文字色：与白色对比 ≥ 2.6 选白（系统蓝/粉/橙等白字按钮保持 Apple 观感），
  * 否则选近黑。极端亮色（纯白/荧光）经此兜底为黑字，不会产生白底白字。
  */
 function fgFor(bg: Colord): ChannelTriplet {
@@ -60,23 +81,26 @@ export function deriveTokens(
   mode: 'light' | 'dark'
 ): DerivedTokens {
   const isDark = mode === 'dark'
-  let accent = colord(accentHex || '#f4719c')
-  let accent2 = colord(accent2Hex || '#6db7d9')
-  if (!accent.isValid()) accent = colord('#f4719c')
-  if (!accent2.isValid()) accent2 = colord('#6db7d9')
+  let accent = colord(accentHex || DEFAULT_ACCENT)
+  let accent2 = colord(accent2Hex || DEFAULT_ACCENT2)
+  if (!accent.isValid()) accent = colord(DEFAULT_ACCENT)
+  if (!accent2.isValid()) accent2 = colord(DEFAULT_ACCENT2)
+  const palette = matchColorScheme(accentHex, accent2Hex)
+  const scheme = palette === 'custom' ? 'ocean' : palette
+  const darkBg = { classic: '#181824', coral: '#1e1b1a', ocean: '#171d28' }[scheme]
 
   // 深色模式：提亮主色保证与背景对比度
   if (isDark) {
-    accent = ensureContrast(accent, DARK_BG)
-    accent2 = ensureContrast(accent2, DARK_BG)
+    accent = ensureContrast(accent, colord(darkBg))
+    accent2 = ensureContrast(accent2, colord(darkBg))
   }
 
-  const neutral = isDark ? colord('#000000') : colord('#ffffff')
-  // 表面/边框：主色向中性色混合（light 混白 / dark 混黑）
-  const surface = accent.mix(neutral, isDark ? 0.82 : 0.9)
-  const surfaceHover = accent.mix(neutral, isDark ? 0.76 : 0.82)
-  const border = accent.mix(neutral, isDark ? 0.68 : 0.78)
-  const borderStrong = accent.mix(neutral, isDark ? 0.6 : 0.68)
+  // 表面/边框：主色只混入少量，整体由方案中性色决定
+  const n = NEUTRALS[scheme][mode]
+  const surface = accent.mix(n.surface, 0.95)
+  const surfaceHover = accent.mix(n.surfaceHover, 0.94)
+  const border = accent.mix(n.border, 0.96)
+  const borderStrong = accent.mix(n.borderStrong, 0.95)
 
   // Wiki 图谱层：直接用用户主色（深色浮动底 + 主色节点，观感统一）
   const wikiAccent = isDark ? ensureContrast(accent, colord('#0a0a14'), 3) : accent

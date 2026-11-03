@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { AppConfig } from '../../../shared/types'
 import { deriveTokens, type DerivedTokens } from './derive'
+import { matchColorScheme } from './colorSchemes'
 
 /** 解析实际主题模式：auto 跟随系统亮暗（matchMedia，系统切换时自动响应） */
 export function resolveMode(cfg: AppConfig): 'light' | 'dark' {
@@ -20,6 +21,7 @@ function applyTheme(cfg: AppConfig): void {
   const mode = resolveMode(cfg)
   const root = document.documentElement
   root.setAttribute('data-theme', mode)
+  root.setAttribute('data-color-scheme', matchColorScheme(cfg.theme.accent, cfg.theme.accent2))
 
   const tokens = deriveTokens(cfg.theme.accent, cfg.theme.accent2, mode)
   const s = root.style

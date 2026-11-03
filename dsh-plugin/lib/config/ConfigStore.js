@@ -164,7 +164,7 @@ function defaultConfig() {
             topK: 3,
             minScore: 0.12
         },
-        // 主题：默认浅色 + 品牌粉蓝（与改造前硬编码配色一致）+ 无吉祥物的普通主题
+        // 主题：默认浅色 + 原版粉蓝渐变 + 无吉祥物的普通主题
         theme: {
             mode: 'light',
             accent: '#f4719c',

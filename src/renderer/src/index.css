@@ -6,38 +6,39 @@
 
 /* ============================================================
    主题令牌（RGB 通道格式：Tailwind 的 <alpha-value> 需要空格分隔通道）
+   设计语言：粉蓝渐变为默认；珊瑚与深海蓝各有配套中性色
    静态层：data-theme 决定的中性色（bg/text/muted/功能色）
    动态层：由用户 accent/accent2 经 colord 推导，ThemeProvider 以内联 style 覆盖
    ============================================================ */
 :root {
-  /* ---- 静态：背景与文字 ---- */
-  --bg: 255 248 244;          /* #fff8f4 暖白 */
-  --panel: 255 255 255;       /* #ffffff */
+  /* ---- 静态：原版粉蓝方案的背景与文字 ---- */
+  --bg: 255 248 244;         /* #fff8f4 暖白 */
+  --panel: 255 255 255;       /* #ffffff 内容面板 */
   --text: 63 52 64;           /* #3f3440 正文 */
   --text-secondary: 74 61 76; /* #4a3d4c 次级正文 */
-  --text-muted: 163 141 151;  /* #a38d97 弱化文字 */
-  /* ---- 动态：由 accent/accent2 推导（此处为默认粉蓝的推导结果） ---- */
-  --accent: 244 113 156;      /* #f4719c 主色 */
+  --text-muted: 143 121 133;  /* #8f7985 弱化文字 */
+  /* ---- 动态：由 accent/accent2 推导（这里是默认粉蓝的首帧值） ---- */
+  --accent: 244 113 156;      /* #f4719c 粉 */
   --accent-fg: 255 255 255;   /* 主色上的文字色（自动黑白） */
-  --accent2: 109 183 217;     /* #6db7d9 辅色 */
-  --accent2-fg: 255 255 255;
-  --surface: 255 242 246;     /* #fff2f6 浅粉面板（accent 混白 90%） */
-  --surface-hover: 252 231 240; /* #fce7f0 hover 态（accent 混白 82%） */
-  --border: 245 223 232;      /* #f5dfe8 边框 */
-  --border-strong: 240 205 218; /* #f0cdda 强边框/滚动条 */
-  --glow: 244 113 156;        /* 主色光晕（accent） */
-  /* ---- 功能色 ---- */
-  --danger: 239 68 68;        /* red-500 */
-  --warning: 217 119 6;       /* amber-600 */
-  --info: 34 211 238;         /* cyan-400 */
-  --success: 34 197 94;       /* green-500 */
-  --purple: 168 85 247;       /* purple-500 */
+  --accent2: 109 183 217;     /* #6db7d9 蓝 */
+  --accent2-fg: 17 17 17;
+  --surface: 255 242 246;
+  --surface-hover: 252 231 240;
+  --border: 245 223 232;
+  --border-strong: 240 205 218;
+  --glow: 244 113 156;
+  /* ---- 功能色（Apple 高对比版本：浅底文字与白字按钮均可读） ---- */
+  --danger: 215 0 21;         /* #d70015 */
+  --warning: 201 52 0;        /* #c93400 */
+  --info: 0 113 164;          /* #0071a4 */
+  --success: 36 138 61;       /* #248a3d */
+  --purple: 137 68 171;       /* #8944ab */
   /* ---- Markdown 正文专用 ---- */
-  --md-pre-bg: 253 248 249;   /* #fdf8f9 代码块底 */
-  --md-inline-code: 209 79 131; /* #d14f83 行内代码文字 */
-  --md-link: 74 159 199;      /* #4a9fc7 链接 */
-  --md-quote-text: 138 117 132; /* #8a7584 引用文字 */
-  --md-lang-tag: 196 160 178; /* #c4a0b2 代码块语言标签 */
+  --md-pre-bg: 253 248 249;
+  --md-inline-code: 63 52 64;
+  --md-link: 74 159 199;
+  --md-quote-text: 138 117 132;
+  --md-lang-tag: 143 121 133;
   /* ---- Wiki 图谱浮动层（固定深色色板） ---- */
   --wiki-canvas: 10 10 20;    /* #0a0a14 */
   --wiki-panel: 18 18 31;     /* #12121f */
@@ -45,29 +46,86 @@
   --wiki-accent: 192 132 252; /* #c084fc */
   --wiki-accent2: 96 165 250; /* #60a5fa */
   --wiki-glow: 168 85 247;    /* #a855f7 */
+  /* ---- 形状与动效（Apple 式圆角梯度 + 缓动） ---- */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --ease-apple: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --shadow-float: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.08);
+  --shadow-modal: 0 2px 6px rgb(0 0 0 / 0.06), 0 24px 64px rgb(0 0 0 / 0.18);
 
   color-scheme: light;
 }
 
+[data-color-scheme='coral'] {
+  --bg: 255 248 244;
+  --text: 36 31 30;
+  --text-secondary: 77 68 66;
+  --text-muted: 150 138 134;
+  --md-pre-bg: 252 246 242;
+  --md-inline-code: 36 31 30;
+  --md-quote-text: 120 109 105;
+  --md-lang-tag: 150 138 134;
+}
+
+[data-color-scheme='ocean'], [data-color-scheme='custom'] {
+  --bg: 245 247 251;
+  --text: 31 42 58;
+  --text-secondary: 71 85 105;
+  --text-muted: 100 116 139;
+  --md-pre-bg: 247 249 252;
+  --md-inline-code: 31 42 58;
+  --md-quote-text: 86 101 120;
+  --md-lang-tag: 100 116 139;
+}
+
 [data-theme='dark'] {
-  --bg: 24 24 36;             /* #181824 深蓝黑 */
-  --panel: 30 30 46;          /* #1e1e2e 面板 */
-  --text: 226 220 232;        /* #e2dce8 正文 */
-  --text-secondary: 203 194 212; /* #cbc2d4 次级正文 */
-  --text-muted: 148 138 160;  /* #948aa0 弱化文字 */
-  /* 功能色在深色模式取较深档位：警示文字在深底可见，同时白字按钮对比度达标 */
-  --danger: 220 38 38;        /* red-600（白字按钮 ≥5:1） */
-  --warning: 180 83 9;        /* amber-700（白字按钮 ≥4.5:1） */
-  --info: 34 211 238;         /* cyan-400 */
-  --success: 74 222 128;      /* green-400 */
-  --purple: 168 85 247;       /* purple-500 */
+  --bg: 24 24 36;             /* #181824 */
+  --panel: 30 30 46;          /* #1e1e2e */
+  --text: 226 220 232;
+  --text-secondary: 203 194 212;
+  --text-muted: 148 138 160;
+  /* Apple 深色系统色：深底上的文字/图形 ≥3:1 */
+  --danger: 255 69 58;        /* #ff453a */
+  --warning: 255 159 10;      /* #ff9f0a */
+  --info: 100 210 255;        /* #64d2ff */
+  --success: 48 209 88;       /* #30d158 */
+  --purple: 191 90 242;       /* #bf5af2 */
   --md-pre-bg: 30 30 46;
   --md-inline-code: 244 159 191;
   --md-link: 96 165 250;
   --md-quote-text: 173 160 178;
   --md-lang-tag: 148 138 160;
+  --shadow-float: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.35);
+  --shadow-modal: 0 2px 6px rgb(0 0 0 / 0.3), 0 24px 64px rgb(0 0 0 / 0.5);
 
   color-scheme: dark;
+}
+
+[data-theme='dark'][data-color-scheme='coral'] {
+  --bg: 30 27 26;
+  --panel: 39 35 34;
+  --text: 246 241 239;
+  --text-secondary: 214 206 203;
+  --text-muted: 160 150 146;
+  --md-pre-bg: 34 30 29;
+  --md-inline-code: 246 241 239;
+  --md-quote-text: 180 170 166;
+  --md-lang-tag: 160 150 146;
+}
+
+[data-theme='dark'][data-color-scheme='ocean'],
+[data-theme='dark'][data-color-scheme='custom'] {
+  --bg: 23 29 40;
+  --panel: 32 41 56;
+  --text: 241 245 249;
+  --text-secondary: 203 213 225;
+  --text-muted: 148 163 184;
+  --md-pre-bg: 27 36 50;
+  --md-inline-code: 241 245 249;
+  --md-link: 147 197 253;
+  --md-quote-text: 174 189 207;
+  --md-lang-tag: 148 163 184;
 }
 
 html,
@@ -79,34 +137,42 @@ body,
 
 body {
   background:
-    radial-gradient(900px 520px at 12% -8%, rgb(var(--accent) / 0.12), transparent 60%),
-    radial-gradient(700px 460px at 105% 5%, rgb(var(--accent2) / 0.12), transparent 60%),
+    radial-gradient(900px 520px at 12% -8%, rgb(var(--accent) / 0.10), transparent 60%),
+    radial-gradient(700px 460px at 105% 5%, rgb(var(--accent2) / 0.10), transparent 60%),
     rgb(var(--bg));
   color: rgb(var(--text));
-  font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+  /* Windows 上 Segoe UI Variable 是与 SF Pro 最接近的系统无衬线字体；中文优先苹方/微软雅黑 UI */
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable Text', 'Segoe UI',
+    'PingFang SC', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'kern';
+  letter-spacing: -0.005em;
   overflow: hidden;
-  transition: background-color 0.25s ease, color 0.25s ease;
+  transition: background-color 0.25s var(--ease-apple), color 0.25s var(--ease-apple);
 }
 
 ::selection {
-  background: rgb(var(--accent) / 0.25);
+  background: rgb(var(--accent) / 0.22);
 }
 
 /* ---------- 滚动条 ---------- */
+/* macOS 式细滚动条：中性半透明滑块，透明边框留出呼吸空间 */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgb(var(--border-strong)) transparent;
+  scrollbar-color: rgb(var(--text) / 0.2) transparent;
 }
 *::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 *::-webkit-scrollbar-thumb {
-  background: rgb(var(--border-strong));
-  border-radius: 8px;
+  background: rgb(var(--text) / 0.18);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 10px;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: rgb(var(--accent) / 0.6);
+  background-color: rgb(var(--text) / 0.35);
 }
 *::-webkit-scrollbar-track {
   background: transparent;
@@ -143,8 +209,8 @@ input:focus,
 select:focus,
 textarea:focus {
   outline: none;
-  border-color: rgb(var(--accent) / 0.7) !important;
-  box-shadow: 0 0 0 3px rgb(var(--accent) / 0.15);
+  border-color: rgb(var(--accent) / 0.8) !important;
+  box-shadow: 0 0 0 3.5px rgb(var(--accent) / 0.22);
 }
 input[type='checkbox'] {
   accent-color: rgb(var(--accent));
@@ -162,7 +228,7 @@ input[type='checkbox'] {
   position: relative;
   background: rgb(var(--md-pre-bg));
   border: 1px solid rgb(var(--border));
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 26px 14px 12px;
   overflow-x: auto;
   margin: 0.7em 0;
@@ -182,7 +248,7 @@ input[type='checkbox'] {
   font-size: 13px;
 }
 .md-body :not(pre) > code {
-  background: rgb(var(--accent) / 0.12);
+  background: rgb(var(--text) / 0.07);
   color: rgb(var(--md-inline-code));
   padding: 1px 6px;
   border-radius: 5px;
@@ -193,17 +259,17 @@ input[type='checkbox'] {
   margin: 0.4em 0;
 }
 .md-body a {
-  color: rgb(var(--md-link));
+  color: rgb(var(--accent));
   text-decoration: none;
-  border-bottom: 1px solid rgb(var(--md-link) / 0.35);
 }
 .md-body a:hover {
-  border-bottom-color: rgb(var(--md-link));
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .md-body blockquote {
-  border-left: 3px solid rgb(var(--accent));
-  background: rgb(var(--accent) / 0.07);
-  border-radius: 0 8px 8px 0;
+  border-left: 3px solid rgb(var(--text) / 0.15);
+  background: transparent;
+  border-radius: 0;
   padding: 2px 12px;
   margin: 0.6em 0;
   color: rgb(var(--md-quote-text));
@@ -214,11 +280,12 @@ input[type='checkbox'] {
 }
 .md-body th,
 .md-body td {
-  border: 1px solid rgb(var(--border-strong));
+  border: 1px solid rgb(var(--border));
   padding: 6px 10px;
 }
 .md-body th {
-  background: rgb(var(--surface));
+  background: rgb(var(--text) / 0.035);
+  font-weight: 600;
 }
 .md-body hr {
   border-color: rgb(var(--border));
